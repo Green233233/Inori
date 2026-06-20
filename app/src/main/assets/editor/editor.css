@@ -1,0 +1,117 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+:root {
+    --bg-color: #FAF7F2;
+    --paper-bg-start: #FFF8F0;
+    --paper-bg-mid: #FFFDF7;
+    --paper-bg-end: #FFF8F0;
+    --text-color: #333333;
+    --line-color: rgba(0,0,0,0.03);
+    --editor-font-size: 16px;
+}
+
+html {
+    height: 100%;
+    width: 100%;
+}
+
+body {
+    background-color: var(--bg-color);
+    font-family: 'handwrite', cursive, sans-serif;
+    overflow-x: hidden;
+    width: 100%;
+    height: 100%;
+    min-height: 100%;
+}
+
+/* 纸张质感 - 铺满屏幕 */
+#paper {
+    min-height: 100vh;
+    width: 100%;
+    padding: 24px 20px;
+    background: linear-gradient(135deg, var(--paper-bg-start) 0%, var(--paper-bg-mid) 50%, var(--paper-bg-end) 100%);
+    font-size: var(--editor-font-size);
+    line-height: 1.8;
+    color: var(--text-color);
+    outline: none;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    position: relative;
+}
+
+/* 纸张纹理效果 */
+#paper::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: 
+        repeating-linear-gradient(
+            0deg,
+            transparent,
+            transparent 31px,
+            var(--line-color) 31px,
+            var(--line-color) 32px
+        );
+    pointer-events: none;
+    z-index: 0;
+}
+
+#paper > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* 涂鸦画布 - 使用fixed定位覆盖视口 */
+#doodle-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+}
+
+#doodle-canvas.active {
+    pointer-events: auto;
+    touch-action: none;
+}
+
+/* 插入的贴纸样式 */
+.inserted-sticker {
+    display: inline-block;
+    font-size: 32px;
+    cursor: move;
+    -webkit-user-select: none;
+    user-select: none;
+    vertical-align: middle;
+    margin: 4px;
+    transition: transform 0.1s;
+}
+
+.inserted-sticker:active {
+    transform: scale(1.2);
+}
+
+/* 插入的图片样式 */
+.inserted-image {
+    max-width: 100%;
+    border-radius: 8px;
+    margin: 8px 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* 字体定义 */
+@font-face {
+    font-family: 'handwrite';
+    src: url('../fonts/LXGWWenKai-Regular.ttf') format('truetype');
+    font-display: swap;
+}
