@@ -3,12 +3,14 @@ package com.green.inorinal.data
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
+import com.green.inorinal.backup.ImportResult
+import com.green.inorinal.backup.JournalBackupManager
+import com.green.inorinal.media.JournalMediaStore
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.io.InputStream
+import java.io.OutputStream
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -16,7 +18,8 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
 
     private val dao = JournalDatabase.getDatabase(application).journalDao()
     private val repository = JournalRepository(dao)
-    private val gson = Gson()
+    private val mediaStore = JournalMediaStore(application)
+    private val backupManager = JournalBackupManager(application)
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -118,7 +121,11 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
 
     /** 同步保存日记（供编辑器使用，在协程中调用） */
     suspend fun saveEntry(entry: JournalEntry): JournalEntry {
-        val savedEntry = entry.copy(updatedAt = System.currentTimeMillis())
+        val migratedContent = mediaStore.migrateInlineImages(entry.id, entry.content)
+        val savedEntry = entry.copy(
+            content = migratedContent,
+            updatedAt = System.currentTimeMillis()
+        )
         repository.insert(savedEntry)
         refreshStats()
         return savedEntry
@@ -132,7 +139,16 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
     }
 
     suspend fun getEntryById(id: String): JournalEntry? {
-        return repository.getEntryById(id)
+        return repository.getEntryById(id)?.let { entry ->
+            val migratedContent = mediaStore.migrateInlineImages(entry.id, entry.content)
+            if (migratedContent != entry.content) {
+                val migrated = entry.copy(content = migratedContent, updatedAt = System.currentTimeMillis())
+                repository.insert(migrated)
+                migrated
+            } else {
+                entry
+            }
+        }
     }
 
     fun toggleFavorite(entry: JournalEntry) {
@@ -142,53 +158,32 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun exportEntries(entries: List<JournalEntry>): String {
-        val exportData = entries.map { entry ->
-            mapOf(
-                "id" to entry.id,
-                "title" to entry.title,
-                "content" to entry.content,
-                "date" to entry.date.format(DateTimeFormatter.ISO_LOCAL_DATE),
-                "weather" to entry.weather.name,
-                "mood" to entry.mood.name,
-                "category" to entry.category.name,
-                "isFavorite" to entry.isFavorite,
-                "imageUrl" to entry.imageUrl,
-                "createdAt" to entry.createdAt,
-                "updatedAt" to entry.updatedAt
-            )
-        }
-        return gson.toJson(exportData)
+    suspend fun exportBackup(outputStream: OutputStream) {
+        val fullEntries = allEntries.value.mapNotNull { repository.getEntryById(it.id) }
+        backupManager.exportZip(fullEntries, outputStream)
     }
 
-    fun importEntries(json: String, overwrite: Boolean = false) {
-        val type = object : TypeToken<List<Map<String, Any>>>() {}.type
-        val entriesData: List<Map<String, Any>> = gson.fromJson(json, type)
-        viewModelScope.launch {
-            for (data in entriesData) {
-                val entry = JournalEntry(
-                    id = data["id"] as String,
-                    title = data["title"] as String,
-                    content = data["content"] as String,
-                    date = LocalDate.parse(data["date"] as String, DateTimeFormatter.ISO_LOCAL_DATE),
-                    weather = Weather.valueOf(data["weather"] as String),
-                    mood = Mood.valueOf(data["mood"] as String),
-                    category = Category.valueOf(data["category"] as String),
-                    isFavorite = data["isFavorite"] as? Boolean ?: false,
-                    imageUrl = data["imageUrl"] as? String,
-                    createdAt = (data["createdAt"] as? Double)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data["updatedAt"] as? Double)?.toLong() ?: System.currentTimeMillis()
-                )
-                if (overwrite) {
+    suspend fun importBackup(inputStream: InputStream, overwrite: Boolean = false): ImportResult {
+        val (entries, parsedResult) = backupManager.import(inputStream)
+        var imported = 0
+        var skipped = 0
+        var failed = parsedResult.failed
+
+        entries.forEach { entry ->
+            runCatching {
+                val existing = repository.getEntryById(entry.id)
+                if (overwrite || existing == null) {
                     repository.insert(entry)
+                    imported++
                 } else {
-                    val existing = repository.getEntryById(entry.id)
-                    if (existing == null) {
-                        repository.insert(entry)
-                    }
+                    skipped++
                 }
+            }.onFailure {
+                failed++
             }
-            refreshStats()
         }
+
+        refreshStats()
+        return ImportResult(imported = imported, skipped = skipped, failed = failed)
     }
 }

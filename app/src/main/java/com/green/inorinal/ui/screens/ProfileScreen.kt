@@ -26,6 +26,9 @@ import androidx.compose.ui.unit.sp
 import com.green.inorinal.data.JournalViewModel
 import com.green.inorinal.ui.icons.CloudAvatarIcon
 import com.green.inorinal.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,21 +41,24 @@ fun ProfileScreen(
     val totalCount by viewModel.totalCount.collectAsState()
     val favoriteCount by viewModel.favoriteCount.collectAsState()
     val streakCount by viewModel.streakCount.collectAsState()
-    val allEntries by viewModel.allEntries.collectAsState()
+    val scope = rememberCoroutineScope()
 
     // 导出文件创建器
     val exportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
+        contract = ActivityResultContracts.CreateDocument("application/zip")
     ) { uri: Uri? ->
         uri?.let {
-            try {
-                val json = viewModel.exportEntries(allEntries)
-                context.contentResolver.openOutputStream(uri)?.use { os ->
-                    os.write(json.toByteArray())
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri)?.use { os ->
+                            viewModel.exportBackup(os)
+                        } ?: error("无法打开导出位置")
+                    }
+                    android.widget.Toast.makeText(context, "导出成功", android.widget.Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(context, "导出失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                 }
-                android.widget.Toast.makeText(context, "导出成功", android.widget.Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                android.widget.Toast.makeText(context, "导出失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -62,13 +68,17 @@ fun ProfileScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
-            try {
-                val json = context.contentResolver.openInputStream(uri)?.bufferedReader()
-                    ?.use { it.readText() } ?: ""
-                viewModel.importEntries(json, overwrite = false)
-                android.widget.Toast.makeText(context, "导入成功", android.widget.Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                android.widget.Toast.makeText(context, "导入失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+            scope.launch {
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            viewModel.importBackup(input, overwrite = false)
+                        } ?: error("无法读取导入文件")
+                    }
+                    android.widget.Toast.makeText(context, result.message(), android.widget.Toast.LENGTH_LONG).show()
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(context, "导入失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -149,7 +159,7 @@ fun ProfileScreen(
             ) {
                 OutlinedButton(
                     onClick = {
-                        exportLauncher.launch("祈_日记备份_${System.currentTimeMillis()}.json")
+                        exportLauncher.launch("祈_日记备份_${System.currentTimeMillis()}.zip")
                     },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
@@ -164,7 +174,7 @@ fun ProfileScreen(
 
                 OutlinedButton(
                     onClick = {
-                        importLauncher.launch(arrayOf("application/json"))
+                        importLauncher.launch(arrayOf("application/zip", "application/json", "*/*"))
                     },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
@@ -190,7 +200,9 @@ fun ProfileScreen(
                 Column {
                     ProfileMenuItem(Icons.Filled.Settings, "设置", onSettingsClick)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-                    ProfileMenuItem(Icons.Filled.CloudUpload, "数据备份") {}
+                    ProfileMenuItem(Icons.Filled.CloudUpload, "数据备份") {
+                        exportLauncher.launch("祈_日记备份_${System.currentTimeMillis()}.zip")
+                    }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                     ProfileMenuItem(Icons.Filled.Info, "关于", onAboutClick)
                 }

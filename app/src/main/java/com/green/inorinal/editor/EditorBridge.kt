@@ -6,16 +6,19 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
-import android.view.MotionEvent
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.green.inorinal.media.JournalMediaStore
+import com.green.inorinal.media.JournalMediaStore.Companion.toUriString
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import kotlin.coroutines.resume
 
 class EditorBridge(private val context: Context) {
 
@@ -25,6 +28,8 @@ class EditorBridge(private val context: Context) {
 
     private var webView: WebView? = null
     private var pageLoaded = false
+    private val mediaStore = JournalMediaStore(context)
+    var currentEntryId: String? = null
 
     // 页面加载完成前待执行的主题 JS（避免因页面未就绪导致主题不同步）
     private var pendingThemeJs: String? = null
@@ -131,12 +136,14 @@ class EditorBridge(private val context: Context) {
     /** 异步获取内容（保留兼容） */
     fun getContent(callback: (String) -> Unit) {
         webView?.evaluateJavascript("getContent()") { result ->
-            val content = result?.trim('"')
-                ?.replace("\\u003C", "<")
-                ?.replace("\\u003E", ">")
-                ?.replace("\\\"", "\"")
-                ?: ""
+            val content = decodeJsString(result)
             callback(content)
+        }
+    }
+
+    suspend fun getContentForSave(): String = suspendCancellableCoroutine { continuation ->
+        getContent { content ->
+            if (continuation.isActive) continuation.resume(content)
         }
     }
 
@@ -167,19 +174,22 @@ class EditorBridge(private val context: Context) {
     }
 
     fun insertImage(uri: Uri) {
+        val entryId = currentEntryId ?: return
         try {
             val inputStream = context.contentResolver.openInputStream(uri)
-            val compressedBase64 = compressAndEncodeImage(inputStream)
+            val compressedBytes = compressImage(inputStream)
             inputStream?.close()
-            webView?.evaluateJavascript("insertImage('$compressedBase64')", null)
+            val file = mediaStore.saveImage(entryId, compressedBytes, "jpg")
+            webView?.evaluateJavascript("insertImage(${escapeForJs(file.toUriString())})", null)
         } catch (e: OutOfMemoryError) {
             // OOM 保护：尝试更激进的压缩
             try {
                 System.gc()
                 val inputStream = context.contentResolver.openInputStream(uri)
-                val compressedBase64 = compressAndEncodeImage(inputStream, maxSizePixels = 500_000, quality = 50)
+                val compressedBytes = compressImage(inputStream, maxSizePixels = 500_000, quality = 50)
                 inputStream?.close()
-                webView?.evaluateJavascript("insertImage('$compressedBase64')", null)
+                val file = mediaStore.saveImage(entryId, compressedBytes, "jpg")
+                webView?.evaluateJavascript("insertImage(${escapeForJs(file.toUriString())})", null)
             } catch (e2: Exception) {
                 e2.printStackTrace()
             }
@@ -274,12 +284,12 @@ class EditorBridge(private val context: Context) {
     // ==================== 私有辅助 ====================
 
     /**
-     * 压缩图片并转为 Base64
+     * 压缩图片并转为 JPEG 字节
      * @param maxSizePixels 最大像素数（宽×高），超过则等比缩放
      * @param quality JPEG 压缩质量 0-100
      */
-    private fun compressAndEncodeImage(inputStream: InputStream?, maxSizePixels: Int = 1_500_000, quality: Int = 75): String {
-        if (inputStream == null) return ""
+    private fun compressImage(inputStream: InputStream?, maxSizePixels: Int = 1_500_000, quality: Int = 75): ByteArray {
+        if (inputStream == null) return ByteArray(0)
 
         val bytes = inputStream.readBytes()
         val options = BitmapFactory.Options().apply {
@@ -297,7 +307,7 @@ class EditorBridge(private val context: Context) {
         val decodeOptions = BitmapFactory.Options().apply {
             inSampleSize = sampleSize
         }
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions) ?: return ""
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions) ?: return ByteArray(0)
 
         // 进一步缩放如果仍然太大
         var scaledBitmap = bitmap
@@ -315,7 +325,7 @@ class EditorBridge(private val context: Context) {
         // 压缩为 JPEG
         val outputStream = ByteArrayOutputStream()
         scaledBitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
-        val base64 = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+        val imageBytes = outputStream.toByteArray()
 
         // 回收
         if (!scaledBitmap.isRecycled) {
@@ -323,7 +333,14 @@ class EditorBridge(private val context: Context) {
         }
         outputStream.close()
 
-        return base64
+        return imageBytes
+    }
+
+    private fun decodeJsString(result: String?): String {
+        if (result.isNullOrBlank() || result == "null") return ""
+        return runCatching {
+            JSONArray("[$result]").getString(0)
+        }.getOrDefault("")
     }
 
     private fun escapeForJs(str: String): String {

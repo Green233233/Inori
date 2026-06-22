@@ -67,6 +67,7 @@ fun AppNavigation(
                 viewModel = viewModel,
                 entryId = if (entryId == "new") null else entryId,
                 fontSizeSp = fontSizeSp,
+                themeMode = themeMode,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -89,6 +90,13 @@ fun AppNavigation(
         // 关于
         composable("about") {
             AboutScreen(
+                onBack = { navController.popBackStack() },
+                onLicensesClick = { navController.navigate("licenses") }
+            )
+        }
+
+        composable("licenses") {
+            OpenSourceLicensesScreen(
                 onBack = { navController.popBackStack() }
             )
         }

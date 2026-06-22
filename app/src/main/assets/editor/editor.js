@@ -569,17 +569,27 @@ function insertSticker(name) {
     paper.focus();
     restoreSelection();
     
-    var stickerMap = {
-        'heart': '❤️', 'star': '⭐', 'smile': '😊', 'flower': '🌸',
-        'sun': '☀️', 'moon': '🌙', 'cloud': '☁️', 'rain': '🌧️',
-        'snow': '❄️', 'leaf': '🍃', 'cat': '🐱', 'dog': '🐶',
-        'bird': '🐦', 'fish': '🐟', 'cake': '🎂', 'coffee': '☕',
-        'book': '📖', 'music': '🎵', 'sparkle': '✨', 'ribbon': '🎀'
+    var materialStickerMap = {
+        'heart': '<svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5C2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3C19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>',
+        'star': '<svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2L9.19 8.63L2 9.24l5.46 4.73L5.82 21z"/></svg>',
+        'smile': '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10s10-4.48 10-10S17.52 2 12 2zM8.5 8C9.33 8 10 8.67 10 9.5S9.33 11 8.5 11S7 10.33 7 9.5S7.67 8 8.5 8zm3.5 9.5c-2.33 0-4.31-1.46-5.11-3.5h10.22c-.8 2.04-2.78 3.5-5.11 3.5zm3.5-6.5c-.83 0-1.5-.67-1.5-1.5S14.67 8 15.5 8S17 8.67 17 9.5S16.33 11 15.5 11z"/></svg>',
+        'flower': '<svg viewBox="0 0 24 24"><path d="M12 22c4.97-4.02 8-8.1 8-12.2C20 5.47 16.42 2 12 2S4 5.47 4 9.8C4 13.9 7.03 17.98 12 22zm0-17c2.76 0 5 2.15 5 4.8c0 2.55-1.75 5.32-5 8.35c-3.25-3.03-5-5.8-5-8.35C7 7.15 9.24 5 12 5z"/></svg>',
+        'cloud': '<svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4C9.11 4 6.6 5.64 5.35 8.04C2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5c0-2.64-2.05-4.78-4.65-4.96z"/></svg>',
+        'book': '<svg viewBox="0 0 24 24"><path d="M21 4H3c-1.1 0-2 .9-2 2v13c0 .55.45 1 1 1h19c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM11 18H3V6h8v12zm10 0h-8V6h8v12z"/></svg>'
     };
-    var sticker = stickerMap[name] || '⭐';
     var span = document.createElement('span');
     span.className = 'inserted-sticker';
-    span.textContent = sticker;
+    span.innerHTML = materialStickerMap[name] || materialStickerMap['star'];
+    span.style.display = 'inline-flex';
+    span.style.width = '1.8em';
+    span.style.height = '1.8em';
+    span.style.verticalAlign = 'middle';
+    span.style.color = '#F49DA2';
+    if (span.firstElementChild) {
+        span.firstElementChild.style.width = '100%';
+        span.firstElementChild.style.height = '100%';
+        span.firstElementChild.style.fill = 'currentColor';
+    }
     span.contentEditable = 'false';
     
     var selection = window.getSelection();
@@ -596,24 +606,17 @@ function insertSticker(name) {
 }
 
 // ==================== 图片插入 ====================
-function insertImage(base64Data) {
+function insertImage(imageSrc) {
     var paper = document.getElementById('paper');
     paper.focus();
     restoreSelection();
     
     var img = document.createElement('img');
-    img.src = 'data:image/jpeg;base64,' + base64Data;
+    img.src = imageSrc;
     img.className = 'inserted-image';
     img.style.maxWidth = '100%';
     img.style.cursor = 'pointer';
-    // 点击图片时通知 Android 原生层，便于打开预览
-    img.addEventListener('click', function() {
-        try {
-            if (window.AndroidBridge && window.AndroidBridge.onImageClicked) {
-                window.AndroidBridge.onImageClicked(img.src);
-            }
-        } catch (e) { console.error(e); }
-    });
+    bindImageClick(img);
     
     var selection = window.getSelection();
     if (selection.rangeCount > 0) {
@@ -626,6 +629,24 @@ function insertImage(base64Data) {
     }
     saveSelection();
     notifyContentChanged();
+}
+
+function bindImageClick(img) {
+    img.style.cursor = 'pointer';
+    img.onclick = function() {
+        try {
+            if (window.AndroidBridge && window.AndroidBridge.onImageClicked) {
+                window.AndroidBridge.onImageClicked(img.src);
+            }
+        } catch (e) { console.error(e); }
+    };
+}
+
+function bindImageClickHandlers() {
+    var images = document.getElementById('paper').getElementsByTagName('img');
+    for (var i = 0; i < images.length; i++) {
+        bindImageClick(images[i]);
+    }
 }
 
 // ==================== 主题切换 ====================
@@ -647,13 +668,24 @@ function applyEditorSettings(fontSizeSp) {
 }
 
 // ==================== 内容获取/设置 ====================
+function hasPendingDoodle() {
+    return doodleHistory.length > 0;
+}
+
+function flushDoodleToContent() {
+    if (!hasPendingDoodle()) return;
+    mergeDoodle();
+}
+
 function getContent() {
+    flushDoodleToContent();
     return document.getElementById('paper').innerHTML;
 }
 
 function setContent(html) {
     var paper = document.getElementById('paper');
     paper.innerHTML = html || '';
+    bindImageClickHandlers();
     // 重置选区
     savedSelectionRange = null;
     notifyContentChanged();

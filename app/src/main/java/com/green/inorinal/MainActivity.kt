@@ -20,7 +20,7 @@ import com.green.inorinal.navigation.AppNavigation
 import com.green.inorinal.ui.theme.InorinalTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
@@ -34,17 +34,14 @@ class MainActivity : ComponentActivity() {
         val fontSizeKey = intPreferencesKey("font_size")
         val debugModeKey = booleanPreferencesKey("debug_mode")
 
-        // 尽早读取并初始化调试日志，确保崩溃捕获从启动阶段即生效。
-        val initialDebugMode = runBlocking {
-            applicationContext.dataStore.data.map { prefs -> prefs[debugModeKey] ?: false }.first()
-        }
-        DebugLog.init(applicationContext, initialDebugMode)
+        DebugLog.init(applicationContext, enabled = false)
 
         setContent {
             var currentColorStyle by remember { mutableStateOf(AppColorStyle.SAKURA) }
             var currentThemeMode by remember { mutableStateOf(AppThemeMode.SYSTEM) }
             var currentFontSize by remember { mutableIntStateOf(16) }
-            var currentDebugMode by remember { mutableStateOf(initialDebugMode) }
+            var currentDebugMode by remember { mutableStateOf(false) }
+            val settingsScope = rememberCoroutineScope()
 
             LaunchedEffect(Unit) {
                 val savedStyle = applicationContext.dataStore.data.map { prefs ->
@@ -62,6 +59,12 @@ class MainActivity : ComponentActivity() {
                 currentFontSize = applicationContext.dataStore.data.map { prefs ->
                     prefs[fontSizeKey] ?: 16
                 }.first()
+
+                val savedDebugMode = applicationContext.dataStore.data.map { prefs ->
+                    prefs[debugModeKey] ?: false
+                }.first()
+                currentDebugMode = savedDebugMode
+                DebugLog.setEnabled(savedDebugMode)
             }
 
             InorinalTheme(
@@ -75,7 +78,7 @@ class MainActivity : ComponentActivity() {
                     debugMode = currentDebugMode,
                     onColorStyleChange = { style ->
                         currentColorStyle = style
-                        runBlocking {
+                        settingsScope.launch {
                             applicationContext.dataStore.edit { prefs ->
                                 prefs[colorStyleKey] = style.name
                             }
@@ -83,7 +86,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onThemeModeChange = { mode ->
                         currentThemeMode = mode
-                        runBlocking {
+                        settingsScope.launch {
                             applicationContext.dataStore.edit { prefs ->
                                 prefs[themeModeKey] = mode.name
                             }
@@ -91,7 +94,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onFontSizeChange = { fontSize ->
                         currentFontSize = fontSize
-                        runBlocking {
+                        settingsScope.launch {
                             applicationContext.dataStore.edit { prefs ->
                                 prefs[fontSizeKey] = fontSize
                             }
@@ -100,7 +103,7 @@ class MainActivity : ComponentActivity() {
                     onDebugModeChange = { debugMode ->
                         currentDebugMode = debugMode
                         DebugLog.setEnabled(debugMode)
-                        runBlocking {
+                        settingsScope.launch {
                             applicationContext.dataStore.edit { prefs ->
                                 prefs[debugModeKey] = debugMode
                             }

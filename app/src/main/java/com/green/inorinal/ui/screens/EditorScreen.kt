@@ -5,7 +5,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -51,12 +50,19 @@ private data class EditorSaveSnapshot(
     val category: Category
 )
 
+private data class StickerOption(
+    val name: String,
+    val label: String,
+    val icon: ImageVector
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
     viewModel: JournalViewModel,
     entryId: String?,
     fontSizeSp: Int,
+    themeMode: AppThemeMode,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -84,6 +90,7 @@ fun EditorScreen(
             val loaded = viewModel.getEntryById(entryId)
             if (loaded != null) {
                 entry = loaded
+                bridge.currentEntryId = loaded.id
                 title = loaded.title
                 selectedWeather = loaded.weather
                 selectedMood = loaded.mood
@@ -101,17 +108,6 @@ fun EditorScreen(
             }
         }
         hasLoadedEntry = true
-    }
-
-    // 图片选择器
-    val imageLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let { bridge.insertImage(it) }
-    }
-
-    bridge.onImageRequest = {
-        imageLauncher.launch("image/*")
     }
 
     // 当 JS 中的图片被点击时，显示预览对话框
@@ -137,8 +133,27 @@ fun EditorScreen(
         )
     }
 
+    // 图片选择器
+    val imageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            if (entry == null) {
+                entry = createDraftEntry().also { draft ->
+                    bridge.currentEntryId = draft.id
+                }
+            }
+            bridge.insertImage(it)
+        }
+    }
+
+    bridge.onImageRequest = {
+        imageLauncher.launch("image/*")
+    }
+
     fun hasMeaningfulChanges(content: String): Boolean {
-        return content.isNotBlank() ||
+        return title.isNotBlank() ||
+            content.isNotBlank() ||
             selectedWeather != Weather.SUNNY ||
             selectedMood != Mood.HAPPY ||
             selectedCategory != Category.DAILY
@@ -155,6 +170,7 @@ fun EditorScreen(
         }
 
         val baseEntry = currentEntry ?: createDraftEntry()
+        bridge.currentEntryId = baseEntry.id
         val snapshot = EditorSaveSnapshot(
             title = title.ifBlank { baseEntry.title },
             content = content,
@@ -175,7 +191,12 @@ fun EditorScreen(
             )
         )
         entry = savedEntry
-        lastSavedSnapshot = snapshot
+        bridge.currentEntryId = savedEntry.id
+        lastSavedSnapshot = snapshot.copy(content = savedEntry.content)
+    }
+
+    suspend fun saveLatestContent() {
+        saveEntry(bridge.getContentForSave())
     }
 
     LaunchedEffect(Unit) {
@@ -197,7 +218,7 @@ fun EditorScreen(
         if (!isSaving) {
             isSaving = true
             scope.launch {
-                saveEntry()
+                saveLatestContent()
                 onBack()
             }
         }
@@ -211,7 +232,7 @@ fun EditorScreen(
                         if (!isSaving) {
                             isSaving = true
                             scope.launch {
-                                saveEntry()
+                                saveLatestContent()
                                 onBack()
                             }
                         }
@@ -421,7 +442,7 @@ fun EditorScreen(
                         )
                     )
                     NavigationBarItem(
-                        icon = { Icon(Icons.Filled.EmojiEmotions, contentDescription = "贴纸") },
+                        icon = { Icon(Icons.Filled.AutoAwesome, contentDescription = "贴纸") },
                         label = { Text("贴纸", fontSize = 10.sp) },
                         selected = currentToolbar == "sticker",
                         onClick = {
@@ -440,7 +461,12 @@ fun EditorScreen(
         containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
         // 获取当前主题颜色用于 WebView
-        val isDark = isSystemInDarkTheme()
+        val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+        val isDark = when (themeMode) {
+            AppThemeMode.LIGHT -> false
+            AppThemeMode.DARK -> true
+            AppThemeMode.SYSTEM -> systemDark
+        }
         val bgColor = colorToHex(MaterialTheme.colorScheme.background)
         val textColor = colorToHex(MaterialTheme.colorScheme.onBackground)
         val paperBgStart = colorToHex(MaterialTheme.colorScheme.surface)
@@ -491,10 +517,15 @@ fun EditorScreen(
                 AndroidView(factory = { ctx ->
                     ImageView(ctx).apply {
                         try {
-                            val base64 = previewImageDataUrl!!.substringAfter(',')
-                            val bytes = Base64.decode(base64, Base64.DEFAULT)
-                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                            setImageBitmap(bmp)
+                            val dataUrl = previewImageDataUrl!!
+                            if (dataUrl.startsWith("file://")) {
+                                setImageURI(Uri.parse(dataUrl))
+                            } else {
+                                val base64 = dataUrl.substringAfter(',')
+                                val bytes = Base64.decode(base64, Base64.DEFAULT)
+                                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                setImageBitmap(bmp)
+                            }
                             adjustViewBounds = true
                             scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
                         } catch (e: Exception) {
@@ -736,27 +767,33 @@ private fun StickerPanel(bridge: EditorBridge, onHide: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             val stickers = listOf(
-                "heart" to "❤️", "star" to "⭐", "smile" to "😊", "flower" to "🌸",
-                "sun" to "☀️", "moon" to "🌙", "cloud" to "☁️", "rain" to "🌧️",
-                "snow" to "❄️", "leaf" to "🍃", "cat" to "🐱", "dog" to "🐶",
-                "bird" to "🐦", "fish" to "🐟", "cake" to "🎂", "coffee" to "☕",
-                "book" to "📖", "music" to "🎵", "sparkle" to "✨", "ribbon" to "🎀"
+                StickerOption("heart", "爱心", Icons.Filled.Favorite),
+                StickerOption("star", "星星", Icons.Filled.Star),
+                StickerOption("smile", "微笑", Icons.Filled.SentimentSatisfied),
+                StickerOption("flower", "花朵", Icons.Filled.LocalFlorist),
+                StickerOption("cloud", "云朵", Icons.Filled.Cloud),
+                StickerOption("book", "书本", Icons.Filled.MenuBook)
             )
-            stickers.chunked(5).forEach { row ->
+            stickers.chunked(3).forEach { row ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    row.forEach { (name, emoji) ->
+                    row.forEach { sticker ->
                         Box(
                             modifier = Modifier
                                 .size(52.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(MaterialTheme.colorScheme.surface)
-                                .clickable { bridge.insertSticker(name) },
+                                .clickable { bridge.insertSticker(sticker.name) },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(emoji, fontSize = 28.sp)
+                            Icon(
+                                imageVector = sticker.icon,
+                                contentDescription = sticker.label,
+                                modifier = Modifier.size(28.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
                 }
