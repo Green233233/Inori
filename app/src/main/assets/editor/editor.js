@@ -1,84 +1,181 @@
 // ==================== 编辑器核心 ====================
-let currentMode = 'text'; // text, doodle
-let isDoodleActive = false;
 
-// 涂鸦相关
-let canvas, ctx;
-let drawing = false;
-let brushType = 'pencil';
-let brushSize = 3;
-let brushColor = '#000000';
-let doodleHistory = [];
-let doodleRedoStack = [];
-let currentPath = [];
+const Atrament = window.Atrament;
+const MODE_DISABLED = window.ATRAMENT_MODE_DISABLED || 'disabled';
+const MODE_DRAW = window.ATRAMENT_MODE_DRAW || 'draw';
+const MODE_ERASE = window.ATRAMENT_MODE_ERASE || 'erase';
+const DOODLE_NODE_CLASS = 'doodle-data';
+const DOODLE_NODE_SELECTOR = `.${DOODLE_NODE_CLASS}`;
+const DOODLE_SCHEMA_VERSION = 1;
+const HISTORY_LIMIT = 40;
+const BRUSH_PRESETS = {
+    pencil: { roughness: 0.35, minSize: 0, maxSize: 5, defaultSize: 2 },
+    pen: { roughness: 0.5, minSize: 0, maxSize: 5, defaultSize: 2 },
+    watercolor: { roughness: 0.25, minSize: 5, maxSize: 25, defaultSize: 12 },
+    marker: { roughness: 0.25, minSize: 5, maxSize: 25, defaultSize: 12 },
+    highlighter: { roughness: 0.25, minSize: 5, maxSize: 25, defaultSize: 12 },
+    eraser: { roughness: 0, minSize: 1, maxSize: 30, defaultSize: 12 }
+};
 
-// 选区保存（用于文字格式化）
 let savedSelectionRange = null;
+let caretScrollScheduled = false;
+let caretScrollTimer = null;
+let paper;
 
-// 初始化
-document.addEventListener('DOMContentLoaded', function() {
-    canvas = document.getElementById('doodle-canvas');
-    // 使用高分辨率画布，考虑设备像素比以提升涂鸦清晰度
-    ctx = canvas.getContext('2d');
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    
-    // 涂鸦触摸事件 - passive:false 以便 preventDefault
-    canvas.addEventListener('touchstart', startDraw, { passive: false });
-    canvas.addEventListener('touchmove', draw, { passive: false });
-    canvas.addEventListener('touchend', endDraw, { passive: false });
-    canvas.addEventListener('touchcancel', endDraw, { passive: false });
-    canvas.addEventListener('mousedown', startDrawMouse);
-    canvas.addEventListener('mousemove', drawMouse);
-    canvas.addEventListener('mouseup', endDraw);
-    canvas.addEventListener('mouseleave', endDraw);
+const scheduleIdle = window.requestIdleCallback
+    ? (callback) => window.requestIdleCallback(callback, { timeout: 120 })
+    : (callback) => window.setTimeout(callback, 16);
 
-    // 启用 CSS 样式模式，使得 execCommand 使用内联 CSS 而非 <font> 等过时标签
-    try { document.execCommand('styleWithCSS', false, true); } catch (e) { /* 某些 WebView 版本可能不支持 */ }
+const doodle = {
+    canvas: null,
+    atrament: null,
+    roughCanvas: null,
+    active: false,
+    renderQueued: false,
+    currentTool: 'pencil',
+    brush: {
+        color: '#000000',
+        size: BRUSH_PRESETS.pencil.defaultSize,
+        roughness: BRUSH_PRESETS.pencil.roughness,
+        smoothing: 0.85,
+        adaptiveStroke: true
+    },
+    strokes: [],
+    bitmapLayers: [],
+    undoStack: [],
+    redoStack: [],
+    lastStateJson: ''
+};
 
-    // 内容变化监听
-    var paper = document.getElementById('paper');
-    paper.addEventListener('input', function() {
-        notifyContentChanged();
+document.addEventListener('DOMContentLoaded', () => {
+    paper = document.getElementById('paper');
+    initialiseDoodle();
+    bindEditorEvents();
+    updateVisibleViewport();
+});
+
+function bindEditorEvents() {
+    window.addEventListener('resize', () => {
+        resizeDoodleCanvas();
+        updateVisibleViewport();
     });
-    
-    // 保存选区（每次选区变化时保存）
-    document.addEventListener('selectionchange', function() {
-        var sel = window.getSelection();
-        if (sel.rangeCount > 0) {
-            var range = sel.getRangeAt(0);
-            // 只保存在 paper 内的选区
-            if (paper.contains(range.commonAncestorContainer)) {
-                savedSelectionRange = range.cloneRange();
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', updateVisibleViewport);
+        window.visualViewport.addEventListener('scroll', updateVisibleViewport);
+    }
+
+    paper.addEventListener('input', () => {
+        resizeDoodleCanvas();
+        notifyContentChanged();
+        scheduleCaretVisibility();
+    });
+    paper.addEventListener('scroll', syncDoodleCanvasScroll);
+    paper.addEventListener('compositionupdate', scheduleCaretVisibility);
+    paper.addEventListener('compositionend', scheduleCaretVisibility);
+    paper.addEventListener('beforeinput', scheduleCaretVisibility);
+    paper.addEventListener('keyup', scheduleCaretVisibility);
+    paper.addEventListener('focus', scheduleCaretVisibility);
+
+    document.addEventListener('selectionchange', () => {
+        const selection = window.getSelection();
+        if (selection.rangeCount <= 0) return;
+        const range = selection.getRangeAt(0);
+        if (paper.contains(range.commonAncestorContainer)) {
+            savedSelectionRange = range.cloneRange();
+            if (range.collapsed && document.activeElement === paper) {
+                scheduleCaretVisibility();
             }
         }
     });
-});
+}
 
-function resizeCanvas() {
-    // 保存当前涂鸦数据
-    var tempHistory = doodleHistory.slice();
-    // 使用 devicePixelRatio 来设置更高的像素分辨率
-    var ratio = window.devicePixelRatio || 1;
-    var w = window.innerWidth;
-    var h = window.innerHeight;
-    canvas.width = Math.floor(w * ratio);
-    canvas.height = Math.floor(h * ratio);
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-    // 缩放上下文以便后续绘制使用 CSS 像素坐标
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    // 重绘
-    doodleHistory = tempHistory;
-    redrawDoodle();
+// ==================== 软键盘与光标可见性 ====================
+
+function updateVisibleViewport() {
+    const viewport = window.visualViewport;
+    const visibleBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+    const layoutHeight = Math.max(document.documentElement.clientHeight, window.innerHeight);
+    const keyboardInset = Math.max(0, Math.round(layoutHeight - visibleBottom));
+    document.documentElement.style.setProperty('--keyboard-inset', `${keyboardInset}px`);
+    scheduleCaretVisibility();
+}
+
+function scheduleCaretVisibility() {
+    window.clearTimeout(caretScrollTimer);
+    caretScrollTimer = window.setTimeout(keepCaretVisible, 120);
+    if (!caretScrollScheduled) {
+        caretScrollScheduled = true;
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                caretScrollScheduled = false;
+                keepCaretVisible();
+            });
+        });
+    }
+}
+
+function keepCaretVisible() {
+    if (!paper || document.activeElement !== paper || doodle.active) return;
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return;
+    const range = selection.getRangeAt(0);
+    if (!paper.contains(range.commonAncestorContainer)) return;
+
+    const rect = getCaretRect(range, selection);
+    if (!rect) return;
+
+    const viewport = window.visualViewport;
+    const paperRect = paper.getBoundingClientRect();
+    const visibleTop = Math.max(paperRect.top, viewport ? viewport.offsetTop : 0);
+    const visibleBottom = Math.min(
+        paperRect.bottom,
+        viewport ? viewport.offsetTop + viewport.height : window.innerHeight
+    );
+    const lineHeight = parseFloat(getComputedStyle(paper).lineHeight);
+    const margin = Math.max(40, Number.isNaN(lineHeight) ? 48 : lineHeight * 2.5);
+
+    if (rect.bottom > visibleBottom - margin) {
+        paper.scrollTop = Math.max(0, paper.scrollTop + rect.bottom - visibleBottom + margin);
+    } else if (rect.top < visibleTop + margin) {
+        paper.scrollTop = Math.max(0, paper.scrollTop + rect.top - visibleTop - margin);
+    }
+}
+
+function getCaretRect(range, selection) {
+    const rects = range.getClientRects();
+    if (rects.length > 0) {
+        const lastRect = rects[rects.length - 1];
+        if (lastRect.height > 0) return lastRect;
+    }
+
+    const marker = document.createElement('span');
+    marker.textContent = '\u200b';
+    marker.style.display = 'inline-block';
+    marker.style.width = '0';
+    marker.style.overflow = 'hidden';
+    const savedRange = range.cloneRange();
+    try {
+        range.insertNode(marker);
+        const markerRect = marker.getBoundingClientRect();
+        marker.remove();
+        selection.removeAllRanges();
+        selection.addRange(savedRange);
+        return markerRect;
+    } catch (error) {
+        marker.remove();
+        selection.removeAllRanges();
+        selection.addRange(savedRange);
+        return null;
+    }
 }
 
 // ==================== 选区管理 ====================
+
 function saveSelection() {
-    var sel = window.getSelection();
-    if (sel.rangeCount > 0) {
-        var range = sel.getRangeAt(0);
-        var paper = document.getElementById('paper');
+    const selection = window.getSelection();
+    if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
         if (paper.contains(range.commonAncestorContainer)) {
             savedSelectionRange = range.cloneRange();
         }
@@ -86,16 +183,15 @@ function saveSelection() {
 }
 
 function restoreSelection() {
-    if (savedSelectionRange) {
-        var sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedSelectionRange);
-    }
+    if (!savedSelectionRange) return;
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(savedSelectionRange);
 }
 
 // ==================== 文字编辑命令 ====================
+
 function execCmd(command, value) {
-    var paper = document.getElementById('paper');
     paper.focus();
     restoreSelection();
     document.execCommand(command, false, value || null);
@@ -104,58 +200,47 @@ function execCmd(command, value) {
 }
 
 function changeFont(fontName) {
-    var paper = document.getElementById('paper');
     paper.focus();
     restoreSelection();
-    var fontMap = {
-        'handwrite': 'handwrite, serif',
-        'serif': 'serif, Songti SC, SimSun',
+    const fontMap = {
+        handwrite: 'handwrite, serif',
+        serif: 'serif, Songti SC, SimSun',
         'sans-serif': 'sans-serif, PingFang SC, Microsoft YaHei'
     };
-    // 使用 span 包裹并设置 style 字体族以避免 <font> 标签问题
-    var family = fontMap[fontName] || fontName;
-    document.execCommand('fontName', false, family);
+    document.execCommand('fontName', false, fontMap[fontName] || fontName);
     saveSelection();
     notifyContentChanged();
 }
 
 function changeSize(size) {
-    var paper = document.getElementById('paper');
     paper.focus();
     restoreSelection();
-    // fontSize 的返回标签可能为 <font size="N">，为保证可控性，改为使用 span 和 style
-    try {
-        document.execCommand('fontSize', false, size);
-        // 将 font[size] 转换为 span style（延迟执行以等 execCommand 完成）
-        setTimeout(function() {
-            var fonts = paper.getElementsByTagName('font');
-            for (var i = fonts.length - 1; i >= 0; i--) {
-                var f = fonts[i];
-                var sz = f.getAttribute('size');
-                var px = '16px';
-                // 映射常见 size 值到像素（可根据需要调整）
-                if (sz === '1') px = '12px';
-                else if (sz === '2') px = '14px';
-                else if (sz === '3') px = '16px';
-                else if (sz === '4') px = '18px';
-                else if (sz === '5') px = '20px';
-                else if (sz === '6') px = '22px';
-                else if (sz === '7') px = '24px';
-                var span = document.createElement('span');
-                span.style.fontSize = px;
-                span.innerHTML = f.innerHTML;
-                f.parentNode.replaceChild(span, f);
-            }
-        }, 50);
-    } catch (e) {
-        document.execCommand('fontSize', false, size);
-    }
+    document.execCommand('fontSize', false, size);
+    window.setTimeout(normalizeFontTags, 50);
     saveSelection();
     notifyContentChanged();
 }
 
+function normalizeFontTags() {
+    const sizeMap = {
+        1: '12px',
+        2: '14px',
+        3: '16px',
+        4: '18px',
+        5: '20px',
+        6: '22px',
+        7: '24px'
+    };
+    Array.from(paper.getElementsByTagName('font')).reverse().forEach((font) => {
+        const span = document.createElement('span');
+        span.style.fontSize = sizeMap[font.getAttribute('size')] || '16px';
+        span.innerHTML = font.innerHTML;
+        font.parentNode.replaceChild(span, font);
+    });
+    notifyContentChanged();
+}
+
 function changeColor(color) {
-    var paper = document.getElementById('paper');
     paper.focus();
     restoreSelection();
     document.execCommand('foreColor', false, color);
@@ -163,495 +248,547 @@ function changeColor(color) {
     notifyContentChanged();
 }
 
-// ==================== 涂鸦功能 ====================
-function startDraw(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!isDoodleActive) return;
-    drawing = true;
-    var touch = e.touches[0];
-    var rect = canvas.getBoundingClientRect();
-    var x = touch.clientX - rect.left;
-    var y = touch.clientY - rect.top;
-    currentPath = [{ x: x, y: y }];
-    ctx.beginPath();
-    ctx.moveTo(x, y);
+// ==================== Atrament + Rough 涂鸦层 ====================
+
+function initialiseDoodle() {
+    doodle.canvas = document.getElementById('doodle-canvas');
+    resizeDoodleCanvas();
+    createAtrament();
+    applyBrushOptions();
 }
 
-function draw(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!drawing || !isDoodleActive) return;
-    var touch = e.touches[0];
-    var rect = canvas.getBoundingClientRect();
-    var x = touch.clientX - rect.left;
-    var y = touch.clientY - rect.top;
-    currentPath.push({ x: x, y: y });
-    applyBrushStyle();
-    ctx.lineTo(x, y);
-    ctx.stroke();
-}
-
-function startDrawMouse(e) {
-    if (!isDoodleActive) return;
-    e.preventDefault();
-    drawing = true;
-    var rect = canvas.getBoundingClientRect();
-    var x = e.clientX - rect.left;
-    var y = e.clientY - rect.top;
-    currentPath = [{ x: x, y: y }];
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-}
-
-function drawMouse(e) {
-    if (!drawing || !isDoodleActive) return;
-    e.preventDefault();
-    var rect = canvas.getBoundingClientRect();
-    var x = e.clientX - rect.left;
-    var y = e.clientY - rect.top;
-    currentPath.push({ x: x, y: y });
-    applyBrushStyle();
-    ctx.lineTo(x, y);
-    ctx.stroke();
-}
-
-function endDraw(e) {
-    if (e) e.preventDefault();
-    if (drawing && currentPath.length > 0) {
-        doodleHistory.push({
-            path: currentPath.slice(),
-            color: brushColor,
-            size: brushSize,
-            type: brushType
-        });
-        doodleRedoStack = [];
-        currentPath = [];
+function createAtrament() {
+    if (doodle.atrament) {
+        doodle.atrament.destroy();
     }
-    drawing = false;
-}
-
-function applyBrushStyle() {
-    ctx.lineWidth = brushSize;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    switch (brushType) {
-        case 'pencil':
-            ctx.globalAlpha = 0.8;
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.strokeStyle = brushColor;
-            break;
-        case 'pen':
-            ctx.globalAlpha = 1.0;
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.strokeStyle = brushColor;
-            break;
-        case 'marker':
-            ctx.globalAlpha = 0.9;
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.lineWidth = brushSize * 2;
-            ctx.strokeStyle = brushColor;
-            break;
-        case 'watercolor':
-            ctx.globalAlpha = 0.3;
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.lineWidth = brushSize * 3;
-            ctx.strokeStyle = brushColor;
-            break;
-        case 'highlighter':
-            ctx.globalAlpha = 0.25;
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.lineWidth = brushSize * 4;
-            ctx.strokeStyle = brushColor;
-            break;
-        case 'eraser':
-            ctx.globalAlpha = 1.0;
-            ctx.globalCompositeOperation = 'destination-out';
-            ctx.strokeStyle = 'rgba(0,0,0,1)';
-            ctx.lineWidth = brushSize * 3;
-            break;
-    }
-}
-
-function setBrush(type) {
-    brushType = type;
-}
-
-function setBrushSize(size) {
-    brushSize = parseInt(size);
-}
-
-function setBrushColor(color) {
-    brushColor = color;
-}
-
-function undoDoodle() {
-    if (doodleHistory.length === 0) return;
-    doodleRedoStack.push(doodleHistory.pop());
-    redrawDoodle();
-}
-
-function redoDoodle() {
-    if (doodleRedoStack.length === 0) return;
-    doodleHistory.push(doodleRedoStack.pop());
-    redrawDoodle();
-}
-
-function clearDoodle() {
-    doodleHistory = [];
-    doodleRedoStack = [];
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-}
-
-function redrawDoodle() {
-    // 清空使用 CSS 像素坐标
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    doodleHistory.forEach(function(stroke) {
-        ctx.beginPath();
-        var savedType = brushType;
-        var savedColor = brushColor;
-        var savedSize = brushSize;
-
-        brushType = stroke.type;
-        brushColor = stroke.color;
-        brushSize = stroke.size;
-        applyBrushStyle();
-
-        // 使用二次贝塞尔曲线平滑路径
-        if (stroke.path.length > 0) {
-            ctx.moveTo(stroke.path[0].x, stroke.path[0].y);
-            for (var i = 1; i < stroke.path.length - 2; i++) {
-                var cpx = (stroke.path[i].x + stroke.path[i + 1].x) / 2;
-                var cpy = (stroke.path[i].y + stroke.path[i + 1].y) / 2;
-                ctx.quadraticCurveTo(stroke.path[i].x, stroke.path[i].y, cpx, cpy);
-            }
-            // 连接最后两点
-            if (stroke.path.length >= 2) {
-                var last = stroke.path[stroke.path.length - 1];
-                ctx.lineTo(last.x, last.y);
-            }
-        }
-        ctx.stroke();
-
-        brushType = savedType;
-        brushColor = savedColor;
-        brushSize = savedSize;
+    doodle.atrament = new Atrament(doodle.canvas, {
+        color: doodle.brush.color,
+        width: doodle.canvas.width,
+        height: doodle.canvas.height,
+        weight: doodle.brush.size,
+        smoothing: doodle.brush.smoothing,
+        adaptiveStroke: doodle.brush.adaptiveStroke,
+        mode: doodle.active ? atramentModeForTool(doodle.currentTool) : MODE_DISABLED,
+        secondaryMouseButton: true,
+        recordStrokes: true
     });
-    ctx.globalAlpha = 1.0;
-    ctx.globalCompositeOperation = 'source-over';
+    doodle.atrament.recordStrokes = true;
+    doodle.atrament.addEventListener('strokerecorded', ({ stroke }) => {
+        handleRecordedStroke(stroke);
+    });
+    doodle.atrament.addEventListener('dirty', notifyDoodleStateChanged);
+    doodle.roughCanvas = window.rough && window.rough.canvas
+        ? window.rough.canvas(doodle.canvas)
+        : null;
 }
 
-function mergeDoodle() {
-    // 首先尝试检测当前选区附近是否命中一张图片，若命中则将涂鸦合并到该图片上并替换其 src
-    var selection = window.getSelection();
-    var range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-    var targetImg = null;
-    if (range) {
-        targetImg = findTargetImage(range);
-    }
+function resizeDoodleCanvas() {
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.floor(window.innerWidth * ratio));
+    const contentHeight = Math.max(
+        window.innerHeight,
+        paper ? paper.scrollHeight : window.innerHeight
+    );
+    const height = Math.max(1, Math.ceil(contentHeight * ratio));
+    doodle.canvas.width = width;
+    doodle.canvas.height = height;
+    doodle.canvas.style.width = `${window.innerWidth}px`;
+    doodle.canvas.style.height = `${contentHeight}px`;
+    syncDoodleCanvasScroll();
+    queueDoodleRender();
+}
 
-    // fallback：若未命中图片，则插入整张画布导出图（原有行为）
-    function fallbackInsert() {
-        var dataUrl = canvas.toDataURL('image/png');
-        var img = document.createElement('img');
-        img.src = dataUrl;
-        img.className = 'inserted-image doodle-merged';
-        img.style.maxWidth = '100%';
-        img.style.display = 'block';
-        img.style.pointerEvents = 'auto';
+function syncDoodleCanvasScroll() {
+    if (!paper || !doodle.canvas) return;
+    doodle.canvas.style.transform = `translateY(${-paper.scrollTop}px)`;
+}
 
-        if (selection.rangeCount > 0) {
-            var r = selection.getRangeAt(0);
-            r.collapse(false);
-            r.insertNode(img);
-        } else {
-            document.getElementById('paper').appendChild(img);
-        }
-        // 移除已合并的涂鸦记录（全部）并退出涂鸦模式
-        doodleHistory = [];
-        doodleRedoStack = [];
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        toggleDoodleMode(false);
-        notifyContentChanged();
-    }
+function atramentModeForTool(tool) {
+    return tool === 'eraser' ? MODE_ERASE : MODE_DRAW;
+}
 
-    if (!targetImg) {
-        fallbackInsert();
+function handleRecordedStroke(stroke) {
+    if (!stroke || !Array.isArray(stroke.segments) || stroke.segments.length === 0) return;
+
+    if (stroke.mode === MODE_ERASE || doodle.currentTool === 'eraser') {
+        pushDoodleHistory();
+        applyStructuredErase(stroke);
+        doodle.redoStack = [];
+        redrawDoodle();
+        persistDoodleChange();
+        notifyDoodleStateChanged();
         return;
     }
 
-    var img = targetImg;
-    var doMerge = function() {
-        try {
-            var rect = img.getBoundingClientRect();
-            var ratio = window.devicePixelRatio || 1;
+    pushDoodleHistory();
+    doodle.strokes.push(normalizeStroke(stroke));
+    doodle.redoStack = [];
+    queueDoodleRender();
+    persistDoodleChange();
+    notifyDoodleStateChanged();
+}
 
-            // 创建离屏画布，尺寸为显示尺寸 * DPR，以获得高分辨率输出
-            var offCanvas = document.createElement('canvas');
-            offCanvas.width = Math.ceil(rect.width * ratio);
-            offCanvas.height = Math.ceil(rect.height * ratio);
-            var offCtx = offCanvas.getContext('2d');
-            offCtx.scale(ratio, ratio);
+function normalizeStroke(stroke) {
+    return {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        type: 'stroke',
+        tool: doodle.currentTool === 'eraser' ? 'pencil' : doodle.currentTool,
+        points: stroke.segments.map((segment) => ({
+            x: round(segment.point.x),
+            y: round(segment.point.y),
+            time: Math.round(segment.time || 0),
+            pressure: round(segment.pressure ?? 0.5)
+        })),
+        color: stroke.color || doodle.brush.color,
+        width: round(stroke.weight || doodle.brush.size),
+        roughness: round(doodle.brush.roughness),
+        atramentOptions: {
+            smoothing: round(stroke.smoothing ?? doodle.brush.smoothing),
+            adaptiveStroke: stroke.adaptiveStroke ?? doodle.brush.adaptiveStroke
+        },
+        createdAt: Date.now()
+    };
+}
 
-            // 将原图绘制到离屏画布（按显示大小绘制）
-            offCtx.drawImage(img, 0, 0, rect.width, rect.height);
+function applyStructuredErase(eraserStroke) {
+    const eraserPoints = eraserStroke.segments.map((segment) => segment.point);
+    const radius = Math.max(effectiveBrushSize(eraserStroke.weight || doodle.brush.size) * 1.15, 6);
+    const nextStrokes = [];
 
-            // 遍历涂鸦记录：若笔画与图片有交集，则把笔画绘制到离屏画布，并从原历史中剔除被合并的部分
-            var newHistory = [];
-            doodleHistory.forEach(function(stroke) {
-                var path = stroke.path || [];
-                var hasInside = false;
-                for (var pi = 0; pi < path.length; pi++) {
-                    var p = path[pi];
-                    if (p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom) {
-                        hasInside = true;
-                        break;
-                    }
-                }
+    doodle.strokes.forEach((stroke) => {
+        const segments = splitStrokeByEraser(stroke, eraserPoints, radius);
+        nextStrokes.push(...segments);
+    });
+    doodle.strokes = nextStrokes;
+}
 
-                if (!hasInside) {
-                    // 整笔未覆盖图片，保留
-                    newHistory.push(stroke);
-                } else {
-                    // 在离屏画布上绘制该笔画（坐标需相对于图片左上角）
-                    setContextBrush(offCtx, stroke);
-                    offCtx.beginPath();
-                    if (path.length > 0) {
-                        offCtx.moveTo(path[0].x - rect.left, path[0].y - rect.top);
-                        for (var i = 1; i < path.length - 2; i++) {
-                            var cpx = (path[i].x + path[i + 1].x) / 2 - rect.left;
-                            var cpy = (path[i].y + path[i + 1].y) / 2 - rect.top;
-                            offCtx.quadraticCurveTo(path[i].x - rect.left, path[i].y - rect.top, cpx, cpy);
-                        }
-                        if (path.length >= 2) {
-                            var last = path[path.length - 1];
-                            offCtx.lineTo(last.x - rect.left, last.y - rect.top);
-                        }
-                    }
-                    offCtx.stroke();
-
-                    // 将笔画中落在图片外的部分保留下来（以避免删除在图片外的痕迹）
-                    var outsidePath = [];
-                    for (var pi2 = 0; pi2 < path.length; pi2++) {
-                        var pp = path[pi2];
-                        if (!(pp.x >= rect.left && pp.x <= rect.right && pp.y >= rect.top && pp.y <= rect.bottom)) {
-                            outsidePath.push(pp);
-                        }
-                    }
-                    if (outsidePath.length > 1) {
-                        newHistory.push({ path: outsidePath, color: stroke.color, size: stroke.size, type: stroke.type });
-                    }
-                }
-            });
-
-            // 用合并后的图片替换原图 src
-            img.src = offCanvas.toDataURL('image/png');
-
-            // 更新历史与画布
-            doodleHistory = newHistory;
-            doodleRedoStack = [];
-            redrawDoodle();
-            toggleDoodleMode(false);
-            notifyContentChanged();
-        } catch (e) {
-            console.error('mergeDoodle error', e);
-            fallbackInsert();
+function splitStrokeByEraser(stroke, eraserPoints, radius) {
+    const chunks = [];
+    let current = [];
+    stroke.points.forEach((point) => {
+        if (isPointErased(point, eraserPoints, radius)) {
+            if (current.length > 1) chunks.push(current);
+            current = [];
+        } else {
+            current.push(point);
         }
+    });
+    if (current.length > 1) chunks.push(current);
+
+    if (chunks.length === 0) return [];
+    if (chunks.length === 1 && chunks[0].length === stroke.points.length) return [stroke];
+    return chunks.map((points, index) => ({
+        ...stroke,
+        id: `${stroke.id}-erase-${Date.now()}-${index}`,
+        points
+    }));
+}
+
+function isPointErased(point, eraserPoints, radius) {
+    const radiusSq = radius * radius;
+    return eraserPoints.some((eraserPoint) => {
+        const dx = point.x - eraserPoint.x;
+        const dy = point.y - eraserPoint.y;
+        return dx * dx + dy * dy <= radiusSq;
+    });
+}
+
+function queueDoodleRender() {
+    if (!doodle.canvas || doodle.renderQueued) return;
+    doodle.renderQueued = true;
+    scheduleIdle(() => {
+        doodle.renderQueued = false;
+        redrawDoodle();
+    });
+}
+
+function redrawDoodle() {
+    const context = doodle.canvas.getContext('2d');
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.globalCompositeOperation = 'source-over';
+    context.globalAlpha = 1;
+    context.setLineDash([]);
+    context.clearRect(0, 0, doodle.canvas.width, doodle.canvas.height);
+    context.restore();
+
+    const ratio = window.devicePixelRatio || 1;
+    context.save();
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.globalCompositeOperation = 'source-over';
+    context.globalAlpha = 1;
+    context.setLineDash([]);
+    doodle.strokes.forEach((stroke) => renderStroke(stroke));
+    context.restore();
+    syncDoodleDataNode();
+}
+
+function renderStroke(stroke) {
+    const points = simplifyPoints(stroke.points, 0.8).map((point) => [point.x, point.y]);
+    if (points.length < 2) return;
+
+    const options = {
+        stroke: stroke.color,
+        strokeWidth: effectiveBrushSize(stroke.width),
+        roughness: stroke.roughness,
+        bowing: Math.min(4, 0.8 + stroke.roughness),
+        curveTightness: 0.15,
+        disableMultiStroke: stroke.width < 2
     };
 
-    if (img.complete) doMerge(); else img.onload = doMerge;
+    if (doodle.roughCanvas && typeof doodle.roughCanvas.curve === 'function') {
+        doodle.roughCanvas.curve(points, options);
+    } else {
+        renderCanvasFallback(points, options);
+    }
 }
 
-// 查找与当前选区最相关的图片元素（尝试多种策略以兼容不同光标/选区状态）
-function findTargetImage(range) {
+function renderCanvasFallback(points, options) {
+    const context = doodle.canvas.getContext('2d');
+    context.save();
+    context.strokeStyle = options.stroke;
+    context.lineWidth = options.strokeWidth;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    context.beginPath();
+    context.moveTo(points[0][0], points[0][1]);
+    for (let index = 1; index < points.length; index++) {
+        context.lineTo(points[index][0], points[index][1]);
+    }
+    context.stroke();
+    context.restore();
+}
+
+function simplifyPoints(points, minDistance) {
+    if (points.length <= 2) return points;
+    const simplified = [points[0]];
+    let previous = points[0];
+    for (let index = 1; index < points.length - 1; index++) {
+        const point = points[index];
+        const dx = point.x - previous.x;
+        const dy = point.y - previous.y;
+        if (dx * dx + dy * dy >= minDistance * minDistance) {
+            simplified.push(point);
+            previous = point;
+        }
+    }
+    simplified.push(points[points.length - 1]);
+    return simplified;
+}
+
+function pushDoodleHistory() {
+    doodle.undoStack.push(JSON.stringify({
+        strokes: doodle.strokes,
+        bitmapLayers: doodle.bitmapLayers
+    }));
+    if (doodle.undoStack.length > HISTORY_LIMIT) {
+        doodle.undoStack.shift();
+    }
+}
+
+function restoreDoodleSnapshot(snapshotJson) {
     try {
-        var node = range.startContainer;
-        if (node.nodeType === 3) node = node.parentNode;
-        if (!node) return null;
-        if (node.nodeName === 'IMG') return node;
-
-        // 检查起始容器的子节点或相邻节点
-        if (range.startContainer.nodeType === 1) {
-            var possible = range.startContainer.childNodes[range.startOffset];
-            if (possible && possible.nodeName === 'IMG') return possible;
-            var prev = range.startContainer.childNodes[range.startOffset - 1];
-            if (prev && prev.nodeName === 'IMG') return prev;
-        }
-
-        // 向上查找最近的 img 元素
-        var p = node;
-        while (p && p !== document.body) {
-            if (p.nodeName === 'IMG') return p;
-            // 查找子节点中的 img
-            if (p.querySelector) {
-                var found = p.querySelector('img');
-                if (found) return found;
-            }
-            p = p.parentNode;
-        }
-    } catch (e) {
-        console.error('findTargetImage error', e);
+        const snapshot = JSON.parse(snapshotJson);
+        doodle.strokes = Array.isArray(snapshot.strokes) ? snapshot.strokes : [];
+        doodle.bitmapLayers = Array.isArray(snapshot.bitmapLayers) ? snapshot.bitmapLayers : [];
+        queueDoodleRender();
+        persistDoodleChange();
+        notifyDoodleStateChanged();
+    } catch (error) {
+        console.error('restoreDoodleSnapshot failed', error);
     }
-    return null;
 }
 
-// 将笔画样式应用到指定的 CanvasRenderingContext2D 上（用于离屏合并）
-function setContextBrush(targetCtx, stroke) {
-    var type = stroke.type || 'pencil';
-    var color = stroke.color || '#000000';
-    var size = stroke.size || 3;
-    switch (type) {
-        case 'pencil':
-            targetCtx.globalAlpha = 0.8;
-            targetCtx.globalCompositeOperation = 'source-over';
-            targetCtx.strokeStyle = color;
-            targetCtx.lineWidth = size;
-            break;
-        case 'pen':
-            targetCtx.globalAlpha = 1.0;
-            targetCtx.globalCompositeOperation = 'source-over';
-            targetCtx.strokeStyle = color;
-            targetCtx.lineWidth = size;
-            break;
-        case 'marker':
-            targetCtx.globalAlpha = 0.9;
-            targetCtx.globalCompositeOperation = 'source-over';
-            targetCtx.lineWidth = size * 2;
-            targetCtx.strokeStyle = color;
-            break;
-        case 'watercolor':
-            targetCtx.globalAlpha = 0.3;
-            targetCtx.globalCompositeOperation = 'source-over';
-            targetCtx.lineWidth = size * 3;
-            targetCtx.strokeStyle = color;
-            break;
-        case 'highlighter':
-            targetCtx.globalAlpha = 0.25;
-            targetCtx.globalCompositeOperation = 'source-over';
-            targetCtx.lineWidth = size * 4;
-            targetCtx.strokeStyle = color;
-            break;
-        case 'eraser':
-            targetCtx.globalAlpha = 1.0;
-            targetCtx.globalCompositeOperation = 'destination-out';
-            targetCtx.strokeStyle = 'rgba(0,0,0,1)';
-            targetCtx.lineWidth = size * 3;
-            break;
-        default:
-            targetCtx.globalAlpha = 1.0;
-            targetCtx.globalCompositeOperation = 'source-over';
-            targetCtx.strokeStyle = color;
-            targetCtx.lineWidth = size;
-    }
-    targetCtx.lineCap = 'round';
-    targetCtx.lineJoin = 'round';
+function undoDoodle() {
+    if (doodle.undoStack.length === 0) return;
+    doodle.redoStack.push(JSON.stringify({
+        strokes: doodle.strokes,
+        bitmapLayers: doodle.bitmapLayers
+    }));
+    restoreDoodleSnapshot(doodle.undoStack.pop());
+}
+
+function redoDoodle() {
+    if (doodle.redoStack.length === 0) return;
+    doodle.undoStack.push(JSON.stringify({
+        strokes: doodle.strokes,
+        bitmapLayers: doodle.bitmapLayers
+    }));
+    restoreDoodleSnapshot(doodle.redoStack.pop());
+}
+
+function clearDoodle() {
+    if (doodle.strokes.length === 0 && doodle.bitmapLayers.length === 0) return;
+    pushDoodleHistory();
+    doodle.strokes = [];
+    doodle.bitmapLayers = [];
+    doodle.redoStack = [];
+    queueDoodleRender();
+    persistDoodleChange();
+    notifyDoodleStateChanged();
 }
 
 function toggleDoodleMode(active) {
-    isDoodleActive = active;
-    canvas.classList.toggle('active', active);
-    document.getElementById('paper').contentEditable = !active;
+    doodle.active = active;
+    doodle.canvas.classList.toggle('active', active);
+    paper.contentEditable = String(!active);
+    if (doodle.atrament) {
+        doodle.atrament.mode = active ? atramentModeForTool(doodle.currentTool) : MODE_DISABLED;
+    }
     if (active) {
+        resizeDoodleCanvas();
         document.body.style.overflow = 'hidden';
         document.documentElement.style.overflow = 'hidden';
-        // 重新调整画布大小以覆盖整个视口
-        resizeCanvas();
     } else {
         document.body.style.overflow = '';
         document.documentElement.style.overflow = '';
+        syncDoodleDataNode();
+        notifyContentChanged();
     }
+    notifyDoodleStateChanged();
 }
 
-// ==================== 贴纸功能 ====================
-function insertSticker(name) {
-    var paper = document.getElementById('paper');
-    paper.focus();
-    restoreSelection();
-    
-    var materialStickerMap = {
-        'heart': '<svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5C2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3C19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>',
-        'star': '<svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2L9.19 8.63L2 9.24l5.46 4.73L5.82 21z"/></svg>',
-        'smile': '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10s10-4.48 10-10S17.52 2 12 2zM8.5 8C9.33 8 10 8.67 10 9.5S9.33 11 8.5 11S7 10.33 7 9.5S7.67 8 8.5 8zm3.5 9.5c-2.33 0-4.31-1.46-5.11-3.5h10.22c-.8 2.04-2.78 3.5-5.11 3.5zm3.5-6.5c-.83 0-1.5-.67-1.5-1.5S14.67 8 15.5 8S17 8.67 17 9.5S16.33 11 15.5 11z"/></svg>',
-        'flower': '<svg viewBox="0 0 24 24"><path d="M12 22c4.97-4.02 8-8.1 8-12.2C20 5.47 16.42 2 12 2S4 5.47 4 9.8C4 13.9 7.03 17.98 12 22zm0-17c2.76 0 5 2.15 5 4.8c0 2.55-1.75 5.32-5 8.35c-3.25-3.03-5-5.8-5-8.35C7 7.15 9.24 5 12 5z"/></svg>',
-        'cloud': '<svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4C9.11 4 6.6 5.64 5.35 8.04C2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5c0-2.64-2.05-4.78-4.65-4.96z"/></svg>',
-        'book': '<svg viewBox="0 0 24 24"><path d="M21 4H3c-1.1 0-2 .9-2 2v13c0 .55.45 1 1 1h19c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM11 18H3V6h8v12zm10 0h-8V6h8v12z"/></svg>'
+function setBrush(type) {
+    doodle.currentTool = type === 'eraser' ? 'eraser' : type;
+    const preset = brushPreset(doodle.currentTool);
+    doodle.brush.roughness = preset.roughness;
+    doodle.brush.size = clampBrushSize(doodle.brush.size, preset);
+    applyBrushOptions();
+}
+
+function setBrushSize(size) {
+    const parsed = parseFloat(size);
+    doodle.brush.size = Number.isFinite(parsed)
+        ? clampBrushSize(parsed, brushPreset(doodle.currentTool))
+        : doodle.brush.size;
+    applyBrushOptions();
+}
+
+function setBrushColor(color) {
+    doodle.brush.color = color;
+    applyBrushOptions();
+}
+
+function setBrushRoughness(roughness) {
+    // Roughness is fixed by brush type; keep this as a no-op for bridge compatibility.
+    doodle.brush.roughness = brushPreset(doodle.currentTool).roughness;
+    notifyDoodleStateChanged();
+}
+
+function applyBrushOptions() {
+    if (!doodle.atrament) return;
+    doodle.atrament.color = doodle.brush.color;
+    doodle.atrament.weight = effectiveBrushSize(doodle.brush.size);
+    doodle.atrament.smoothing = doodle.brush.smoothing;
+    doodle.atrament.adaptiveStroke = doodle.brush.adaptiveStroke;
+    doodle.atrament.mode = doodle.active ? atramentModeForTool(doodle.currentTool) : MODE_DISABLED;
+    notifyDoodleStateChanged();
+}
+
+function brushPreset(tool) {
+    return BRUSH_PRESETS[tool] || BRUSH_PRESETS.pencil;
+}
+
+function clampBrushSize(size, preset) {
+    return Math.max(preset.minSize, Math.min(size, preset.maxSize));
+}
+
+function effectiveBrushSize(size) {
+    return Math.max(0.1, Number.isFinite(size) ? size : 1);
+}
+
+function getDoodleState() {
+    return {
+        canUndo: doodle.undoStack.length > 0,
+        canRedo: doodle.redoStack.length > 0,
+        dirty: doodle.strokes.length > 0 || doodle.bitmapLayers.length > 0,
+        active: doodle.active,
+        tool: doodle.currentTool,
+        brush: { ...doodle.brush }
     };
-    var span = document.createElement('span');
-    span.className = 'inserted-sticker';
-    span.innerHTML = materialStickerMap[name] || materialStickerMap['star'];
-    span.style.display = 'inline-flex';
-    span.style.width = '1.8em';
-    span.style.height = '1.8em';
-    span.style.verticalAlign = 'middle';
-    span.style.color = '#F49DA2';
-    if (span.firstElementChild) {
-        span.firstElementChild.style.width = '100%';
-        span.firstElementChild.style.height = '100%';
-        span.firstElementChild.style.fill = 'currentColor';
+}
+
+function notifyDoodleStateChanged() {
+    const stateJson = JSON.stringify(getDoodleState());
+    if (stateJson === doodle.lastStateJson) return;
+    doodle.lastStateJson = stateJson;
+    if (window.AndroidBridge && window.AndroidBridge.onDoodleStateChanged) {
+        window.AndroidBridge.onDoodleStateChanged(stateJson);
     }
-    span.contentEditable = 'false';
-    
-    var selection = window.getSelection();
-    if (selection.rangeCount > 0) {
-        var range = selection.getRangeAt(0);
-        range.deleteContents();
-        range.insertNode(span);
-        range.collapse(false);
-    } else {
-        paper.appendChild(span);
+}
+
+function getDoodleJson() {
+    return JSON.stringify({
+        version: DOODLE_SCHEMA_VERSION,
+        canvas: {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            dpr: window.devicePixelRatio || 1
+        },
+        strokes: doodle.strokes,
+        bitmapLayers: doodle.bitmapLayers,
+        updatedAt: Date.now()
+    });
+}
+
+function loadDoodleJson(json) {
+    if (!json || json === 'null') {
+        doodle.strokes = [];
+        doodle.bitmapLayers = [];
+        queueDoodleRender();
+        return;
     }
-    saveSelection();
+    try {
+        const parsed = typeof json === 'string' ? JSON.parse(json) : json;
+        doodle.strokes = Array.isArray(parsed.strokes) ? parsed.strokes : [];
+        doodle.bitmapLayers = Array.isArray(parsed.bitmapLayers) ? parsed.bitmapLayers : [];
+        doodle.undoStack = [];
+        doodle.redoStack = [];
+        queueDoodleRender();
+        notifyDoodleStateChanged();
+    } catch (error) {
+        console.error('loadDoodleJson failed', error);
+    }
+}
+
+function exportDoodleImage() {
+    redrawDoodle();
+    return doodle.canvas.toDataURL('image/png');
+}
+
+function mergeDoodle() {
+    syncDoodleDataNode();
     notifyContentChanged();
 }
 
-// ==================== 图片插入 ====================
+function insertDoodleImage() {
+    const image = document.createElement('img');
+    image.src = exportDoodleImage();
+    image.className = 'inserted-image doodle-export';
+    image.style.maxWidth = '100%';
+    image.style.cursor = 'pointer';
+    bindImageClick(image);
+    insertNodeAtSelection(image);
+    notifyContentChanged();
+}
+
+function syncDoodleDataNode() {
+    if (!paper) return;
+    const json = getDoodleJson();
+    let node = paper.querySelector(DOODLE_NODE_SELECTOR);
+    const hasData = doodle.strokes.length > 0 || doodle.bitmapLayers.length > 0;
+    if (!hasData) {
+        node?.remove();
+        return;
+    }
+    if (!node) {
+        node = document.createElement('div');
+        node.className = DOODLE_NODE_CLASS;
+        node.contentEditable = 'false';
+        paper.appendChild(node);
+    }
+    node.setAttribute('data-doodle-json', encodeURIComponent(json));
+}
+
+function persistDoodleChange() {
+    syncDoodleDataNode();
+    notifyContentChanged();
+}
+
+function extractDoodleDataNode() {
+    const node = paper.querySelector(DOODLE_NODE_SELECTOR);
+    if (!node) {
+        loadDoodleJson('');
+        return;
+    }
+    const encoded = node.getAttribute('data-doodle-json') || '';
+    try {
+        loadDoodleJson(decodeURIComponent(encoded));
+    } catch (error) {
+        loadDoodleJson('');
+    }
+}
+
+// ==================== 贴纸和图片 ====================
+
+function insertSticker(name) {
+    const stickerMap = {
+        heart: '❤️',
+        star: '⭐',
+        smile: '😊',
+        flower: '🌸',
+        sun: '☀️',
+        moon: '🌙',
+        cloud: '☁️',
+        rain: '🌧️',
+        snow: '❄️',
+        leaf: '🍃',
+        cat: '🐱',
+        dog: '🐶',
+        bird: '🐦',
+        fish: '🐟',
+        cake: '🎂',
+        coffee: '☕',
+        book: '📖',
+        music: '🎵',
+        sparkle: '✨',
+        ribbon: '🎀'
+    };
+    const span = document.createElement('span');
+    span.className = 'inserted-sticker';
+    span.textContent = stickerMap[name] || stickerMap.star;
+    span.contentEditable = 'false';
+    insertNodeAtSelection(span);
+    notifyContentChanged();
+}
+
 function insertImage(imageSrc) {
-    var paper = document.getElementById('paper');
+    const image = document.createElement('img');
+    image.src = imageSrc;
+    image.className = 'inserted-image';
+    image.style.maxWidth = '100%';
+    image.style.cursor = 'pointer';
+    bindImageClick(image);
+    insertNodeAtSelection(image);
+    notifyContentChanged();
+}
+
+function insertNodeAtSelection(node) {
     paper.focus();
     restoreSelection();
-    
-    var img = document.createElement('img');
-    img.src = imageSrc;
-    img.className = 'inserted-image';
-    img.style.maxWidth = '100%';
-    img.style.cursor = 'pointer';
-    bindImageClick(img);
-    
-    var selection = window.getSelection();
+    const selection = window.getSelection();
     if (selection.rangeCount > 0) {
-        var range = selection.getRangeAt(0);
+        const range = selection.getRangeAt(0);
         range.deleteContents();
-        range.insertNode(img);
+        range.insertNode(node);
         range.collapse(false);
     } else {
-        paper.appendChild(img);
+        paper.appendChild(node);
     }
     saveSelection();
-    notifyContentChanged();
 }
 
-function bindImageClick(img) {
-    img.style.cursor = 'pointer';
-    img.onclick = function() {
+function bindImageClick(image) {
+    image.style.cursor = 'pointer';
+    image.onclick = () => {
         try {
             if (window.AndroidBridge && window.AndroidBridge.onImageClicked) {
-                window.AndroidBridge.onImageClicked(img.src);
+                window.AndroidBridge.onImageClicked(image.src);
             }
-        } catch (e) { console.error(e); }
+        } catch (error) {
+            console.error(error);
+        }
     };
 }
 
 function bindImageClickHandlers() {
-    var images = document.getElementById('paper').getElementsByTagName('img');
-    for (var i = 0; i < images.length; i++) {
-        bindImageClick(images[i]);
-    }
+    Array.from(paper.getElementsByTagName('img')).forEach(bindImageClick);
 }
 
-// ==================== 主题切换 ====================
+// ==================== 主题和内容 ====================
+
 function applyTheme(isDark, bgColor, textColor, paperBgStart, paperBgMid, paperBgEnd, lineColor) {
-    var root = document.documentElement;
+    const root = document.documentElement;
     root.style.setProperty('--bg-color', bgColor);
     root.style.setProperty('--text-color', textColor);
     root.style.setProperty('--paper-bg-start', paperBgStart);
@@ -661,38 +798,98 @@ function applyTheme(isDark, bgColor, textColor, paperBgStart, paperBgMid, paperB
 }
 
 function applyEditorSettings(fontSizeSp) {
-    var size = parseInt(fontSizeSp, 10);
-    if (isNaN(size)) size = 16;
-    size = Math.max(12, Math.min(size, 28));
-    document.documentElement.style.setProperty('--editor-font-size', size + 'px');
-}
-
-// ==================== 内容获取/设置 ====================
-function hasPendingDoodle() {
-    return doodleHistory.length > 0;
-}
-
-function flushDoodleToContent() {
-    if (!hasPendingDoodle()) return;
-    mergeDoodle();
+    let size = parseInt(fontSizeSp, 10);
+    if (Number.isNaN(size)) size = 16;
+    document.documentElement.style.setProperty('--editor-font-size', `${Math.max(12, Math.min(size, 28))}px`);
 }
 
 function getContent() {
-    flushDoodleToContent();
-    return document.getElementById('paper').innerHTML;
+    syncDoodleDataNode();
+    return paper.innerHTML;
 }
 
 function setContent(html) {
-    var paper = document.getElementById('paper');
-    paper.innerHTML = html || '';
+    paper.innerHTML = sanitizeEditorHtml(html || '');
     bindImageClickHandlers();
-    // 重置选区
+    extractDoodleDataNode();
     savedSelectionRange = null;
+    requestAnimationFrame(() => {
+        resizeDoodleCanvas();
+        syncDoodleCanvasScroll();
+    });
     notifyContentChanged();
+}
+
+function sanitizeEditorHtml(html) {
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    template.content.querySelectorAll(
+        'script,iframe,object,embed,link,meta,base,form,input,button,textarea,select,foreignObject'
+    ).forEach((node) => node.remove());
+    template.content.querySelectorAll('*').forEach((node) => {
+        Array.from(node.attributes).forEach((attribute) => {
+            const name = attribute.name.toLowerCase();
+            const value = attribute.value.trim().toLowerCase();
+            const dangerousUrl = name === 'src' || name === 'href' || name === 'xlink:href';
+            const unsafeFileUrl = dangerousUrl &&
+                value.indexOf('file://') === 0 &&
+                value.indexOf('/journal_media/') < 0;
+            if (
+                name.indexOf('on') === 0 ||
+                name === 'srcdoc' ||
+                (dangerousUrl && value.indexOf('javascript:') === 0) ||
+                unsafeFileUrl ||
+                (name === 'style' && (value.indexOf('url(') >= 0 || value.indexOf('expression(') >= 0))
+            ) {
+                node.removeAttribute(attribute.name);
+            }
+        });
+    });
+    return template.innerHTML;
 }
 
 function notifyContentChanged() {
     if (window.AndroidBridge && window.AndroidBridge.onContentChanged) {
-        window.AndroidBridge.onContentChanged(document.getElementById('paper').innerHTML);
+        window.AndroidBridge.onContentChanged(paper.innerHTML);
     }
 }
+
+function round(value) {
+    return Math.round(value * 100) / 100;
+}
+
+// Android evaluates these names directly, so keep them on window.
+Object.assign(window, {
+    applyEditorSettings,
+    applyTheme,
+    changeColor,
+    changeFont,
+    changeSize,
+    clearDoodle,
+    execCmd,
+    exportDoodleImage,
+    getContent,
+    getDoodleJson,
+    getDoodleState,
+    insertDoodleImage,
+    insertImage,
+    insertSticker,
+    loadDoodleJson,
+    mergeDoodle,
+    redoDoodle,
+    setBrush,
+    setBrushColor,
+    setBrushRoughness,
+    setBrushSize,
+    setContent,
+    setDoodleTool: setBrush,
+    setBrushOptions: (optionsJson) => {
+        const options = typeof optionsJson === 'string' ? JSON.parse(optionsJson) : optionsJson;
+        if (options.color) setBrushColor(options.color);
+        if (options.size || options.width) setBrushSize(options.size || options.width);
+        if (options.roughness !== undefined) setBrushRoughness(options.roughness);
+        if (options.tool) setBrush(options.tool);
+    },
+    toggleDoodleMode,
+    undoDoodle
+});

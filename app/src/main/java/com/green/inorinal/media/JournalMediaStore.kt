@@ -11,10 +11,23 @@ class JournalMediaStore(context: Context) {
 
     fun mediaRoot(): File = rootDir
 
-    fun entryDir(entryId: String): File = File(rootDir, entryId).also { it.mkdirs() }
+    fun entryDir(entryId: String): File {
+        require(isSafeEntryId(entryId)) { "Invalid journal entry id" }
+        return File(rootDir, entryId).also { it.mkdirs() }
+    }
+
+    fun deleteEntryMedia(entryId: String) {
+        val root = rootDir.canonicalFile
+        val directory = File(root, entryId).canonicalFile
+        if (directory.parentFile == root && directory.exists()) {
+            directory.deleteRecursively()
+        }
+    }
 
     fun saveImage(entryId: String, bytes: ByteArray, extension: String = "jpg"): File {
-        val safeExtension = extension.lowercase().trimStart('.').ifBlank { "jpg" }
+        val safeExtension = extension.lowercase().trimStart('.')
+            .takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
+            ?: "jpg"
         val file = File(entryDir(entryId), "${System.currentTimeMillis()}_${UUID.randomUUID()}.$safeExtension")
         file.writeBytes(bytes)
         return file
@@ -41,19 +54,22 @@ class JournalMediaStore(context: Context) {
     fun toDisplayableHtml(html: String): String = html
 
     fun referencedMediaFiles(html: String): List<File> {
+        val rootPath = rootDir.canonicalPath + File.separator
         return FILE_URI_REGEX.findAll(html)
             .mapNotNull { match ->
                 runCatching { File(Uri.parse(match.value).path.orEmpty()) }.getOrNull()
             }
             .filter { file ->
-                file.exists() && file.canonicalPath.startsWith(rootDir.canonicalPath)
+                file.exists() && runCatching {
+                    file.canonicalPath.startsWith(rootPath)
+                }.getOrDefault(false)
             }
-            .distinctBy { it.canonicalPath }
+            .distinctBy { runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) }
             .toList()
     }
 
     fun toBackupHtml(html: String): String {
-        val rootPath = rootDir.canonicalPath
+        val rootPath = rootDir.canonicalPath + File.separator
         return FILE_URI_REGEX.replace(html) { match ->
             val file = runCatching { File(Uri.parse(match.value).path.orEmpty()) }.getOrNull()
                 ?: return@replace match.value
@@ -80,7 +96,10 @@ class JournalMediaStore(context: Context) {
             Regex("""file://[^\s"'<>]+""")
         private val BACKUP_MEDIA_REGEX =
             Regex("""media/([^/"'<>]+)/([^"'<>]+)""")
+        private val SAFE_ENTRY_ID_REGEX = Regex("[A-Za-z0-9_-]{1,128}")
 
         fun File.toUriString(): String = Uri.fromFile(this).toString()
+
+        fun isSafeEntryId(entryId: String): Boolean = SAFE_ENTRY_ID_REGEX.matches(entryId)
     }
 }

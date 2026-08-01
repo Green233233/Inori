@@ -47,7 +47,9 @@ fun SettingsScreen(
             text = {
                 Text(
                     "开启后应用会自动记录运行日志，可能会降低运行速度并增大应用所占磁盘空间。" +
-                        "日志会保存到应用专属目录，便于开发与调试。是否继续？"
+                        "日志只记录技术事件和脱敏后的崩溃堆栈，不记录日记标题、正文或搜索内容；" +
+                        "单个日志文件最大 2 MB，最多保留 7 天。日志会保存到应用专属目录。" +
+                        "是否继续？"
                 )
             },
             confirmButton = {
@@ -254,10 +256,15 @@ fun SettingsScreen(
                                 showDebugConfirmDialog = true
                             } else {
                                 onDebugModeChange(false)
-                                Toast.makeText(context, "调试模式已关闭", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "调试模式已关闭，已有日志将被删除", Toast.LENGTH_SHORT).show()
                             }
                         }
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    SettingItem("删除调试日志") {
+                        DebugLog.clearLogs()
+                        Toast.makeText(context, "调试日志已删除", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
 

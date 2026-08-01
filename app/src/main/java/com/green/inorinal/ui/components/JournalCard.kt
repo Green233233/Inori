@@ -4,21 +4,29 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.DpOffset
-import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -28,7 +36,6 @@ import com.green.inorinal.data.JournalEntry
 import com.green.inorinal.ui.icons.MoodIcon
 import com.green.inorinal.ui.icons.WeatherIcon
 import com.green.inorinal.util.htmlToPlainText
-import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -38,152 +45,197 @@ fun JournalCard(
     onFavoriteClick: () -> Unit = {},
     onDeleteClick: (() -> Unit)? = null
 ) {
-    val dateFormatter = DateTimeFormatter.ofPattern("M月d日 EEEE")
-    var showContextMenu by remember { mutableStateOf(false) }
-    var cardHeightPx by remember { mutableIntStateOf(0) }
-    val density = LocalDensity.current
-    val menuHeight = 48.dp
+    var showMenu by remember { mutableStateOf(false) }
+    val preview = remember(entry.content) { htmlToPlainText(entry.content).trim() }
+    val cardShape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+    val themePrimary = MaterialTheme.colorScheme.primary
+    val complementaryColor = Color(
+        red = 1f - themePrimary.red,
+        green = 1f - themePrimary.green,
+        blue = 1f - themePrimary.blue,
+        alpha = 1f
+    )
+    val cardGradient = Brush.radialGradient(
+        colors = listOf(
+            complementaryColor.copy(alpha = 0.10f),
+            complementaryColor.copy(alpha = 0.045f),
+            Color.Transparent
+        ),
+        radius = 560f
+    )
 
-    Box(modifier = Modifier.fillMaxWidth()) {
-        Card(
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 104.dp)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { showMenu = true }
+            ),
+        shape = cardShape,
+        colors = CardDefaults.cardColors(
+            containerColor = Color.Transparent
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .onGloballyPositioned { cardHeightPx = it.size.height }
-                .combinedClickable(
-                    onClick = onClick,
-                    onLongClick = { showContextMenu = true }
-                ),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
+                .background(cardGradient)
         ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.06f),
-                            MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    )
-                )
-                .padding(16.dp)
-        ) {
-            // 日期、天气和操作行
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, top = 14.dp, end = 8.dp, bottom = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = entry.date.format(dateFormatter),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    WeatherIcon(entry.weather, size = 16.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(8.dp))
-                    MoodIcon(entry.mood, size = 16.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    // 收藏按钮 - 始终可见
-                    Spacer(Modifier.width(4.dp))
-                    IconButton(
-                        onClick = onFavoriteClick,
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (entry.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                            contentDescription = if (entry.isFavorite) "取消收藏" else "收藏",
-                            modifier = Modifier.size(16.dp),
-                            tint = if (entry.isFavorite) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
+                DateBlock(entry)
+                Spacer(Modifier.width(14.dp))
 
-            Spacer(Modifier.height(8.dp))
-
-            // 标题
-            Text(
-                text = entry.title,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            Spacer(Modifier.height(6.dp))
-
-            // 分类标签
-            val categoryLabel = when (entry.category) {
-                Category.DAILY -> "日常"
-                Category.WORK -> "工作"
-                Category.GOAL -> "目标"
-                Category.INSPIRATION -> "灵感"
-                Category.EMOTION -> "情绪"
-                else -> null
-            }
-            if (categoryLabel != null) {
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                    modifier = Modifier.padding(bottom = 6.dp)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = categoryLabel,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        text = entry.title.ifBlank { "未命名日记" },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                }
-            }
-
-            // 内容预览
-            if (entry.content.isNotBlank()) {
-                val plainText = htmlToPlainText(entry.content)
-                if (plainText.isNotBlank()) {
                     Text(
-                        text = plainText,
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 20.sp
+                        text = preview.ifBlank { "暂无正文" },
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                            alpha = if (preview.isBlank()) 0.58f else 0.86f
+                        ),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
-                }
-            }
-        }
-        }
-
-        if (showContextMenu && onDeleteClick != null) {
-            DropdownMenu(
-                expanded = showContextMenu,
-                onDismissRequest = { showContextMenu = false },
-                offset = with(density) {
-                    DpOffset(0.dp, (-cardHeightPx.toDp() - menuHeight - 4.dp))
-                },
-                properties = PopupProperties(focusable = true)
-            ) {
-                DropdownMenuItem(
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.Delete,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.error
+                    Spacer(Modifier.size(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StatusPill {
+                            WeatherIcon(
+                                weather = entry.weather.normalized(),
+                                size = 15.dp,
+                                tint = MaterialTheme.colorScheme.primary
                             )
-                            Spacer(Modifier.width(8.dp))
-                            Text("删除日记", color = MaterialTheme.colorScheme.error)
                         }
-                    },
-                    onClick = {
-                        showContextMenu = false
-                        onDeleteClick()
+                        StatusPill {
+                            MoodIcon(
+                                mood = entry.mood.normalized(),
+                                size = 15.dp,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        categoryLabel(entry.category)?.let { label ->
+                            StatusPill { Text(label, fontSize = 10.sp) }
+                        }
                     }
-                )
+                }
+
+                Box {
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = "更多操作",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(if (entry.isFavorite) "取消收藏" else "收藏") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = if (entry.isFavorite) {
+                                        Icons.Filled.Favorite
+                                    } else {
+                                        Icons.Filled.FavoriteBorder
+                                    },
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onFavoriteClick()
+                            }
+                        )
+                        if (onDeleteClick != null) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text("删除", color = MaterialTheme.colorScheme.error)
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Filled.Delete,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    onDeleteClick()
+                                }
+                            )
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun DateBlock(entry: JournalEntry) {
+    Column(
+        modifier = Modifier.width(52.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = entry.date.dayOfMonth.toString(),
+            fontSize = 34.sp,
+            lineHeight = 34.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "${entry.date.monthValue}月",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun StatusPill(content: @Composable RowScope.() -> Unit) {
+    Surface(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content
+        )
+    }
+}
+
+private fun categoryLabel(category: Category): String? = when (category) {
+    Category.DAILY -> "日常"
+    Category.WORK -> "工作"
+    Category.GOAL -> "目标"
+    Category.INSPIRATION -> "灵感"
+    Category.EMOTION -> "情绪"
+    Category.ALL -> null
 }

@@ -1,17 +1,32 @@
 package com.green.inorinal
 
+import com.green.inorinal.data.Category
+import com.green.inorinal.data.Converters
+import com.green.inorinal.data.Mood
+import com.green.inorinal.data.Weather
 import org.junit.Test
 
 import org.junit.Assert.*
 
-/**
- * Example local unit test, which will execute on the development machine (host).
- *
- * See [testing documentation](http://d.android.com/tools/testing).
- */
 class ExampleUnitTest {
+    private val converters = Converters()
+
     @Test
-    fun addition_isCorrect() {
-        assertEquals(4, 2 + 2)
+    fun legacyWeatherValuesAreNormalized() {
+        assertEquals(Weather.CLOUDY, converters.toWeather("SNOWY"))
+        assertEquals("CLOUDY", converters.fromWeather(Weather.SNOWY))
+    }
+
+    @Test
+    fun legacyMoodValuesAreNormalized() {
+        assertEquals(Mood.HAPPY, converters.toMood("EXCITED"))
+        assertEquals(Mood.HAPPY, converters.toMood("PROUD"))
+        assertEquals(Mood.CALM, converters.toMood("EMOTIONAL"))
+        assertEquals("CALM", converters.fromMood(Mood.EMOTIONAL))
+    }
+
+    @Test
+    fun invalidCategoryFallsBackToDaily() {
+        assertEquals(Category.DAILY, converters.toCategory("UNKNOWN"))
     }
 }

@@ -100,9 +100,9 @@ fun CategoryEntriesScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(vertical = 16.dp)
+                contentPadding = PaddingValues(vertical = 12.dp)
             ) {
                 items(filteredEntries, key = { it.id }) { entry ->
                     JournalCard(

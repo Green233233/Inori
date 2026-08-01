@@ -24,7 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.green.inorinal.data.JournalViewModel
-import com.green.inorinal.ui.icons.CloudAvatarIcon
+import com.green.inorinal.ui.icons.ProfileAvatarIcon
 import com.green.inorinal.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -110,7 +110,7 @@ fun ProfileScreen(
         ) {
             Spacer(Modifier.height(16.dp))
 
-            // 云朵头像
+            // Material Icons 开源头像图标
             Box(
                 modifier = Modifier
                     .size(100.dp)
@@ -118,7 +118,7 @@ fun ProfileScreen(
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
-                CloudAvatarIcon(size = 80.dp, tint = MaterialTheme.colorScheme.primary)
+                ProfileAvatarIcon(size = 80.dp, tint = MaterialTheme.colorScheme.primary)
             }
 
             Spacer(Modifier.height(16.dp))

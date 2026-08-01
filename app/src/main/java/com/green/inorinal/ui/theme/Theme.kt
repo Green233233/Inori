@@ -109,6 +109,52 @@ private val MintDarkColorScheme = darkColorScheme(
     onError = Color(0xFF690005)
 )
 
+// ==================== 长春花浅色 ====================
+private val PeriwinkleLightColorScheme = lightColorScheme(
+    primary = PeriwinklePrimary,
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Periwinkle,
+    onPrimaryContainer = PeriwinkleOnContainer,
+    secondary = PeriwinkleAccent,
+    onSecondary = DarkGrey,
+    secondaryContainer = PeriwinklePale,
+    onSecondaryContainer = PeriwinkleOnContainer,
+    tertiary = PeriwinkleContainer,
+    onTertiary = DarkGrey,
+    background = RiceWhite,
+    onBackground = DarkGrey,
+    surface = OffWhite,
+    onSurface = DarkGrey,
+    surfaceVariant = PeriwinklePale,
+    onSurfaceVariant = Color(0xFF55536D),
+    outline = Color(0xFF777491),
+    error = Color(0xFFBA1A1A),
+    onError = Color(0xFFFFFFFF)
+)
+
+// ==================== 长春花深色 ====================
+private val PeriwinkleDarkColorScheme = darkColorScheme(
+    primary = PeriwinkleDarkPrimary,
+    onPrimary = PeriwinkleDarkBackground,
+    primaryContainer = Color(0xFF3C397A),
+    onPrimaryContainer = PeriwinkleContainer,
+    secondary = PeriwinkleAccent,
+    onSecondary = PeriwinkleDarkBackground,
+    secondaryContainer = PeriwinkleDarkSurfaceVariant,
+    onSecondaryContainer = PeriwinklePale,
+    tertiary = PeriwinkleContainer,
+    onTertiary = PeriwinkleDarkBackground,
+    background = PeriwinkleDarkBackground,
+    onBackground = PeriwinkleDarkOnBackground,
+    surface = PeriwinkleDarkSurface,
+    onSurface = PeriwinkleDarkOnSurface,
+    surfaceVariant = PeriwinkleDarkSurfaceVariant,
+    onSurfaceVariant = PeriwinkleDarkOnSurfaceVariant,
+    outline = Color(0xFF8582A8),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005)
+)
+
 @Composable
 fun InorinalTheme(
     colorStyle: AppColorStyle = AppColorStyle.SAKURA,
@@ -136,6 +182,7 @@ fun InorinalTheme(
     val colorScheme = when (colorStyle) {
         AppColorStyle.SAKURA -> if (useDarkTheme) SakuraDarkColorScheme else SakuraLightColorScheme
         AppColorStyle.MINT -> if (useDarkTheme) MintDarkColorScheme else MintLightColorScheme
+        AppColorStyle.PERIWINKLE -> if (useDarkTheme) PeriwinkleDarkColorScheme else PeriwinkleLightColorScheme
         AppColorStyle.SYSTEM -> {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 if (useDarkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)

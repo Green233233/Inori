@@ -12,8 +12,8 @@ android {
         applicationId = "com.green.inorinal"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "Alpha v0.1.5"
+        versionCode = 5
+        versionName = "Alpha v0.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -34,8 +34,6 @@ android {
 }
 
 dependencies {
-    implementation("com.theokanning.openai-gpt3-java:service:0.18.2")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

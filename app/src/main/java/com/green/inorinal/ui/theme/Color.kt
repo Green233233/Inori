@@ -23,6 +23,14 @@ val MintGradientEnd = Color(0xFF429E9D)
 val MintGreenContainer = Color(0xFFB2DFDB)
 val MintOnGreenContainer = Color(0xFF1A3B3A)
 
+// ==================== 长春花浅色 ====================
+val Periwinkle = Color(0xFFCCCCFF)
+val PeriwinklePrimary = Color(0xFF6F6BC7)
+val PeriwinkleContainer = Color(0xFFE2E0FF)
+val PeriwinkleOnContainer = Color(0xFF23215A)
+val PeriwinklePale = Color(0xFFF0EFFF)
+val PeriwinkleAccent = Color(0xFFB8C7FF)
+
 // ==================== 樱花粉深色 ====================
 val SakuraDarkPrimary = Color(0xFFFFB6C1)
 val SakuraDarkSurface = Color(0xFF2A1A1E)
@@ -40,6 +48,15 @@ val MintDarkOnSurface = Color(0xFFE0F2F1)
 val MintDarkOnBackground = Color(0xFFE0F2F1)
 val MintDarkSurfaceVariant = Color(0xFF253D3A)
 val MintDarkOnSurfaceVariant = Color(0xFFB2DFDB)
+
+// ==================== 长春花深色 ====================
+val PeriwinkleDarkPrimary = Color(0xFFCCCCFF)
+val PeriwinkleDarkSurface = Color(0xFF1C1B2F)
+val PeriwinkleDarkBackground = Color(0xFF141323)
+val PeriwinkleDarkOnSurface = Color(0xFFECEAFF)
+val PeriwinkleDarkOnBackground = Color(0xFFECEAFF)
+val PeriwinkleDarkSurfaceVariant = Color(0xFF2A2946)
+val PeriwinkleDarkOnSurfaceVariant = Color(0xFFD0CCF2)
 
 // ==================== 通用中性色 ====================
 val RiceWhite = Color(0xFFFAF7F2)

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -23,23 +24,35 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.activity.compose.BackHandler
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import android.util.Base64
 import android.graphics.BitmapFactory
 import android.widget.ImageView
 import com.green.inorinal.data.*
+import com.green.inorinal.debug.DebugLog
 import com.green.inorinal.editor.EditorBridge
 import com.green.inorinal.ui.icons.WeatherIcon
 import com.green.inorinal.ui.icons.MoodIcon
 import com.green.inorinal.ui.theme.*
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
+import java.util.Locale
 import java.util.UUID
 
 private data class EditorSaveSnapshot(
@@ -52,11 +65,16 @@ private data class EditorSaveSnapshot(
 
 private data class StickerOption(
     val name: String,
-    val label: String,
-    val icon: ImageVector
+    val emoji: String
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+private data class BrushSizeRange(
+    val min: Float,
+    val max: Float,
+    val default: Float
+)
+
+@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
 @Composable
 fun EditorScreen(
     viewModel: JournalViewModel,
@@ -66,6 +84,7 @@ fun EditorScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val bridge = remember { EditorBridge(context) }
     val scope = rememberCoroutineScope()
     var entry by remember { mutableStateOf<JournalEntry?>(null) }
@@ -82,6 +101,7 @@ fun EditorScreen(
     var previewImageDataUrl by remember { mutableStateOf<String?>(null) }
     var hasLoadedEntry by remember { mutableStateOf(entryId == null) }
     var lastSavedSnapshot by remember { mutableStateOf<EditorSaveSnapshot?>(null) }
+    val saveMutex = remember { Mutex() }
 
     // 加载现有日记
     LaunchedEffect(entryId) {
@@ -92,8 +112,8 @@ fun EditorScreen(
                 entry = loaded
                 bridge.currentEntryId = loaded.id
                 title = loaded.title
-                selectedWeather = loaded.weather
-                selectedMood = loaded.mood
+                selectedWeather = loaded.weather.normalized()
+                selectedMood = loaded.mood.normalized()
                 selectedCategory = loaded.category
                 // 关键修复：使用 setPendingContent 而非直接 setContent
                 // 这确保内容在 WebView 页面加载完成后才被设置
@@ -101,10 +121,14 @@ fun EditorScreen(
                 lastSavedSnapshot = EditorSaveSnapshot(
                     title = loaded.title,
                     content = loaded.content,
-                    weather = loaded.weather,
-                    mood = loaded.mood,
+                    weather = loaded.weather.normalized(),
+                    mood = loaded.mood.normalized(),
                     category = loaded.category
                 )
+            } else {
+                Toast.makeText(context, "该日记不存在或已被删除", Toast.LENGTH_SHORT).show()
+                onBack()
+                return@LaunchedEffect
             }
         }
         hasLoadedEntry = true
@@ -160,53 +184,80 @@ fun EditorScreen(
     }
 
     // 即时保存日记
-    suspend fun saveEntry(content: String = bridge.getCurrentContent()) {
-        if (!hasLoadedEntry) {
-            return
-        }
-        val currentEntry = entry
-        if (currentEntry == null && !hasMeaningfulChanges(content)) {
-            return
-        }
+    suspend fun saveEntry(content: String = bridge.getCurrentContent()): Boolean {
+        return saveMutex.withLock {
+            if (!hasLoadedEntry) {
+                return@withLock true
+            }
+            val currentEntry = entry
+            if (currentEntry == null && !hasMeaningfulChanges(content)) {
+                return@withLock true
+            }
 
-        val baseEntry = currentEntry ?: createDraftEntry()
-        bridge.currentEntryId = baseEntry.id
-        val snapshot = EditorSaveSnapshot(
-            title = title.ifBlank { baseEntry.title },
-            content = content,
-            weather = selectedWeather,
-            mood = selectedMood,
-            category = selectedCategory
-        )
-        if (lastSavedSnapshot == snapshot) {
-            return
-        }
-        val savedEntry = viewModel.saveEntry(
-            baseEntry.copy(
-                title = snapshot.title,
-                content = snapshot.content,
-                weather = snapshot.weather,
-                mood = snapshot.mood,
-                category = snapshot.category
+            val baseEntry = currentEntry ?: createDraftEntry()
+            bridge.currentEntryId = baseEntry.id
+            val snapshot = EditorSaveSnapshot(
+                title = title.ifBlank { baseEntry.title },
+                content = content,
+                weather = selectedWeather,
+                mood = selectedMood,
+                category = selectedCategory
             )
-        )
-        entry = savedEntry
-        bridge.currentEntryId = savedEntry.id
-        lastSavedSnapshot = snapshot.copy(content = savedEntry.content)
+            if (lastSavedSnapshot == snapshot) {
+                return@withLock true
+            }
+
+            try {
+                val savedEntry = viewModel.saveEntry(
+                    baseEntry.copy(
+                        title = snapshot.title,
+                        content = snapshot.content,
+                        weather = snapshot.weather,
+                        mood = snapshot.mood,
+                        category = snapshot.category
+                    ),
+                    refreshStatistics = currentEntry == null
+                )
+                entry = savedEntry
+                bridge.currentEntryId = savedEntry.id
+                lastSavedSnapshot = snapshot.copy(content = savedEntry.content)
+                if (savedEntry.content != snapshot.content) {
+                    bridge.setContent(savedEntry.content)
+                }
+                true
+            } catch (_: Exception) {
+                DebugLog.event(DebugLog.AppEvent.JOURNAL_SAVE_FAILED)
+                false
+            }
+        }
     }
 
-    suspend fun saveLatestContent() {
-        saveEntry(bridge.getContentForSave())
+    suspend fun saveLatestContent(): Boolean {
+        return saveEntry(bridge.getContentForSave())
+    }
+
+    fun saveAndExit() {
+        if (isSaving) return
+        isSaving = true
+        scope.launch {
+            if (saveLatestContent()) {
+                onBack()
+            } else {
+                isSaving = false
+                Toast.makeText(context, "保存失败，请检查存储空间后重试", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
-        bridge.content.collect { content ->
-            saveEntry(content)
+        bridge.content.debounce(350).collectLatest {
+            saveLatestContent()
         }
     }
 
     LaunchedEffect(title, selectedWeather, selectedMood, selectedCategory, hasLoadedEntry) {
-        saveEntry()
+        delay(350)
+        saveLatestContent()
     }
 
     LaunchedEffect(fontSizeSp) {
@@ -215,28 +266,17 @@ fun EditorScreen(
 
     // 处理系统返回按钮：保存并返回
     BackHandler(enabled = true) {
-        if (!isSaving) {
-            isSaving = true
-            scope.launch {
-                saveLatestContent()
-                onBack()
-            }
-        }
+        saveAndExit()
     }
 
     Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding(),
         topBar = {
             TopAppBar(
                 navigationIcon = {
-                    IconButton(onClick = {
-                        if (!isSaving) {
-                            isSaving = true
-                            scope.launch {
-                                saveLatestContent()
-                                onBack()
-                            }
-                        }
-                    }) {
+                    IconButton(onClick = ::saveAndExit, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "返回并保存",
@@ -245,32 +285,62 @@ fun EditorScreen(
                     }
                 },
                 title = {
-                    OutlinedTextField(
+                    BasicTextField(
                         value = title,
                         onValueChange = { title = it },
-                        placeholder = { Text("标题", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                        modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                            unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
-                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                        ),
                         textStyle = LocalTextStyle.current.copy(
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 18.sp
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (title.isBlank()) {
+                                    Text(
+                                        "标题",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
                     )
                 },
                 actions = {
-                    IconButton(onClick = { showWeatherPicker = !showWeatherPicker }) {
+                    IconButton(onClick = {
+                        showWeatherPicker = !showWeatherPicker
+                        showMoodPicker = false
+                        showCategoryPicker = false
+                        currentToolbar = "none"
+                        bridge.toggleDoodleMode(false)
+                    }) {
                         WeatherIcon(selectedWeather, size = 20.dp, tint = MaterialTheme.colorScheme.primary)
                     }
-                    IconButton(onClick = { showMoodPicker = !showMoodPicker }) {
+                    IconButton(onClick = {
+                        showMoodPicker = !showMoodPicker
+                        showWeatherPicker = false
+                        showCategoryPicker = false
+                        currentToolbar = "none"
+                        bridge.toggleDoodleMode(false)
+                    }) {
                         MoodIcon(selectedMood, size = 20.dp, tint = MaterialTheme.colorScheme.primary)
                     }
-                    IconButton(onClick = { showCategoryPicker = !showCategoryPicker }) {
+                    IconButton(onClick = {
+                        showCategoryPicker = !showCategoryPicker
+                        showWeatherPicker = false
+                        showMoodPicker = false
+                        currentToolbar = "none"
+                        bridge.toggleDoodleMode(false)
+                    }) {
                         Icon(
                             Icons.Filled.Dashboard,
                             contentDescription = "分类",
@@ -285,122 +355,17 @@ fun EditorScreen(
             )
         },
         bottomBar = {
-            Column {
-                // 天气选择器
-                AnimatedVisibility(visible = showWeatherPicker) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly
-                        ) {
-                            Weather.entries.forEach { weather ->
-                                IconButton(
-                                    onClick = {
-                                        selectedWeather = weather
-                                        showWeatherPicker = false
-                                    }
-                                ) {
-                                    WeatherIcon(
-                                        weather,
-                                        size = 28.dp,
-                                        tint = if (weather == selectedWeather) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 心情选择器
-                AnimatedVisibility(visible = showMoodPicker) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly
-                        ) {
-                            Mood.entries.forEach { mood ->
-                                IconButton(
-                                    onClick = {
-                                        selectedMood = mood
-                                        showMoodPicker = false
-                                    }
-                                ) {
-                                    MoodIcon(
-                                        mood,
-                                        size = 28.dp,
-                                        tint = if (mood == selectedMood) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 分类选择器
-                AnimatedVisibility(visible = showCategoryPicker) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp)
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Category.entries.filter { it != Category.ALL }.forEach { category ->
-                                val label = when (category) {
-                                    Category.DAILY -> "日常"
-                                    Category.WORK -> "工作"
-                                    Category.GOAL -> "目标"
-                                    Category.INSPIRATION -> "灵感"
-                                    Category.EMOTION -> "情绪"
-                                    else -> category.name
-                                }
-                                FilterChip(
-                                    selected = category == selectedCategory,
-                                    onClick = {
-                                        selectedCategory = category
-                                        showCategoryPicker = false
-                                    },
-                                    label = { Text(label, fontSize = 13.sp) }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // 工具栏面板
-                AnimatedVisibility(visible = currentToolbar == "text") {
-                    TextToolbarPanel(bridge = bridge, onHide = { currentToolbar = "none" })
-                }
-
-                AnimatedVisibility(visible = currentToolbar == "doodle") {
-                    DoodleToolbarPanel(bridge = bridge, onHide = { currentToolbar = "none" })
-                }
-
-                AnimatedVisibility(visible = currentToolbar == "sticker") {
-                    StickerPanel(bridge = bridge, onHide = { currentToolbar = "none" })
-                }
-
-                // 底部导航栏
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 4.dp,
+                shadowElevation = 10.dp
+            ) {
+                // 底栏只保留固定高度的主工具，扩展面板使用覆盖式底部弹层。
                 NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 4.dp
+                    containerColor = Color.Transparent,
+                    tonalElevation = 0.dp
                 ) {
                     NavigationBarItem(
                         icon = { Icon(Icons.Filled.TextFields, contentDescription = "文字") },
@@ -408,6 +373,9 @@ fun EditorScreen(
                         selected = currentToolbar == "text",
                         onClick = {
                             currentToolbar = if (currentToolbar == "text") "none" else "text"
+                            showWeatherPicker = false
+                            showMoodPicker = false
+                            showCategoryPicker = false
                             if (currentToolbar != "doodle") bridge.toggleDoodleMode(false)
                         },
                         colors = NavigationBarItemDefaults.colors(
@@ -422,6 +390,9 @@ fun EditorScreen(
                         selected = currentToolbar == "doodle",
                         onClick = {
                             currentToolbar = if (currentToolbar == "doodle") "none" else "doodle"
+                            showWeatherPicker = false
+                            showMoodPicker = false
+                            showCategoryPicker = false
                             bridge.toggleDoodleMode(currentToolbar == "doodle")
                         },
                         colors = NavigationBarItemDefaults.colors(
@@ -447,6 +418,9 @@ fun EditorScreen(
                         selected = currentToolbar == "sticker",
                         onClick = {
                             currentToolbar = if (currentToolbar == "sticker") "none" else "sticker"
+                            showWeatherPicker = false
+                            showMoodPicker = false
+                            showCategoryPicker = false
                             if (currentToolbar != "doodle") bridge.toggleDoodleMode(false)
                         },
                         colors = NavigationBarItemDefaults.colors(
@@ -474,34 +448,221 @@ fun EditorScreen(
         val paperBgEnd = colorToHex(MaterialTheme.colorScheme.surface)
         val lineColor = if (isDark) "rgba(255,255,255,0.05)" else "rgba(0,0,0,0.03)"
 
-        AndroidView(
-            factory = { ctx ->
-                android.webkit.WebView(ctx).also { webView ->
-                    bridge.setupWebView(webView)
-                    webViewCreated = true
-                }
-            },
-            update = { webView ->
-                // 每次重组时应用主题
-                bridge.applyTheme(
-                    isDark = isDark,
-                    bgColor = bgColor,
-                    textColor = textColor,
-                    paperBgStart = paperBgStart,
-                    paperBgMid = paperBgMid,
-                    paperBgEnd = paperBgEnd,
-                    lineColor = lineColor
-                )
-                bridge.applyEditorSettings(fontSizeSp)
-            },
+        Box(
             modifier = Modifier
-                .fillMaxSize()
                 .padding(innerPadding)
-        )
+                .fillMaxSize()
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    android.webkit.WebView(ctx).also { webView ->
+                        webView.layoutParams = android.view.ViewGroup.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        webView.isFocusable = true
+                        webView.isFocusableInTouchMode = true
+                        webView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        bridge.setupWebView(webView)
+                        webViewCreated = true
+                    }
+                },
+                update = {
+                    bridge.applyTheme(
+                        isDark = isDark,
+                        bgColor = bgColor,
+                        textColor = textColor,
+                        paperBgStart = paperBgStart,
+                        paperBgMid = paperBgMid,
+                        paperBgEnd = paperBgEnd,
+                        lineColor = lineColor
+                    )
+                    bridge.applyEditorSettings(fontSizeSp)
+                },
+                modifier = Modifier
+                    .matchParentSize()
+                    .zIndex(0f)
+            )
+
+            AnimatedVisibility(
+                visible = currentToolbar == "text",
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .zIndex(2f),
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut()
+            ) {
+                TextToolbarPanel(bridge = bridge, onHide = { currentToolbar = "none" })
+            }
+            AnimatedVisibility(
+                visible = currentToolbar == "doodle",
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .zIndex(2f),
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut()
+            ) {
+                DoodleToolbarPanel(
+                    bridge = bridge,
+                    onHide = {
+                        currentToolbar = "none"
+                        bridge.toggleDoodleMode(false)
+                    }
+                )
+            }
+            AnimatedVisibility(
+                visible = currentToolbar == "sticker",
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .zIndex(2f),
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut()
+            ) {
+                StickerPanel(bridge = bridge, onHide = { currentToolbar = "none" })
+            }
+        }
     }
 
-    DisposableEffect(Unit) {
+    fun dismissEditorSheet() {
+        showWeatherPicker = false
+        showMoodPicker = false
+        showCategoryPicker = false
+        if (currentToolbar == "doodle") bridge.toggleDoodleMode(false)
+        currentToolbar = "none"
+    }
+
+    when {
+        showWeatherPicker -> ModalBottomSheet(
+            onDismissRequest = ::dismissEditorSheet,
+            containerColor = MaterialTheme.colorScheme.surface,
+            dragHandle = { BottomSheetDefaults.DragHandle() }
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("选择天气", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Weather.selectableEntries.forEach { weather ->
+                        FilterChip(
+                            selected = weather == selectedWeather,
+                            onClick = {
+                                selectedWeather = weather
+                                dismissEditorSheet()
+                            },
+                            label = { Text(weather.displayName) },
+                            leadingIcon = {
+                                WeatherIcon(
+                                    weather,
+                                    size = 20.dp,
+                                    tint = if (weather == selectedWeather) {
+                                        MaterialTheme.colorScheme.onSecondaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+
+        showMoodPicker -> ModalBottomSheet(
+            onDismissRequest = ::dismissEditorSheet,
+            containerColor = MaterialTheme.colorScheme.surface,
+            dragHandle = { BottomSheetDefaults.DragHandle() }
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("记录此刻心情", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Mood.selectableEntries.forEach { mood ->
+                        FilterChip(
+                            selected = mood == selectedMood,
+                            onClick = {
+                                selectedMood = mood
+                                dismissEditorSheet()
+                            },
+                            label = { Text(mood.displayName) },
+                            leadingIcon = {
+                                MoodIcon(
+                                    mood,
+                                    size = 20.dp,
+                                    tint = if (mood == selectedMood) {
+                                        MaterialTheme.colorScheme.onSecondaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+
+        showCategoryPicker -> ModalBottomSheet(
+            onDismissRequest = ::dismissEditorSheet,
+            containerColor = MaterialTheme.colorScheme.surface,
+            dragHandle = { BottomSheetDefaults.DragHandle() }
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("日记分类", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Category.entries.filter { it != Category.ALL }.forEach { category ->
+                        val label = when (category) {
+                            Category.DAILY -> "日常"
+                            Category.WORK -> "工作"
+                            Category.GOAL -> "目标"
+                            Category.INSPIRATION -> "灵感"
+                            Category.EMOTION -> "情绪"
+                            else -> category.name
+                        }
+                        FilterChip(
+                            selected = category == selectedCategory,
+                            onClick = {
+                                selectedCategory = category
+                                dismissEditorSheet()
+                            },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && !isSaving) {
+                scope.launch { saveLatestContent() }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
             bridge.destroy()
         }
     }
@@ -528,8 +689,8 @@ fun EditorScreen(
                             }
                             adjustViewBounds = true
                             scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-                        } catch (e: Exception) {
-                            e.printStackTrace()
+                        } catch (_: Exception) {
+                            DebugLog.event(DebugLog.AppEvent.IMAGE_PREVIEW_FAILED)
                         }
                     }
                 }, modifier = Modifier.fillMaxWidth().height(420.dp))
@@ -551,9 +712,10 @@ private fun colorToHex(color: Color): String {
 @Composable
 private fun TextToolbarPanel(bridge: EditorBridge, onHide: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             // 格式按钮行
@@ -669,40 +831,69 @@ private fun SmallIconButton(icon: ImageVector, onClick: () -> Unit) {
 
 @Composable
 private fun DoodleToolbarPanel(bridge: EditorBridge, onHide: () -> Unit) {
+    val context = LocalContext.current
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             // 笔刷类型
             var activeBrush by remember { mutableStateOf("pencil") }
+            var brushSize by remember { mutableStateOf(2f) }
+            fun brushRange(brush: String): BrushSizeRange = when (brush) {
+                "pencil", "pen" -> BrushSizeRange(0f, 5f, 2f)
+                "watercolor", "marker", "highlighter" -> BrushSizeRange(5f, 25f, 12f)
+                "eraser" -> BrushSizeRange(1f, 30f, 12f)
+                else -> BrushSizeRange(0f, 5f, 2f)
+            }
+            fun formatBrushSize(value: Float): String =
+                String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+            fun selectBrush(brush: String) {
+                activeBrush = brush
+                val range = brushRange(brush)
+                if (brushSize < range.min || brushSize > range.max) {
+                    brushSize = range.default
+                }
+                bridge.setBrush(brush)
+                bridge.setBrushSize(formatBrushSize(brushSize))
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                BrushChip("pencil", "铅笔", activeBrush == "pencil") { activeBrush = "pencil"; bridge.setBrush("pencil") }
-                BrushChip("pen", "钢笔", activeBrush == "pen") { activeBrush = "pen"; bridge.setBrush("pen") }
-                BrushChip("marker", "马克笔", activeBrush == "marker") { activeBrush = "marker"; bridge.setBrush("marker") }
-                BrushChip("watercolor", "水彩", activeBrush == "watercolor") { activeBrush = "watercolor"; bridge.setBrush("watercolor") }
-                BrushChip("highlighter", "荧光笔", activeBrush == "highlighter") { activeBrush = "highlighter"; bridge.setBrush("highlighter") }
-                BrushChip("eraser", "橡皮擦", activeBrush == "eraser") { activeBrush = "eraser"; bridge.setBrush("eraser") }
+                BrushChip("pencil", "铅笔", activeBrush == "pencil") { selectBrush("pencil") }
+                BrushChip("pen", "钢笔", activeBrush == "pen") { selectBrush("pen") }
+                BrushChip("marker", "马克笔", activeBrush == "marker") { selectBrush("marker") }
+                BrushChip("watercolor", "水彩", activeBrush == "watercolor") { selectBrush("watercolor") }
+                BrushChip("highlighter", "荧光笔", activeBrush == "highlighter") { selectBrush("highlighter") }
+                BrushChip("eraser", "橡皮擦", activeBrush == "eraser") { selectBrush("eraser") }
             }
             Spacer(Modifier.height(8.dp))
             // 笔刷大小
-            var brushSize by remember { mutableStateOf(3f) }
+            val currentRange = brushRange(activeBrush)
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text("粗细", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.width(8.dp))
                 Slider(
                     value = brushSize,
-                    onValueChange = { brushSize = it; bridge.setBrushSize(it.toInt().toString()) },
-                    valueRange = 1f..30f,
+                    onValueChange = {
+                        brushSize = it
+                        bridge.setBrushSize(formatBrushSize(it))
+                    },
+                    valueRange = currentRange.min..currentRange.max,
                     modifier = Modifier.weight(1f)
                 )
-                Text("${brushSize.toInt()}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(24.dp), textAlign = TextAlign.Center)
+                Text(
+                    formatBrushSize(brushSize),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(34.dp),
+                    textAlign = TextAlign.Center
+                )
             }
             Spacer(Modifier.height(8.dp))
             // 颜色选择
@@ -736,6 +927,10 @@ private fun DoodleToolbarPanel(bridge: EditorBridge, onHide: () -> Unit) {
                 OutlinedButton(onClick = { bridge.undoDoodle() }) { Text("撤销", fontSize = 12.sp) }
                 OutlinedButton(onClick = { bridge.redoDoodle() }) { Text("重做", fontSize = 12.sp) }
                 OutlinedButton(onClick = { bridge.clearDoodle() }) { Text("清除", fontSize = 12.sp) }
+                OutlinedButton(onClick = {
+                    bridge.insertDoodleImage()
+                    Toast.makeText(context, "已将涂鸦导出为图片插入正文", Toast.LENGTH_SHORT).show()
+                }) { Text("导出", fontSize = 12.sp) }
                 Button(onClick = { bridge.mergeDoodle(); onHide() }) { Text("确认", fontSize = 12.sp) }
             }
         }
@@ -752,9 +947,10 @@ private fun BrushChip(name: String, label: String, selected: Boolean, onClick: (
 @Composable
 private fun StickerPanel(bridge: EditorBridge, onHide: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -767,14 +963,28 @@ private fun StickerPanel(bridge: EditorBridge, onHide: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             val stickers = listOf(
-                StickerOption("heart", "爱心", Icons.Filled.Favorite),
-                StickerOption("star", "星星", Icons.Filled.Star),
-                StickerOption("smile", "微笑", Icons.Filled.SentimentSatisfied),
-                StickerOption("flower", "花朵", Icons.Filled.LocalFlorist),
-                StickerOption("cloud", "云朵", Icons.Filled.Cloud),
-                StickerOption("book", "书本", Icons.Filled.MenuBook)
+                StickerOption("heart", "❤️"),
+                StickerOption("star", "⭐"),
+                StickerOption("smile", "😊"),
+                StickerOption("flower", "🌸"),
+                StickerOption("sun", "☀️"),
+                StickerOption("moon", "🌙"),
+                StickerOption("cloud", "☁️"),
+                StickerOption("rain", "🌧️"),
+                StickerOption("snow", "❄️"),
+                StickerOption("leaf", "🍃"),
+                StickerOption("cat", "🐱"),
+                StickerOption("dog", "🐶"),
+                StickerOption("bird", "🐦"),
+                StickerOption("fish", "🐟"),
+                StickerOption("cake", "🎂"),
+                StickerOption("coffee", "☕"),
+                StickerOption("book", "📖"),
+                StickerOption("music", "🎵"),
+                StickerOption("sparkle", "✨"),
+                StickerOption("ribbon", "🎀")
             )
-            stickers.chunked(3).forEach { row ->
+            stickers.chunked(5).forEach { row ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
@@ -788,12 +998,7 @@ private fun StickerPanel(bridge: EditorBridge, onHide: () -> Unit) {
                                 .clickable { bridge.insertSticker(sticker.name) },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = sticker.icon,
-                                contentDescription = sticker.label,
-                                modifier = Modifier.size(28.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
+                            Text(sticker.emoji, fontSize = 28.sp)
                         }
                     }
                 }

@@ -40,7 +40,13 @@ class JournalRepository(private val journalDao: JournalDao) {
 
     suspend fun getAllEntryDates(): List<LocalDate> = journalDao.getAllEntryDates()
 
+    suspend fun getAllEntryIds(): List<String> = journalDao.getAllEntryIds()
+
     suspend fun insert(entry: JournalEntry) = journalDao.insert(entry)
+
+    suspend fun insertAll(entries: List<JournalEntry>) {
+        if (entries.isNotEmpty()) journalDao.insertAll(entries)
+    }
 
     suspend fun update(entry: JournalEntry) = journalDao.update(entry)
 

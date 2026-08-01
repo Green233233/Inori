@@ -25,6 +25,16 @@ import kotlinx.coroutines.launch
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 class MainActivity : ComponentActivity() {
+    override fun onStart() {
+        super.onStart()
+        DebugLog.event(DebugLog.AppEvent.APP_FOREGROUND)
+    }
+
+    override fun onStop() {
+        DebugLog.event(DebugLog.AppEvent.APP_BACKGROUND)
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -34,7 +44,7 @@ class MainActivity : ComponentActivity() {
         val fontSizeKey = intPreferencesKey("font_size")
         val debugModeKey = booleanPreferencesKey("debug_mode")
 
-        DebugLog.init(applicationContext, enabled = false)
+        DebugLog.init(applicationContext)
 
         setContent {
             var currentColorStyle by remember { mutableStateOf(AppColorStyle.SAKURA) }

@@ -1,11 +1,13 @@
 package com.green.inorinal.ui.screens
 
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,7 +29,7 @@ fun MainTabScreen(
     onAboutClick: () -> Unit,
     onCategoryClick: (Category) -> Unit
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by rememberSaveable { mutableStateOf(0) }
 
     val tabs = listOf("首页", "分类", "收藏", "我的")
     val selectedIcons = listOf(
@@ -47,7 +49,7 @@ fun MainTabScreen(
         bottomBar = {
             NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp
+                tonalElevation = 3.dp
             ) {
                 tabs.forEachIndexed { index, title ->
                     NavigationBarItem(
@@ -70,7 +72,7 @@ fun MainTabScreen(
                             selectedTextColor = MaterialTheme.colorScheme.primary,
                             unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
                         )
                     )
                 }
@@ -83,22 +85,27 @@ fun MainTabScreen(
                 viewModel = viewModel,
                 onEntryClick = onEntryClick,
                 onNewEntry = onNewEntry,
-                onProfileClick = { selectedTab = 3 },
                 modifier = Modifier.padding(innerPadding)
             )
-            1 -> CategoryScreen(
-                viewModel = viewModel,
-                onCategoryClick = onCategoryClick
-            )
-            2 -> FavoritesScreen(
-                viewModel = viewModel,
-                onEntryClick = onEntryClick
-            )
-            3 -> ProfileScreen(
-                viewModel = viewModel,
-                onSettingsClick = onSettingsClick,
-                onAboutClick = onAboutClick
-            )
+            1 -> Box(Modifier.padding(innerPadding)) {
+                CategoryScreen(
+                    viewModel = viewModel,
+                    onCategoryClick = onCategoryClick
+                )
+            }
+            2 -> Box(Modifier.padding(innerPadding)) {
+                FavoritesScreen(
+                    viewModel = viewModel,
+                    onEntryClick = onEntryClick
+                )
+            }
+            3 -> Box(Modifier.padding(innerPadding)) {
+                ProfileScreen(
+                    viewModel = viewModel,
+                    onSettingsClick = onSettingsClick,
+                    onAboutClick = onAboutClick
+                )
+            }
         }
     }
 }

@@ -38,12 +38,15 @@ private data class LicenseItem(
 private val licenseItems = listOf(
     LicenseItem("AndroidX Activity / Lifecycle / Navigation", "Apache License 2.0", "https://developer.android.com/jetpack/androidx", "应用基础架构与导航。"),
     LicenseItem("Jetpack Compose / Material 3", "Apache License 2.0", "https://developer.android.com/jetpack/compose", "界面框架与 Material 组件。"),
-    LicenseItem("Material Icons / Material Symbols", "Apache License 2.0", "https://fonts.google.com/icons", "应用内通用图标与贴纸替代资源。"),
+    LicenseItem(
+        "Material Icons / Material Symbols",
+        "Apache License 2.0",
+        "https://github.com/google/material-design-icons",
+        "应用内天气、心情、头像、底部导航、日记卡片操作及装饰矢量图标。"
+    ),
     LicenseItem("Room", "Apache License 2.0", "https://developer.android.com/training/data-storage/room", "本地数据库。"),
     LicenseItem("DataStore", "Apache License 2.0", "https://developer.android.com/topic/libraries/architecture/datastore", "用户设置存储。"),
     LicenseItem("Gson", "Apache License 2.0", "https://github.com/google/gson", "备份清单与旧 JSON 导入导出。"),
-    LicenseItem("OkHttp", "Apache License 2.0", "https://square.github.io/okhttp/", "网络能力依赖。"),
-    LicenseItem("OpenAI GPT-3 Java Service", "MIT License", "https://github.com/TheoKanning/openai-java", "预留的 AI 服务依赖。"),
     LicenseItem("LXGW WenKai", "SIL Open Font License 1.1", "https://github.com/lxgw/LxgwWenKai", "编辑器手写风格字体。")
 )
 

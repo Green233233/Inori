@@ -39,8 +39,14 @@ interface JournalDao {
     @Query("SELECT DISTINCT date FROM journal_entries ORDER BY date DESC")
     suspend fun getAllEntryDates(): List<LocalDate>
 
+    @Query("SELECT id FROM journal_entries ORDER BY createdAt DESC")
+    suspend fun getAllEntryIds(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entry: JournalEntry)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(entries: List<JournalEntry>)
 
     @Update
     suspend fun update(entry: JournalEntry)

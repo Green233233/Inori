@@ -9,6 +9,8 @@ import com.green.inorinal.data.Mood
 import com.green.inorinal.data.Weather
 import com.green.inorinal.media.JournalMediaStore
 import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.time.LocalDate
@@ -26,9 +28,30 @@ data class ImportResult(
     fun message(): String = "导入完成：新增 $imported 篇，跳过 $skipped 篇，失败 $failed 篇"
 }
 
+data class StagedBackupMedia(
+    val entryId: String,
+    val fileName: String,
+    val file: File
+)
+
+data class ParsedBackup(
+    val entries: List<JournalEntry>,
+    val failed: Int,
+    val stagedMedia: List<StagedBackupMedia>,
+    private val tempDir: File?
+) {
+    fun cleanup() {
+        tempDir?.deleteRecursively()
+    }
+
+    fun stagedMediaFor(entryId: String): List<StagedBackupMedia> =
+        stagedMedia.filter { it.entryId == entryId }
+}
+
 class JournalBackupManager(context: Context) {
+    private val appContext = context.applicationContext
     private val gson = Gson()
-    private val mediaStore = JournalMediaStore(context)
+    private val mediaStore = JournalMediaStore(appContext)
 
     private data class ParseResult(
         val entries: List<JournalEntry>,
@@ -56,7 +79,7 @@ class JournalBackupManager(context: Context) {
         }
     }
 
-    fun import(inputStream: InputStream): Pair<List<JournalEntry>, ImportResult> {
+    fun import(inputStream: InputStream): ParsedBackup {
         val buffered = BufferedInputStream(inputStream)
         buffered.mark(4)
         val signature = ByteArray(2)
@@ -70,45 +93,60 @@ class JournalBackupManager(context: Context) {
         }
     }
 
-    private fun importZip(inputStream: InputStream): Pair<List<JournalEntry>, ImportResult> {
-        val mediaBytes = mutableMapOf<String, ByteArray>()
+    private fun importZip(inputStream: InputStream): ParsedBackup {
+        val tempDir = File(appContext.cacheDir, "journal_backup_import_${System.currentTimeMillis()}")
+            .also { it.mkdirs() }
+        val stagedMedia = mutableListOf<StagedBackupMedia>()
         var manifestJson: String? = null
+        var mediaTotalBytes = 0L
+        var fileCount = 0
 
-        ZipInputStream(inputStream.buffered()).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory) {
-                    val bytes = zip.readBytes()
-                    if (entry.name == MANIFEST_NAME) {
-                        manifestJson = bytes.toString(Charsets.UTF_8)
-                    } else if (entry.name.startsWith("media/")) {
-                        mediaBytes[entry.name] = bytes
+        try {
+            ZipInputStream(inputStream.buffered()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    if (!entry.isDirectory) {
+                        fileCount++
+                        require(fileCount <= MAX_ARCHIVE_FILES) { "Backup contains too many files" }
+                        if (entry.name == MANIFEST_NAME) {
+                            manifestJson = readLimited(zip, MAX_MANIFEST_BYTES).toString(Charsets.UTF_8)
+                        } else if (isSafeMediaPath(entry.name)) {
+                            val bytes = readLimited(zip, MAX_MEDIA_FILE_BYTES)
+                            mediaTotalBytes += bytes.size
+                            require(mediaTotalBytes <= MAX_TOTAL_MEDIA_BYTES) { "Backup media is too large" }
+                            val entryId = entry.name.substringAfter("media/").substringBefore('/')
+                            val fileName = entry.name.substringAfterLast('/')
+                            val target = File(File(tempDir, entryId).also { it.mkdirs() }, fileName)
+                            target.writeBytes(bytes)
+                            stagedMedia += StagedBackupMedia(entryId, fileName, target)
+                        }
                     }
+                    zip.closeEntry()
                 }
-                zip.closeEntry()
             }
-        }
 
-        val parsed = parseEntries(manifestJson.orEmpty())
-        val entries = parsed.entries.map { parsedEntry ->
-            mediaBytes
-                .filterKeys { it.startsWith("media/${parsedEntry.id}/") }
-                .forEach { (path, bytes) ->
-                    val fileName = path.substringAfterLast('/')
-                    mediaStore.entryDir(parsedEntry.id).resolve(fileName).writeBytes(bytes)
-                }
-            parsedEntry.copy(content = mediaStore.restoreBackupHtml(parsedEntry.content))
+            val parsed = parseEntries(manifestJson.orEmpty())
+            return ParsedBackup(
+                entries = parsed.entries,
+                failed = parsed.failed,
+                stagedMedia = stagedMedia,
+                tempDir = tempDir
+            )
+        } catch (throwable: Throwable) {
+            tempDir.deleteRecursively()
+            throw throwable
         }
-        return entries to ImportResult(imported = entries.size, skipped = 0, failed = parsed.failed)
     }
 
-    private fun importLegacyJson(inputStream: InputStream): Pair<List<JournalEntry>, ImportResult> {
-        val json = inputStream.bufferedReader().use { it.readText() }
+    private fun importLegacyJson(inputStream: InputStream): ParsedBackup {
+        val json = readLimited(inputStream, MAX_MANIFEST_BYTES).toString(Charsets.UTF_8)
         val parsed = parseEntries(json)
-        val entries = parsed.entries.map { entry ->
-            entry.copy(content = mediaStore.migrateInlineImages(entry.id, entry.content))
-        }
-        return entries to ImportResult(imported = entries.size, skipped = 0, failed = parsed.failed)
+        return ParsedBackup(
+            entries = parsed.entries,
+            failed = parsed.failed,
+            stagedMedia = emptyList(),
+            tempDir = null
+        )
     }
 
     private fun parseEntries(json: String): ParseResult {
@@ -118,8 +156,8 @@ class JournalBackupManager(context: Context) {
             gson.fromJson<List<Map<String, Any?>>>(json, type)
         }.getOrNull() ?: return ParseResult(emptyList(), failed = 1)
 
-        var failed = 0
-        val entries = rows.mapNotNull { row: Map<String, Any?> ->
+        var failed = (rows.size - MAX_BACKUP_ENTRIES).coerceAtLeast(0)
+        val entries = rows.take(MAX_BACKUP_ENTRIES).mapNotNull { row: Map<String, Any?> ->
             val parsedEntry = parseEntry(row)
             if (parsedEntry == null) {
                 failed++
@@ -132,9 +170,12 @@ class JournalBackupManager(context: Context) {
     }
 
     private fun parseEntry(row: Map<String, Any?>): JournalEntry? {
-        val id = row.stringValue("id").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
-        val title = row.stringValue("title").ifBlank { "未命名日记" }
+        val rawId = row.stringValue("id")
+        val id = if (rawId.isBlank()) UUID.randomUUID().toString() else rawId
+        if (!JournalMediaStore.isSafeEntryId(id)) return null
+        val title = row.stringValue("title").ifBlank { "未命名日记" }.take(MAX_TITLE_LENGTH)
         val content = row.stringValue("content")
+        if (content.length > MAX_ENTRY_CONTENT_LENGTH) return null
         val date = runCatching {
             LocalDate.parse(row.stringValue("date"), DateTimeFormatter.ISO_LOCAL_DATE)
         }.getOrDefault(LocalDate.now())
@@ -190,7 +231,39 @@ class JournalBackupManager(context: Context) {
         return runCatching { enumValueOf<T>(name) }.getOrDefault(default)
     }
 
+    private fun isSafeMediaPath(path: String): Boolean {
+        val parts = path.split('/')
+        return parts.size == 3 &&
+            parts[0] == "media" &&
+            JournalMediaStore.isSafeEntryId(parts[1]) &&
+            parts[2].matches(SAFE_FILE_NAME_REGEX) &&
+            parts[2] != "." &&
+            parts[2] != ".."
+    }
+
+    private fun readLimited(input: InputStream, maxBytes: Int): ByteArray {
+        val output = ByteArrayOutputStream(minOf(maxBytes, DEFAULT_BUFFER_SIZE))
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            total += count
+            require(total <= maxBytes) { "Backup entry is too large" }
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+
     companion object {
         private const val MANIFEST_NAME = "manifest.json"
+        private const val MAX_ARCHIVE_FILES = 5_000
+        private const val MAX_BACKUP_ENTRIES = 10_000
+        private const val MAX_MANIFEST_BYTES = 16 * 1024 * 1024
+        private const val MAX_MEDIA_FILE_BYTES = 20 * 1024 * 1024
+        private const val MAX_TOTAL_MEDIA_BYTES = 128L * 1024 * 1024
+        private const val MAX_TITLE_LENGTH = 500
+        private const val MAX_ENTRY_CONTENT_LENGTH = 10_000_000
+        private val SAFE_FILE_NAME_REGEX = Regex("[A-Za-z0-9._-]{1,255}")
     }
 }

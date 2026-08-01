@@ -18,7 +18,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.green.inorinal.ui.icons.CloudAvatarIcon
+import com.green.inorinal.ui.icons.AppIdentityIcon
 import com.green.inorinal.ui.icons.HeartIcon
 import com.green.inorinal.ui.icons.StarIcon
 import com.green.inorinal.ui.theme.*
@@ -129,7 +129,7 @@ fun AboutScreen(
             ) {
                 Spacer(Modifier.height(60.dp))
 
-                CloudAvatarIcon(size = 120.dp, tint = MaterialTheme.colorScheme.primary)
+                AppIdentityIcon(size = 120.dp, tint = MaterialTheme.colorScheme.primary)
 
                 Spacer(Modifier.height(20.dp))
 
@@ -143,7 +143,7 @@ fun AboutScreen(
                 Spacer(Modifier.height(12.dp))
 
                 Text(
-                    "Alpha v0.1.5",
+                    "Alpha v0.2.1",
                     fontSize = 16.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.clickable {

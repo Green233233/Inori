@@ -6,8 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.green.inorinal.backup.ImportResult
 import com.green.inorinal.backup.JournalBackupManager
 import com.green.inorinal.media.JournalMediaStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.InputStream
 import java.io.OutputStream
 import java.time.LocalDate
@@ -120,26 +122,29 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /** 同步保存日记（供编辑器使用，在协程中调用） */
-    suspend fun saveEntry(entry: JournalEntry): JournalEntry {
+    suspend fun saveEntry(
+        entry: JournalEntry,
+        refreshStatistics: Boolean = false
+    ): JournalEntry = withContext(Dispatchers.IO) {
         val migratedContent = mediaStore.migrateInlineImages(entry.id, entry.content)
-        val savedEntry = entry.copy(
-            content = migratedContent,
-            updatedAt = System.currentTimeMillis()
-        )
+        val savedEntry = entry.copy(content = migratedContent, updatedAt = System.currentTimeMillis())
         repository.insert(savedEntry)
-        refreshStats()
-        return savedEntry
+        if (refreshStatistics) refreshStats()
+        savedEntry
     }
 
     fun deleteEntry(entry: JournalEntry) {
         viewModelScope.launch {
-            repository.delete(entry)
+            withContext(Dispatchers.IO) {
+                repository.delete(entry)
+                mediaStore.deleteEntryMedia(entry.id)
+            }
             refreshStats()
         }
     }
 
-    suspend fun getEntryById(id: String): JournalEntry? {
-        return repository.getEntryById(id)?.let { entry ->
+    suspend fun getEntryById(id: String): JournalEntry? = withContext(Dispatchers.IO) {
+        repository.getEntryById(id)?.let { entry ->
             val migratedContent = mediaStore.migrateInlineImages(entry.id, entry.content)
             if (migratedContent != entry.content) {
                 val migrated = entry.copy(content = migratedContent, updatedAt = System.currentTimeMillis())
@@ -159,28 +164,52 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
     }
 
     suspend fun exportBackup(outputStream: OutputStream) {
-        val fullEntries = allEntries.value.mapNotNull { repository.getEntryById(it.id) }
+        val fullEntries = repository.getAllEntryIds().mapNotNull { repository.getEntryById(it) }
         backupManager.exportZip(fullEntries, outputStream)
     }
 
     suspend fun importBackup(inputStream: InputStream, overwrite: Boolean = false): ImportResult {
-        val (entries, parsedResult) = backupManager.import(inputStream)
+        val parsedBackup = backupManager.import(inputStream)
         var imported = 0
         var skipped = 0
-        var failed = parsedResult.failed
+        var failed = parsedBackup.failed
+        val entriesToImport = mutableListOf<JournalEntry>()
 
-        entries.forEach { entry ->
-            runCatching {
-                val existing = repository.getEntryById(entry.id)
-                if (overwrite || existing == null) {
-                    repository.insert(entry)
-                    imported++
-                } else {
-                    skipped++
+        try {
+            parsedBackup.entries.forEach { entry ->
+                runCatching {
+                    val existing = repository.getEntryById(entry.id)
+                    if (!overwrite && existing != null) {
+                        skipped++
+                        return@runCatching
+                    }
+
+                    parsedBackup.stagedMediaFor(entry.id).forEach { staged ->
+                        val target = mediaStore.entryDir(entry.id).resolve(staged.fileName)
+                        staged.file.copyTo(target, overwrite = true)
+                    }
+
+                    val restoredContent = if (parsedBackup.stagedMediaFor(entry.id).isNotEmpty()) {
+                        mediaStore.restoreBackupHtml(entry.content)
+                    } else {
+                        entry.content
+                    }
+                    val migratedContent = mediaStore.migrateInlineImages(entry.id, restoredContent)
+                    entriesToImport += entry.copy(content = migratedContent, updatedAt = System.currentTimeMillis())
+                }.onFailure {
+                    failed++
                 }
-            }.onFailure {
-                failed++
             }
+
+            runCatching {
+                repository.insertAll(entriesToImport)
+                imported = entriesToImport.size
+            }.onFailure {
+                failed += entriesToImport.size
+                imported = 0
+            }
+        } finally {
+            parsedBackup.cleanup()
         }
 
         refreshStats()
