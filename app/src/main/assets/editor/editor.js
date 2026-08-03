@@ -1,4 +1,4 @@
-// ==================== 编辑器核心 ====================
+﻿// ==================== editor core ====================
 
 const Atrament = window.Atrament;
 const MODE_DISABLED = window.ATRAMENT_MODE_DISABLED || 'disabled';
@@ -51,6 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
     paper = document.getElementById('paper');
     initialiseDoodle();
     bindEditorEvents();
+    bindStickerHandlers();
     updateVisibleViewport();
 });
 
@@ -89,7 +90,7 @@ function bindEditorEvents() {
     });
 }
 
-// ==================== 软键盘与光标可见性 ====================
+// ==================== keyboard and caret ====================
 
 function updateVisibleViewport() {
     const viewport = window.visualViewport;
@@ -170,7 +171,7 @@ function getCaretRect(range, selection) {
     }
 }
 
-// ==================== 选区管理 ====================
+// ==================== selection ====================
 
 function saveSelection() {
     const selection = window.getSelection();
@@ -189,7 +190,7 @@ function restoreSelection() {
     selection.addRange(savedSelectionRange);
 }
 
-// ==================== 文字编辑命令 ====================
+// ==================== selection ====================
 
 function execCmd(command, value) {
     paper.focus();
@@ -233,7 +234,24 @@ function normalizeFontTags() {
     };
     Array.from(paper.getElementsByTagName('font')).reverse().forEach((font) => {
         const span = document.createElement('span');
-        span.style.fontSize = sizeMap[font.getAttribute('size')] || '16px';
+        const sizeAttr = font.getAttribute('size');
+        const faceAttr = font.getAttribute('face');
+        const colorAttr = font.getAttribute('color');
+        if (sizeAttr) {
+            span.style.fontSize = sizeMap[sizeAttr] || '16px';
+        }
+        if (faceAttr) {
+            span.style.fontFamily = faceAttr;
+        }
+        if (colorAttr) {
+            span.style.color = colorAttr;
+        }
+        // Preserve styles already present on the font tag.
+        if (font.style && font.style.cssText) {
+            Array.from(font.style).forEach((prop) => {
+                span.style.setProperty(prop, font.style.getPropertyValue(prop));
+            });
+        }
         span.innerHTML = font.innerHTML;
         font.parentNode.replaceChild(span, font);
     });
@@ -248,7 +266,7 @@ function changeColor(color) {
     notifyContentChanged();
 }
 
-// ==================== Atrament + Rough 涂鸦层 ====================
+// ==================== doodle layer ====================
 
 function initialiseDoodle() {
     doodle.canvas = document.getElementById('doodle-canvas');
@@ -536,6 +554,7 @@ function toggleDoodleMode(active) {
         doodle.atrament.mode = active ? atramentModeForTool(doodle.currentTool) : MODE_DISABLED;
     }
     if (active) {
+        deselectSticker();
         resizeDoodleCanvas();
         document.body.style.overflow = 'hidden';
         document.documentElement.style.overflow = 'hidden';
@@ -709,36 +728,218 @@ function extractDoodleDataNode() {
     }
 }
 
-// ==================== 贴纸和图片 ====================
+// ==================== stickers and images ====================
+
+const STICKER_CLASS = 'journal-sticker';
+const STICKER_SELECTOR = `.${STICKER_CLASS}`;
+const LEGACY_STICKER_SELECTOR = '.inserted-sticker';
+const DEFAULT_STICKER_SIZE = 72;
+const CUSTOM_STICKER_SIZE = 112;
+const STICKER_MAP = {
+    heart: '\u2764\uFE0F',
+    star: '\u2B50',
+    smile: '\uD83D\uDE0A',
+    flower: '\uD83C\uDF38',
+    sun: '\u2600\uFE0F',
+    moon: '\uD83C\uDF19',
+    cloud: '\u2601\uFE0F',
+    rain: '\uD83C\uDF27\uFE0F',
+    snow: '\u2744\uFE0F',
+    leaf: '\uD83C\uDF43',
+    cat: '\uD83D\uDC31',
+    dog: '\uD83D\uDC36',
+    bird: '\uD83D\uDC26',
+    fish: '\uD83D\uDC1F',
+    cake: '\uD83C\uDF82',
+    coffee: '\u2615',
+    book: '\uD83D\uDCD6',
+    music: '\uD83C\uDFB5',
+    sparkle: '\u2728',
+    ribbon: '\uD83C\uDF80'
+};
+
+let stickerMoveable = null;
+let selectedSticker = null;
+let stickerDragOrigin = null;
+let stickerHandlersBound = false;
+/** In-memory only - never persist to HTML (data-sticker-bound broke re-bind after setContent). */
+const boundStickers = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
+const boundStickerFallback = boundStickers ? null : [];
+
+function markStickerBound(sticker) {
+    if (boundStickers) {
+        boundStickers.add(sticker);
+    } else if (boundStickerFallback && boundStickerFallback.indexOf(sticker) < 0) {
+        boundStickerFallback.push(sticker);
+    }
+}
+
+function isStickerBound(sticker) {
+    if (boundStickers) return boundStickers.has(sticker);
+    return !!(boundStickerFallback && boundStickerFallback.indexOf(sticker) >= 0);
+}
+
+function notifyStickerGesture(active) {
+    try {
+        if (window.AndroidBridge && window.AndroidBridge.setStickerGestureActive) {
+            window.AndroidBridge.setStickerGestureActive(!!active);
+        }
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+function createStickerId() {
+    return `stk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function parseStickerRotate(target) {
+    if (!target) return 0;
+    const fromData = parseFloat(target.getAttribute('data-rotate') || '');
+    if (!Number.isNaN(fromData)) return fromData;
+    const match = String(target.style.transform || '').match(/rotate\((-?[\d.]+)deg\)/i);
+    return match ? parseFloat(match[1]) : 0;
+}
+
+function applyStickerVisual(target, rotateDeg) {
+    const rotate = Number.isFinite(rotateDeg) ? rotateDeg : parseStickerRotate(target);
+    target.setAttribute('data-rotate', String(round(rotate)));
+    target.style.transform = `rotate(${round(rotate)}deg)`;
+    target.style.transformOrigin = 'center center';
+}
+
+function clearStickerDragStyles(target) {
+    if (!target) return;
+    target.classList.remove('is-dragging');
+}
+
+function paperLocalPoint(clientX, clientY) {
+    const paperRect = paper.getBoundingClientRect();
+    return {
+        x: clientX - paperRect.left + paper.scrollLeft,
+        y: clientY - paperRect.top + paper.scrollTop
+    };
+}
+
+function clampStickerPosition(left, top, width, height) {
+    const maxLeft = Math.max(0, paper.clientWidth - Math.max(24, width * 0.35));
+    const minTop = 0;
+    const maxTop = Math.max(minTop, Math.max(paper.scrollHeight, paper.clientHeight) + 400);
+    return {
+        left: Math.min(Math.max(0, left), maxLeft),
+        top: Math.min(Math.max(minTop, top), maxTop)
+    };
+}
+
+function commitStickerPosition(target, left, top) {
+    const width = target.offsetWidth || parseFloat(target.style.width) || DEFAULT_STICKER_SIZE;
+    const height = target.offsetHeight || parseFloat(target.style.height) || DEFAULT_STICKER_SIZE;
+    const clamped = clampStickerPosition(left, top, width, height);
+    target.style.position = 'absolute';
+    target.style.left = `${round(clamped.left)}px`;
+    target.style.top = `${round(clamped.top)}px`;
+    target.style.float = 'none';
+    target.style.margin = '0';
+    target.setAttribute('data-left', String(round(clamped.left)));
+    target.setAttribute('data-top', String(round(clamped.top)));
+    ensurePaperFitsStickers();
+}
+
+function defaultInsertPosition(size) {
+    const x = paper.scrollLeft + Math.max(16, (paper.clientWidth - size) / 2);
+    const y = paper.scrollTop + Math.max(24, paper.clientHeight * 0.28);
+    return clampStickerPosition(x, y, size, size);
+}
+
+function ensurePaperFitsStickers() {
+    if (!paper) return;
+    let maxBottom = paper.clientHeight;
+    Array.from(paper.querySelectorAll(STICKER_SELECTOR)).forEach((node) => {
+        const top = parseFloat(node.style.top || node.getAttribute('data-top') || '0');
+        const height = node.offsetHeight || parseFloat(node.style.height) || DEFAULT_STICKER_SIZE;
+        maxBottom = Math.max(maxBottom, top + height + 48);
+    });
+    const needed = Math.ceil(maxBottom);
+    if (needed > paper.clientHeight) {
+        paper.style.minHeight = `${needed}px`;
+    }
+    resizeDoodleCanvas();
+}
+
+function migrateStickerToAbsolute(sticker) {
+    if (!sticker) return;
+    sticker.style.float = 'none';
+    sticker.style.margin = '0';
+    sticker.style.shapeOutside = 'none';
+    const hasLeft = sticker.style.left || sticker.getAttribute('data-left');
+    const hasTop = sticker.style.top || sticker.getAttribute('data-top');
+    if (hasLeft && hasTop) {
+        const left = parseFloat(sticker.style.left || sticker.getAttribute('data-left') || '0');
+        const top = parseFloat(sticker.style.top || sticker.getAttribute('data-top') || '0');
+        commitStickerPosition(sticker, left, top);
+        applyStickerVisual(sticker, parseStickerRotate(sticker));
+        return;
+    }
+    // Legacy float stickers: convert current visual rect into absolute coords.
+    const rect = sticker.getBoundingClientRect();
+    const local = paperLocalPoint(rect.left, rect.top);
+    commitStickerPosition(sticker, local.x, local.y);
+    applyStickerVisual(sticker, parseStickerRotate(sticker));
+}
+
+function buildStickerShell(kind, size) {
+    const shell = document.createElement('span');
+    shell.className = STICKER_CLASS;
+    shell.contentEditable = 'false';
+    shell.setAttribute('data-sticker-id', createStickerId());
+    shell.setAttribute('data-sticker-kind', kind);
+    shell.setAttribute('data-rotate', '0');
+    shell.style.width = `${size}px`;
+    shell.style.height = `${size}px`;
+    shell.style.display = 'flex';
+    const pos = defaultInsertPosition(size);
+    commitStickerPosition(shell, pos.left, pos.top);
+    applyStickerVisual(shell, 0);
+    return shell;
+}
+
+function buildEmojiSticker(emoji, size) {
+    const shell = buildStickerShell('emoji', size || DEFAULT_STICKER_SIZE);
+    const label = document.createElement('span');
+    label.className = 'journal-sticker__emoji';
+    label.textContent = emoji;
+    shell.appendChild(label);
+    return shell;
+}
+
+function buildImageSticker(imageSrc, size) {
+    const shell = buildStickerShell('image', size || CUSTOM_STICKER_SIZE);
+    const image = document.createElement('img');
+    image.className = 'journal-sticker__media';
+    image.src = imageSrc;
+    image.alt = 'sticker';
+    image.draggable = false;
+    shell.appendChild(image);
+    return shell;
+}
 
 function insertSticker(name) {
-    const stickerMap = {
-        heart: '❤️',
-        star: '⭐',
-        smile: '😊',
-        flower: '🌸',
-        sun: '☀️',
-        moon: '🌙',
-        cloud: '☁️',
-        rain: '🌧️',
-        snow: '❄️',
-        leaf: '🍃',
-        cat: '🐱',
-        dog: '🐶',
-        bird: '🐦',
-        fish: '🐟',
-        cake: '🎂',
-        coffee: '☕',
-        book: '📖',
-        music: '🎵',
-        sparkle: '✨',
-        ribbon: '🎀'
-    };
-    const span = document.createElement('span');
-    span.className = 'inserted-sticker';
-    span.textContent = stickerMap[name] || stickerMap.star;
-    span.contentEditable = 'false';
-    insertNodeAtSelection(span);
+    const emoji = STICKER_MAP[name] || STICKER_MAP.star;
+    const sticker = buildEmojiSticker(emoji, DEFAULT_STICKER_SIZE);
+    paper.appendChild(sticker);
+    bindStickerNode(sticker);
+    selectSticker(sticker);
+    ensurePaperFitsStickers();
+    notifyContentChanged();
+}
+
+function insertCustomSticker(imageSrc) {
+    if (!imageSrc) return;
+    const sticker = buildImageSticker(imageSrc, CUSTOM_STICKER_SIZE);
+    paper.appendChild(sticker);
+    bindStickerNode(sticker);
+    selectSticker(sticker);
+    ensurePaperFitsStickers();
     notifyContentChanged();
 }
 
@@ -775,13 +976,15 @@ function insertNodeAtSelection(node) {
         paper.appendChild(node);
     }
     saveSelection();
-    // Keep inserted media visible after picker returns focus.
     if (typeof node.scrollIntoView === 'function') {
         node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
 }
 
 function bindImageClick(image) {
+    if (!image || image.classList.contains('journal-sticker__media') || image.closest(STICKER_SELECTOR)) {
+        return;
+    }
     image.style.cursor = 'pointer';
     image.onclick = () => {
         try {
@@ -798,7 +1001,326 @@ function bindImageClickHandlers() {
     Array.from(paper.getElementsByTagName('img')).forEach(bindImageClick);
 }
 
-// ==================== 主题和内容 ====================
+function getStickerDeleteButton() {
+    return document.getElementById('sticker-delete-btn');
+}
+
+function updateStickerDeleteButton() {
+    const btn = getStickerDeleteButton();
+    if (!btn) return;
+    if (!selectedSticker || doodle.active) {
+        btn.style.display = 'none';
+        return;
+    }
+    const rect = selectedSticker.getBoundingClientRect();
+    btn.style.display = 'flex';
+    btn.style.left = `${Math.round(rect.right - 10)}px`;
+    btn.style.top = `${Math.round(rect.top - 14)}px`;
+}
+
+function ensureStickerMoveable() {
+    if (stickerMoveable) return stickerMoveable;
+    const MoveableExport = window.Moveable;
+    const MoveableCtor = typeof MoveableExport === 'function'
+        ? MoveableExport
+        : (MoveableExport && typeof MoveableExport.default === 'function' ? MoveableExport.default : null);
+    if (typeof MoveableCtor !== 'function') {
+        console.warn('Moveable is unavailable');
+        return null;
+    }
+    stickerMoveable = new MoveableCtor(document.body, {
+        target: null,
+        container: document.body,
+        rootContainer: document.body,
+        draggable: true,
+        resizable: true,
+        rotatable: true,
+        keepRatio: true,
+        origin: false,
+        edge: false,
+        throttleDrag: 0,
+        throttleResize: 0,
+        throttleRotate: 0,
+        checkInput: true,
+        pinchable: false,
+        preventClickEventOnDrag: true,
+        individualGroupable: false
+    });
+
+    stickerMoveable
+        .on('dragStart', ({ target, set }) => {
+            notifyStickerGesture(true);
+            // Always single-target; never group nearby stickers.
+            if (stickerMoveable) stickerMoveable.target = target;
+            const left = parseFloat(target.style.left || target.getAttribute('data-left') || '0');
+            const top = parseFloat(target.style.top || target.getAttribute('data-top') || '0');
+            stickerDragOrigin = {
+                rotate: parseStickerRotate(target),
+                startLeft: left,
+                startTop: top
+            };
+            target.classList.add('is-dragging');
+            target.style.zIndex = '40';
+            applyStickerVisual(target, stickerDragOrigin.rotate);
+            if (typeof set === 'function') set({ translate: [0, 0] });
+            updateStickerDeleteButton();
+        })
+        .on('drag', ({ target, beforeTranslate }) => {
+            if (!stickerDragOrigin) return;
+            const nextLeft = stickerDragOrigin.startLeft + beforeTranslate[0];
+            const nextTop = stickerDragOrigin.startTop + beforeTranslate[1];
+            commitStickerPosition(target, nextLeft, nextTop);
+            target.style.transform = `rotate(${round(stickerDragOrigin.rotate)}deg)`;
+            updateStickerDeleteButton();
+        })
+        .on('dragEnd', ({ target }) => {
+            const rotate = stickerDragOrigin ? stickerDragOrigin.rotate : parseStickerRotate(target);
+            clearStickerDragStyles(target);
+            const left = parseFloat(target.style.left || '0');
+            const top = parseFloat(target.style.top || '0');
+            commitStickerPosition(target, left, top);
+            applyStickerVisual(target, rotate);
+            stickerDragOrigin = null;
+            selectSticker(target);
+            if (stickerMoveable) {
+                stickerMoveable.target = target;
+                stickerMoveable.updateRect();
+            }
+            updateStickerDeleteButton();
+            notifyContentChanged();
+        })
+        .on('resizeStart', ({ target }) => {
+            notifyStickerGesture(true);
+            if (stickerMoveable) stickerMoveable.target = target;
+        })
+        .on('resize', ({ target, width, height, drag }) => {
+            target.style.width = `${Math.max(36, Math.round(width))}px`;
+            target.style.height = `${Math.max(36, Math.round(height))}px`;
+            const rotate = parseStickerRotate(target);
+            if (drag && drag.beforeTranslate) {
+                const baseLeft = parseFloat(target.getAttribute('data-left') || target.style.left || '0');
+                const baseTop = parseFloat(target.getAttribute('data-top') || target.style.top || '0');
+                commitStickerPosition(
+                    target,
+                    baseLeft + drag.beforeTranslate[0],
+                    baseTop + drag.beforeTranslate[1]
+                );
+            }
+            applyStickerVisual(target, rotate);
+            updateStickerDeleteButton();
+        })
+        .on('resizeEnd', ({ target }) => {
+            applyStickerVisual(target, parseStickerRotate(target));
+            const left = parseFloat(target.style.left || '0');
+            const top = parseFloat(target.style.top || '0');
+            commitStickerPosition(target, left, top);
+            if (stickerMoveable) {
+                stickerMoveable.target = target;
+                stickerMoveable.updateRect();
+            }
+            updateStickerDeleteButton();
+            notifyContentChanged();
+            notifyStickerGesture(!!selectedSticker);
+        })
+        .on('rotateStart', ({ target }) => {
+            notifyStickerGesture(true);
+            if (stickerMoveable) stickerMoveable.target = target;
+        })
+        .on('rotate', ({ target, rotate, dist, delta }) => {
+            let next = typeof rotate === 'number' ? rotate : NaN;
+            if (Number.isNaN(next) && typeof dist === 'number') {
+                next = parseStickerRotate(target) + dist;
+            }
+            if (Number.isNaN(next) && typeof delta === 'number') {
+                next = parseStickerRotate(target) + delta;
+            }
+            if (Number.isNaN(next)) next = parseStickerRotate(target);
+            applyStickerVisual(target, next);
+            updateStickerDeleteButton();
+        })
+        .on('rotateEnd', ({ target }) => {
+            applyStickerVisual(target, parseStickerRotate(target));
+            if (stickerMoveable) {
+                stickerMoveable.target = target;
+                stickerMoveable.updateRect();
+            }
+            updateStickerDeleteButton();
+            notifyContentChanged();
+            notifyStickerGesture(!!selectedSticker);
+        });
+
+    return stickerMoveable;
+}
+
+function selectSticker(sticker) {
+    if (!sticker || doodle.active) return;
+    ensureStickerMoveable();
+    if (selectedSticker && selectedSticker !== sticker) {
+        selectedSticker.classList.remove('is-selected');
+        clearStickerDragStyles(selectedSticker);
+    }
+    selectedSticker = sticker;
+    sticker.classList.add('is-selected');
+    // Bring selected sticker above siblings to avoid sticky hit-testing.
+    const maxZ = Array.from(paper.querySelectorAll(STICKER_SELECTOR)).reduce((max, node) => {
+        const z = parseInt(node.style.zIndex || '5', 10);
+        return Number.isFinite(z) ? Math.max(max, z) : max;
+    }, 5);
+    sticker.style.zIndex = String(maxZ + 1);
+    if (stickerMoveable) {
+        // Force a single HTMLElement target (never an array / group).
+        stickerMoveable.target = sticker;
+        stickerMoveable.updateRect();
+    }
+    notifyStickerGesture(true);
+    updateStickerDeleteButton();
+}
+
+function deselectSticker() {
+    if (selectedSticker) {
+        clearStickerDragStyles(selectedSticker);
+        selectedSticker.classList.remove('is-selected');
+    }
+    selectedSticker = null;
+    if (stickerMoveable) {
+        stickerMoveable.target = null;
+    }
+    notifyStickerGesture(false);
+    updateStickerDeleteButton();
+}
+
+function deleteSelectedSticker() {
+    if (!selectedSticker) return false;
+    const node = selectedSticker;
+    deselectSticker();
+    node.remove();
+    ensurePaperFitsStickers();
+    notifyContentChanged();
+    return true;
+}
+
+function bindStickerNode(sticker) {
+    if (!sticker) return;
+    sticker.removeAttribute('data-sticker-bound');
+    if (isStickerBound(sticker)) return;
+    markStickerBound(sticker);
+    sticker.addEventListener('pointerdown', (event) => {
+        if (doodle.active) return;
+        event.preventDefault();
+        event.stopPropagation();
+        notifyStickerGesture(true);
+        selectSticker(sticker);
+        if (stickerMoveable && typeof stickerMoveable.dragStart === 'function') {
+            try {
+                stickerMoveable.dragStart(event);
+            } catch (error) {
+                console.error(error);
+            }
+        }
+    }, { capture: true });
+}
+
+function upgradeLegacyStickers() {
+    Array.from(paper.querySelectorAll(LEGACY_STICKER_SELECTOR)).forEach((node) => {
+        if (node.classList.contains(STICKER_CLASS)) {
+            node.classList.remove('inserted-sticker');
+            return;
+        }
+        const emoji = (node.textContent || '').trim() || STICKER_MAP.star;
+        const upgraded = buildEmojiSticker(emoji, DEFAULT_STICKER_SIZE);
+        // Preserve approximate position of legacy inline emoji if possible.
+        const rect = node.getBoundingClientRect();
+        if (rect.width > 0) {
+            const local = paperLocalPoint(rect.left, rect.top);
+            commitStickerPosition(upgraded, local.x, local.y);
+        }
+        node.replaceWith(upgraded);
+    });
+}
+
+function isMoveableUiEvent(event) {
+    const target = event.target;
+    if (!target || !target.closest) return false;
+    return !!(
+        target.closest('.moveable-control-box') ||
+        target.closest('.moveable-area') ||
+        target.closest('.moveable-control') ||
+        target.closest('.moveable-line') ||
+        target.closest('.moveable-direction') ||
+        target.closest('.moveable-rotation') ||
+        target.closest('#sticker-delete-btn')
+    );
+}
+
+function bindStickerHandlers() {
+    upgradeLegacyStickers();
+    Array.from(paper.querySelectorAll(STICKER_SELECTOR)).forEach((sticker) => {
+        sticker.removeAttribute('data-sticker-bound');
+        if (!sticker.getAttribute('data-sticker-id')) {
+            sticker.setAttribute('data-sticker-id', createStickerId());
+        }
+        if (!sticker.getAttribute('data-sticker-kind')) {
+            const kind = sticker.querySelector('.journal-sticker__media') ? 'image' : 'emoji';
+            sticker.setAttribute('data-sticker-kind', kind);
+        }
+        migrateStickerToAbsolute(sticker);
+        bindStickerNode(sticker);
+    });
+    ensurePaperFitsStickers();
+    updateStickerDeleteButton();
+
+    if (stickerHandlersBound) return;
+    stickerHandlersBound = true;
+
+    const deleteBtn = getStickerDeleteButton();
+    if (deleteBtn) {
+        deleteBtn.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            deleteSelectedSticker();
+        });
+    }
+
+    paper.addEventListener('pointerdown', (event) => {
+        if (doodle.active) return;
+        if (isMoveableUiEvent(event)) return;
+        const hit = event.target && event.target.closest
+            ? event.target.closest(STICKER_SELECTOR)
+            : null;
+        if (!hit) {
+            deselectSticker();
+        }
+    });
+
+    paper.addEventListener('scroll', () => {
+        if (selectedSticker) updateStickerDeleteButton();
+    });
+
+    document.addEventListener('pointerdown', (event) => {
+        if (doodle.active) return;
+        if (isMoveableUiEvent(event)) {
+            notifyStickerGesture(true);
+        }
+    }, true);
+
+    document.addEventListener('pointerup', () => {
+        if (!stickerDragOrigin) {
+            notifyStickerGesture(!!selectedSticker);
+        }
+    }, true);
+
+    document.addEventListener('keydown', (event) => {
+        if (!selectedSticker || doodle.active) return;
+        if (event.key === 'Backspace' || event.key === 'Delete') {
+            event.preventDefault();
+            deleteSelectedSticker();
+        } else if (event.key === 'Escape') {
+            deselectSticker();
+        }
+    });
+}
+
+// ==================== section ====================
 
 function applyTheme(isDark, bgColor, textColor, paperBgStart, paperBgMid, paperBgEnd, lineColor) {
     const root = document.documentElement;
@@ -818,12 +1340,18 @@ function applyEditorSettings(fontSizeSp) {
 
 function getContent() {
     syncDoodleDataNode();
+    // Never persist ephemeral bind flags.
+    Array.from(paper.querySelectorAll(STICKER_SELECTOR)).forEach((node) => {
+        node.removeAttribute('data-sticker-bound');
+    });
     return paper.innerHTML;
 }
 
 function setContent(html) {
+    deselectSticker();
     paper.innerHTML = sanitizeEditorHtml(html || '');
     bindImageClickHandlers();
+    bindStickerHandlers();
     extractDoodleDataNode();
     savedSelectionRange = null;
     requestAnimationFrame(() => {
@@ -887,6 +1415,7 @@ Object.assign(window, {
     getDoodleState,
     insertDoodleImage,
     insertImage,
+    insertCustomSticker,
     insertSticker,
     loadDoodleJson,
     mergeDoodle,

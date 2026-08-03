@@ -152,7 +152,7 @@ fun AboutScreen(
                 Spacer(Modifier.height(12.dp))
 
                 Text(
-                    "Alpha v0.2.1",
+                    "Alpha v0.2.3",
                     fontSize = 16.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.clickable {

@@ -8,6 +8,7 @@ import com.green.inorinal.data.JournalEntry
 import com.green.inorinal.data.Mood
 import com.green.inorinal.data.Weather
 import com.green.inorinal.media.JournalMediaStore
+import com.green.inorinal.media.UserStickerStore
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -34,10 +35,16 @@ data class StagedBackupMedia(
     val file: File
 )
 
+data class StagedBackupSticker(
+    val fileName: String,
+    val file: File
+)
+
 data class ParsedBackup(
     val entries: List<JournalEntry>,
     val failed: Int,
     val stagedMedia: List<StagedBackupMedia>,
+    val stagedStickers: List<StagedBackupSticker> = emptyList(),
     private val tempDir: File?
 ) {
     fun cleanup() {
@@ -52,6 +59,7 @@ class JournalBackupManager(context: Context) {
     private val appContext = context.applicationContext
     private val gson = Gson()
     private val mediaStore = JournalMediaStore(appContext)
+    private val userStickerStore = UserStickerStore(appContext)
 
     private data class ParseResult(
         val entries: List<JournalEntry>,
@@ -76,6 +84,12 @@ class JournalBackupManager(context: Context) {
                     file.inputStream().use { it.copyTo(zip) }
                     zip.closeEntry()
                 }
+
+            userStickerStore.allFilesForExport().forEach { file ->
+                zip.putNextEntry(ZipEntry("stickers/${file.name}"))
+                file.inputStream().use { it.copyTo(zip) }
+                zip.closeEntry()
+            }
         }
     }
 
@@ -97,6 +111,7 @@ class JournalBackupManager(context: Context) {
         val tempDir = File(appContext.cacheDir, "journal_backup_import_${System.currentTimeMillis()}")
             .also { it.mkdirs() }
         val stagedMedia = mutableListOf<StagedBackupMedia>()
+        val stagedStickers = mutableListOf<StagedBackupSticker>()
         var manifestJson: String? = null
         var mediaTotalBytes = 0L
         var fileCount = 0
@@ -108,17 +123,30 @@ class JournalBackupManager(context: Context) {
                     if (!entry.isDirectory) {
                         fileCount++
                         require(fileCount <= MAX_ARCHIVE_FILES) { "Backup contains too many files" }
-                        if (entry.name == MANIFEST_NAME) {
-                            manifestJson = readLimited(zip, MAX_MANIFEST_BYTES).toString(Charsets.UTF_8)
-                        } else if (isSafeMediaPath(entry.name)) {
-                            val bytes = readLimited(zip, MAX_MEDIA_FILE_BYTES)
-                            mediaTotalBytes += bytes.size
-                            require(mediaTotalBytes <= MAX_TOTAL_MEDIA_BYTES) { "Backup media is too large" }
-                            val entryId = entry.name.substringAfter("media/").substringBefore('/')
-                            val fileName = entry.name.substringAfterLast('/')
-                            val target = File(File(tempDir, entryId).also { it.mkdirs() }, fileName)
-                            target.writeBytes(bytes)
-                            stagedMedia += StagedBackupMedia(entryId, fileName, target)
+                        when {
+                            entry.name == MANIFEST_NAME -> {
+                                manifestJson = readLimited(zip, MAX_MANIFEST_BYTES).toString(Charsets.UTF_8)
+                            }
+                            isSafeMediaPath(entry.name) -> {
+                                val bytes = readLimited(zip, MAX_MEDIA_FILE_BYTES)
+                                mediaTotalBytes += bytes.size
+                                require(mediaTotalBytes <= MAX_TOTAL_MEDIA_BYTES) { "Backup media is too large" }
+                                val entryId = entry.name.substringAfter("media/").substringBefore('/')
+                                val fileName = entry.name.substringAfterLast('/')
+                                val target = File(File(tempDir, entryId).also { it.mkdirs() }, fileName)
+                                target.writeBytes(bytes)
+                                stagedMedia += StagedBackupMedia(entryId, fileName, target)
+                            }
+                            isSafeStickerPath(entry.name) -> {
+                                val bytes = readLimited(zip, MAX_STICKER_FILE_BYTES)
+                                mediaTotalBytes += bytes.size
+                                require(mediaTotalBytes <= MAX_TOTAL_MEDIA_BYTES) { "Backup media is too large" }
+                                val fileName = entry.name.substringAfterLast('/')
+                                val stickerDir = File(tempDir, "stickers").also { it.mkdirs() }
+                                val target = File(stickerDir, fileName)
+                                target.writeBytes(bytes)
+                                stagedStickers += StagedBackupSticker(fileName, target)
+                            }
                         }
                     }
                     zip.closeEntry()
@@ -130,6 +158,7 @@ class JournalBackupManager(context: Context) {
                 entries = parsed.entries,
                 failed = parsed.failed,
                 stagedMedia = stagedMedia,
+                stagedStickers = stagedStickers,
                 tempDir = tempDir
             )
         } catch (throwable: Throwable) {
@@ -241,6 +270,13 @@ class JournalBackupManager(context: Context) {
             parts[2] != ".."
     }
 
+    private fun isSafeStickerPath(path: String): Boolean {
+        val parts = path.split('/')
+        return parts.size == 2 &&
+            parts[0] == "stickers" &&
+            UserStickerStore.isSafeFileName(parts[1])
+    }
+
     private fun readLimited(input: InputStream, maxBytes: Int): ByteArray {
         val output = ByteArrayOutputStream(minOf(maxBytes, DEFAULT_BUFFER_SIZE))
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -261,6 +297,7 @@ class JournalBackupManager(context: Context) {
         private const val MAX_BACKUP_ENTRIES = 10_000
         private const val MAX_MANIFEST_BYTES = 16 * 1024 * 1024
         private const val MAX_MEDIA_FILE_BYTES = 20 * 1024 * 1024
+        private const val MAX_STICKER_FILE_BYTES = 512 * 1024
         private const val MAX_TOTAL_MEDIA_BYTES = 128L * 1024 * 1024
         private const val MAX_TITLE_LENGTH = 500
         private const val MAX_ENTRY_CONTENT_LENGTH = 10_000_000

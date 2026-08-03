@@ -102,20 +102,99 @@ body {
     display: none !important;
 }
 
-/* 插入的贴纸样式 */
+/* 绝对定位贴纸：可放在日记任意位置，互不粘连 */
+.journal-sticker,
 .inserted-sticker {
-    display: inline-block;
-    font-size: 32px;
-    cursor: move;
+    position: absolute;
+    float: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 72px;
+    height: 72px;
+    margin: 0;
+    shape-outside: none;
+    transform-origin: center center;
+    cursor: grab;
     -webkit-user-select: none;
     user-select: none;
-    vertical-align: middle;
-    margin: 4px;
-    transition: transform 0.1s;
+    -webkit-user-drag: none;
+    touch-action: none;
+    box-sizing: border-box;
+    overflow: visible;
+    line-height: 1;
+    z-index: 5;
 }
 
-.inserted-sticker:active {
-    transform: scale(1.2);
+.journal-sticker.is-selected {
+    outline: 2px solid rgba(90, 140, 200, 0.55);
+    outline-offset: 2px;
+    z-index: 30;
+}
+
+.journal-sticker.is-dragging {
+    z-index: 40 !important;
+    cursor: grabbing;
+}
+
+.journal-sticker__emoji {
+    font-size: 42px;
+    line-height: 1;
+    pointer-events: none;
+}
+
+.journal-sticker__media {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    -webkit-user-drag: none;
+    display: block;
+}
+
+#sticker-delete-btn {
+    position: fixed;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    background: #e53935;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
+    z-index: 1100;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    padding: 0;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+#sticker-delete-btn:active {
+    transform: scale(0.94);
+}
+
+/* Moveable 控制层高于涂鸦；单目标选择避免近距粘连 */
+.moveable-control-box,
+.moveable-area {
+    z-index: 1000 !important;
+}
+
+.moveable-control {
+    width: 20px !important;
+    height: 20px !important;
+    margin-top: -10px !important;
+    margin-left: -10px !important;
+    touch-action: none !important;
+}
+
+.moveable-line {
+    background: rgba(90, 140, 200, 0.75) !important;
+    touch-action: none !important;
 }
 
 /* 插入的图片样式 */

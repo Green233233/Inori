@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.green.inorinal.backup.ImportResult
 import com.green.inorinal.backup.JournalBackupManager
 import com.green.inorinal.media.JournalMediaStore
+import com.green.inorinal.media.UserStickerStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -21,6 +22,7 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
     private val dao = JournalDatabase.getDatabase(application).journalDao()
     private val repository = JournalRepository(dao)
     private val mediaStore = JournalMediaStore(application)
+    private val userStickerStore = UserStickerStore(application)
     private val backupManager = JournalBackupManager(application)
 
     private val _searchQuery = MutableStateFlow("")
@@ -176,6 +178,15 @@ class JournalViewModel(application: Application) : AndroidViewModel(application)
         val entriesToImport = mutableListOf<JournalEntry>()
 
         try {
+            parsedBackup.stagedStickers.forEach { staged ->
+                runCatching {
+                    userStickerStore.importFromBackupFile(
+                        staged.fileName,
+                        staged.file.readBytes()
+                    )
+                }
+            }
+
             parsedBackup.entries.forEach { entry ->
                 runCatching {
                     val existing = repository.getEntryById(entry.id)

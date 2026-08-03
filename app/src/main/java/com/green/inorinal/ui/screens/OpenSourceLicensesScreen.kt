@@ -47,7 +47,10 @@ private val licenseItems = listOf(
     LicenseItem("Room", "Apache License 2.0", "https://developer.android.com/training/data-storage/room", "本地数据库。"),
     LicenseItem("DataStore", "Apache License 2.0", "https://developer.android.com/topic/libraries/architecture/datastore", "用户设置存储。"),
     LicenseItem("Gson", "Apache License 2.0", "https://github.com/google/gson", "备份清单与旧 JSON 导入导出。"),
-    LicenseItem("LXGW WenKai", "SIL Open Font License 1.1", "https://github.com/lxgw/LxgwWenKai", "编辑器手写风格字体。")
+    LicenseItem("LXGW WenKai", "SIL Open Font License 1.1", "https://github.com/lxgw/LxgwWenKai", "编辑器手写风格字体。"),
+    LicenseItem("Moveable", "MIT License", "https://github.com/daybrush/moveable", "编辑器贴纸拖移、缩放与旋转控制。"),
+    LicenseItem("Atrament", "MIT License", "https://github.com/jakubfiala/atrament", "编辑器涂鸦笔触绘制。"),
+    LicenseItem("Rough.js", "MIT License", "https://github.com/rough-stuff/rough", "编辑器涂鸦手绘风格渲染。")
 )
 
 @OptIn(ExperimentalMaterial3Api::class)

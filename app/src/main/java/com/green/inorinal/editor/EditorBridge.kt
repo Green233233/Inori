@@ -3,10 +3,13 @@ package com.green.inorinal.editor
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Rect
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
+import android.view.MotionEvent
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -14,6 +17,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.green.inorinal.debug.DebugLog
 import com.green.inorinal.media.JournalMediaStore
+import com.green.inorinal.media.UserStickerStore
 import com.green.inorinal.media.JournalMediaStore.Companion.mimeTypeForExtension
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,8 +49,12 @@ class EditorBridge(private val context: Context) {
     private var webView: WebView? = null
     private var pageLoaded = false
     private val mediaStore = JournalMediaStore(context)
+    private val userStickerStore = UserStickerStore(context)
     private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     var currentEntryId: String? = null
+
+    /** Fired after user sticker library changes (import / delete). */
+    var onUserStickersChanged: (() -> Unit)? = null
 
     // 页面加载完成前待执行的主题 JS（避免因页面未就绪导致主题不同步）
     private var pendingThemeJs: String? = null
@@ -57,6 +65,10 @@ class EditorBridge(private val context: Context) {
 
     /** 涂鸦模式标志 - 控制 WebView 是否拦截触摸事件 */
     private var isDoodleMode = false
+
+    /** 贴纸拖移/缩放/旋转进行中，用于拦截系统返回手势与父级滚动 */
+    @Volatile
+    private var stickerGestureActive = false
 
     @JavascriptInterface
     fun onContentChanged(html: String) {
@@ -73,11 +85,45 @@ class EditorBridge(private val context: Context) {
         _doodleState.value = stateJson.orEmpty().ifBlank { "{}" }
     }
 
+    @JavascriptInterface
+    fun setStickerGestureActive(active: Boolean) {
+        Handler(Looper.getMainLooper()).post {
+            stickerGestureActive = active
+            val view = webView ?: return@post
+            view.parent?.requestDisallowInterceptTouchEvent(active)
+            updateSystemGestureExclusion(view, active)
+        }
+    }
+
+    private fun updateSystemGestureExclusion(view: WebView, expandFull: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        view.post {
+            val width = view.width
+            val height = view.height
+            if (width <= 0 || height <= 0) return@post
+            val edge = (64f * view.resources.displayMetrics.density).toInt().coerceAtLeast(56)
+            view.systemGestureExclusionRects = if (expandFull) {
+                listOf(Rect(0, 0, width, height))
+            } else {
+                // Keep a wider edge exclusion in the editor so near-edge sticker drags
+                // are less likely to trigger system back.
+                listOf(
+                    Rect(0, 0, edge, height),
+                    Rect((width - edge).coerceAtLeast(0), 0, width, height)
+                )
+            }
+        }
+    }
+
     var onImageRequest: (() -> Unit)? = null
     var onImageInsertFailed: (() -> Unit)? = null
 
     fun setupWebView(webView: WebView, initialContent: String = "") {
         this.webView = webView
+        val debuggable = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (debuggable) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.allowFileAccess = true
@@ -142,15 +188,28 @@ class EditorBridge(private val context: Context) {
             }
         }
 
-        // 关键修复：覆盖 WebView 的触摸事件处理
-        // 当涂鸦模式激活时，不让 WebView 拦截触摸事件，让它们传递到 HTML Canvas
-        webView.setOnTouchListener { _, event ->
-            if (isDoodleMode) {
-                // 涂鸦模式下不消费事件，让触摸穿透到 HTML Canvas
-                false
-            } else {
-                // 文本模式下正常处理
-                false
+        // 涂鸦 / 贴纸手势时禁止父级与系统手势抢触摸
+        webView.setOnTouchListener { view, event ->
+            val blockParent = isDoodleMode || stickerGestureActive
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN,
+                MotionEvent.ACTION_MOVE -> {
+                    if (blockParent) {
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                }
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL -> {
+                    if (stickerGestureActive) {
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                }
+            }
+            false
+        }
+        webView.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            if (v is WebView) {
+                updateSystemGestureExclusion(v, stickerGestureActive)
             }
         }
 
@@ -299,6 +358,86 @@ class EditorBridge(private val context: Context) {
         evaluateJavascript("insertSticker(${escapeForJs(name)})")
     }
 
+    fun insertUserSticker(stickerId: String) {
+        webView?.requestFocus()
+        bridgeScope.launch {
+            val dataUri = withContext(Dispatchers.IO) {
+                val item = userStickerStore.getSticker(stickerId) ?: return@withContext null
+                userStickerStore.fileToDataUri(item.file)
+            } ?: return@launch
+            val entryId = currentEntryId
+            if (entryId != null) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val item = userStickerStore.getSticker(stickerId) ?: return@runCatching
+                        mediaStore.saveImage(entryId, item.file.readBytes(), item.file.extension)
+                    }
+                }
+            }
+            evaluateJavascript("insertCustomSticker(${escapeForJs(dataUri)})")
+        }
+    }
+
+    fun listUserStickers(): List<UserStickerStore.StickerItem> = userStickerStore.listStickers()
+
+    fun deleteUserSticker(stickerId: String): Boolean {
+        val removed = userStickerStore.deleteSticker(stickerId)
+        if (removed) onUserStickersChanged?.invoke()
+        return removed
+    }
+
+    fun userStickerThumbnail(stickerId: String): ByteArray? {
+        val item = userStickerStore.getSticker(stickerId) ?: return null
+        return runCatching { item.file.readBytes() }.getOrNull()
+    }
+
+    fun insertCustomSticker(uri: Uri) {
+        val entryId = currentEntryId ?: return
+        webView?.requestFocus()
+        val inputStream = runCatching {
+            context.contentResolver.openInputStream(uri)
+        }.getOrNull()
+        if (inputStream == null) {
+            DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
+            onImageInsertFailed?.invoke()
+            return
+        }
+        bridgeScope.launch {
+            val sourceBytes = try {
+                withContext(Dispatchers.IO) {
+                    inputStream.use { it.readBytes() }.also { bytes ->
+                        require(bytes.isNotEmpty()) { "Empty image" }
+                    }
+                }
+            } catch (_: Exception) {
+                DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
+                onImageInsertFailed?.invoke()
+                return@launch
+            }
+
+            try {
+                val dataUri = withContext(Dispatchers.IO) {
+                    val libraryItem = userStickerStore.importSticker(
+                        sourceBytes,
+                        UserStickerStore.MAX_STICKER_BYTES
+                    ) ?: error("Unable to compress sticker under 256KB")
+                    // Also attach a copy to the current entry media folder for backup of entry content.
+                    mediaStore.saveImage(entryId, libraryItem.file.readBytes(), libraryItem.file.extension)
+                    userStickerStore.fileToDataUri(libraryItem.file)
+                        ?: error("Unable to read imported sticker")
+                }
+                onUserStickersChanged?.invoke()
+                evaluateJavascript("insertCustomSticker(${escapeForJs(dataUri)})")
+            } catch (_: OutOfMemoryError) {
+                DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
+                onImageInsertFailed?.invoke()
+            } catch (_: Exception) {
+                DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
+                onImageInsertFailed?.invoke()
+            }
+        }
+    }
+
     // ==================== 涂鸦相关方法 ====================
 
     fun toggleDoodleMode(active: Boolean) {
@@ -393,6 +532,70 @@ class EditorBridge(private val context: Context) {
 
     private fun toJpegDataUri(jpegBytes: ByteArray): String =
         "data:image/jpeg;base64," + Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
+
+    private fun toImageDataUri(bytes: ByteArray, mimeType: String): String =
+        "data:$mimeType;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+
+    private data class EncodedImage(
+        val bytes: ByteArray,
+        val extension: String,
+        val mimeType: String
+    )
+
+    /**
+     * Encode sticker bytes, preferring PNG when the source has alpha.
+     */
+    private fun compressStickerBytes(
+        sourceBytes: ByteArray,
+        maxSizePixels: Int = 800_000,
+        quality: Int = 85
+    ): EncodedImage {
+        val options = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, options)
+        require(options.outWidth > 0 && options.outHeight > 0) { "Invalid image" }
+
+        val totalPixels = options.outWidth.toLong() * options.outHeight.toLong()
+        var sampleSize = 1
+        if (totalPixels > maxSizePixels) {
+            val targetSample = Math.sqrt(totalPixels.toDouble() / maxSizePixels.toDouble()).toInt()
+            while (sampleSize < targetSample) sampleSize *= 2
+        }
+
+        val decodeOptions = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+        }
+        val bitmap = BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, decodeOptions)
+            ?: error("Unable to decode image")
+
+        var scaledBitmap = bitmap
+        val currentPixels = bitmap.width.toLong() * bitmap.height
+        if (currentPixels > maxSizePixels) {
+            val scale = Math.sqrt(maxSizePixels.toDouble() / currentPixels.toDouble())
+            val newWidth = (bitmap.width * scale).toInt().coerceAtLeast(1)
+            val newHeight = (bitmap.height * scale).toInt().coerceAtLeast(1)
+            scaledBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+            if (scaledBitmap != bitmap) {
+                bitmap.recycle()
+            }
+        }
+
+        val keepAlpha = scaledBitmap.hasAlpha()
+        val outputStream = ByteArrayOutputStream()
+        val encoded = if (keepAlpha) {
+            scaledBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+            EncodedImage(outputStream.toByteArray(), "png", "image/png")
+        } else {
+            scaledBitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
+            EncodedImage(outputStream.toByteArray(), "jpg", "image/jpeg")
+        }
+        if (!scaledBitmap.isRecycled) {
+            scaledBitmap.recycle()
+        }
+        outputStream.close()
+        return encoded
+    }
 
     /**
      * 压缩图片并转为 JPEG 字节

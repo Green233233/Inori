@@ -5,8 +5,12 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -52,7 +57,6 @@ import androidx.activity.compose.BackHandler
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import android.util.Base64
-import android.graphics.BitmapFactory
 import android.widget.ImageView
 import com.green.inorinal.data.*
 import com.green.inorinal.debug.DebugLog
@@ -79,6 +83,23 @@ private data class EditorSaveSnapshot(
     val mood: Mood,
     val category: Category
 )
+
+/** True when HTML has no meaningful text, images, stickers, or doodle data. */
+private fun isBlankEditorHtml(html: String): Boolean {
+    if (html.isBlank()) return true
+    val lower = html.lowercase(Locale.ROOT)
+    if ("journal-sticker" in lower) return false
+    if ("<img" in lower) return false
+    if ("doodle-data" in lower) return false
+    if ("journal-media://" in lower) return false
+    val stripped = html
+        .replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("&nbsp;", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("<[^>]+>"), "")
+        .replace("\u200B", "")
+        .trim()
+    return stripped.isEmpty()
+}
 
 private data class StickerOption(
     val name: String,
@@ -120,7 +141,15 @@ fun EditorScreen(
     var previewImageDataUrl by remember { mutableStateOf<String?>(null) }
     var hasLoadedEntry by remember { mutableStateOf(entryId == null) }
     var lastSavedSnapshot by remember { mutableStateOf<EditorSaveSnapshot?>(null) }
+    var showEmptyOverwriteDialog by remember { mutableStateOf(false) }
+    var pendingEmptyExitContent by remember { mutableStateOf<String?>(null) }
     val saveMutex = remember { Mutex() }
+
+    fun protectedContent(): String =
+        lastSavedSnapshot?.content ?: entry?.content.orEmpty()
+
+    fun wouldEmptyOverwrite(content: String): Boolean =
+        isBlankEditorHtml(content) && !isBlankEditorHtml(protectedContent())
 
     // 加载现有日记
     LaunchedEffect(entryId) {
@@ -204,13 +233,21 @@ fun EditorScreen(
     }
 
     // 即时保存日记
-    suspend fun saveEntry(content: String = bridge.getCurrentContent()): Boolean {
+    suspend fun saveEntry(
+        content: String = bridge.getCurrentContent(),
+        allowEmptyOverwrite: Boolean = false
+    ): Boolean {
         return saveMutex.withLock {
             if (!hasLoadedEntry) {
                 return@withLock true
             }
             val currentEntry = entry
             if (currentEntry == null && !hasMeaningfulChanges(content)) {
+                return@withLock true
+            }
+
+            // Autosave / background save must never wipe a non-empty entry with blank HTML.
+            if (!allowEmptyOverwrite && wouldEmptyOverwrite(content)) {
                 return@withLock true
             }
 
@@ -255,19 +292,92 @@ fun EditorScreen(
     }
 
     suspend fun saveLatestContent(): Boolean {
-        return saveEntry(bridge.getContentForSave())
+        return saveEntry(bridge.getContentForSave(), allowEmptyOverwrite = false)
+    }
+
+    suspend fun forceRestoreProtectedEntry(): Boolean {
+        return saveMutex.withLock {
+            val currentEntry = entry ?: return@withLock true
+            val snap = lastSavedSnapshot
+            val restoreContent = snap?.content ?: currentEntry.content
+            if (isBlankEditorHtml(restoreContent)) {
+                return@withLock true
+            }
+            try {
+                val restored = viewModel.saveEntry(
+                    currentEntry.copy(
+                        title = snap?.title ?: title.ifBlank { currentEntry.title },
+                        content = restoreContent,
+                        weather = snap?.weather ?: selectedWeather,
+                        mood = snap?.mood ?: selectedMood,
+                        category = snap?.category ?: selectedCategory
+                    )
+                )
+                entry = restored
+                bridge.currentEntryId = restored.id
+                val displayContent = bridge.toDisplayableHtml(restored.content)
+                lastSavedSnapshot = EditorSaveSnapshot(
+                    title = restored.title,
+                    content = displayContent,
+                    weather = restored.weather.normalized(),
+                    mood = restored.mood.normalized(),
+                    category = restored.category
+                )
+                true
+            } catch (_: Exception) {
+                DebugLog.event(DebugLog.AppEvent.JOURNAL_SAVE_FAILED)
+                false
+            }
+        }
     }
 
     fun saveAndExit() {
-        if (isSaving) return
-        isSaving = true
+        if (isSaving || showEmptyOverwriteDialog) return
         scope.launch {
-            if (saveLatestContent()) {
+            val content = bridge.getContentForSave()
+            if (wouldEmptyOverwrite(content)) {
+                pendingEmptyExitContent = content
+                showEmptyOverwriteDialog = true
+                return@launch
+            }
+            isSaving = true
+            if (saveEntry(content, allowEmptyOverwrite = false)) {
                 onBack()
             } else {
                 isSaving = false
                 Toast.makeText(context, "保存失败，请检查存储空间后重试", Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    fun confirmEmptyOverwriteAndExit() {
+        if (isSaving) return
+        isSaving = true
+        showEmptyOverwriteDialog = false
+        scope.launch {
+            val content = pendingEmptyExitContent ?: ""
+            pendingEmptyExitContent = null
+            if (saveEntry(content, allowEmptyOverwrite = true)) {
+                onBack()
+            } else {
+                isSaving = false
+                Toast.makeText(context, "保存失败，请检查存储空间后重试", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    fun cancelEmptyOverwriteAndExit() {
+        if (isSaving) return
+        isSaving = true
+        showEmptyOverwriteDialog = false
+        pendingEmptyExitContent = null
+        scope.launch {
+            if (!forceRestoreProtectedEntry()) {
+                isSaving = false
+                Toast.makeText(context, "恢复手账失败，请重试", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            onBack()
         }
     }
 
@@ -287,8 +397,32 @@ fun EditorScreen(
     }
 
     // 处理系统返回按钮：保存并返回
-    BackHandler(enabled = true) {
+    BackHandler(enabled = !showEmptyOverwriteDialog && !isSaving) {
         saveAndExit()
+    }
+
+    if (showEmptyOverwriteDialog) {
+        AlertDialog(
+            onDismissRequest = { cancelEmptyOverwriteAndExit() },
+            title = { Text("即将覆盖为空内容") },
+            text = {
+                Text(
+                    "检测到整篇手账即将被覆盖为空内容，如果您没有这么做，很抱歉应用可能在保存手账时出现了问题。" +
+                        "如果点按继续保存按钮，手账将会被空内容覆盖。点按取消按钮，则应用将保护本手账条目内容，不保存即退出。" +
+                        "如果清空手账不是您的意图，请点击“取消”。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmEmptyOverwriteAndExit() }) {
+                    Text("继续保存", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { cancelEmptyOverwriteAndExit() }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -1043,9 +1177,43 @@ private fun BrushChip(name: String, label: String, selected: Boolean, onClick: (
 
 // ==================== 贴纸面板 ====================
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun StickerPanel(bridge: EditorBridge, onHide: () -> Unit) {
     val windowSize = rememberAppWindowSize()
+    var userStickers by remember { mutableStateOf(bridge.listUserStickers()) }
+    var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    val refreshUserStickers = {
+        userStickers = bridge.listUserStickers()
+    }
+    DisposableEffect(bridge) {
+        bridge.onUserStickersChanged = { refreshUserStickers() }
+        onDispose { bridge.onUserStickersChanged = null }
+    }
+    val stickerImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { bridge.insertCustomSticker(it) }
+    }
+    if (pendingDeleteId != null) {
+        AlertDialog(
+            onDismissRequest = { pendingDeleteId = null },
+            title = { Text("删除已导入贴纸") },
+            text = { Text("仅从贴纸库移除，不会删除日记里已经贴上的贴纸。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingDeleteId?.let { bridge.deleteUserSticker(it) }
+                        pendingDeleteId = null
+                        refreshUserStickers()
+                    }
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteId = null }) { Text("取消") }
+            }
+        )
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1063,7 +1231,86 @@ private fun StickerPanel(bridge: EditorBridge, onHide: () -> Unit) {
                 Text("选择贴纸", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                 TextButton(onClick = onHide) { Text("完成") }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { stickerImportLauncher.launch("image/*") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.AddPhotoAlternate,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("导入贴纸")
+            }
+            if (userStickers.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    "已导入贴纸",
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 13.sp
+                )
+                Text(
+                    "长按可从库中删除",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    fontSize = 11.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                userStickers.chunked(windowSize.stickerColumns).forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        row.forEach { item ->
+                            val thumb = remember(item.id, item.file.lastModified()) {
+                                runCatching { BitmapFactory.decodeFile(item.file.absolutePath) }.getOrNull()
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(windowSize.stickerCell)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                                    .combinedClickable(
+                                        onClick = { bridge.insertUserSticker(item.id) },
+                                        onLongClick = { pendingDeleteId = item.id }
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (thumb != null) {
+                                    Image(
+                                        bitmap = thumb.asImageBitmap(),
+                                        contentDescription = "已导入贴纸",
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(6.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Filled.Image,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                    )
+                                }
+                            }
+                        }
+                        repeat((windowSize.stickerColumns - row.size).coerceAtLeast(0)) {
+                            Spacer(modifier = Modifier.size(windowSize.stickerCell))
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                "内置贴纸",
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 13.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
             val stickers = listOf(
                 StickerOption("heart", "❤️"),
                 StickerOption("star", "⭐"),
@@ -1104,7 +1351,7 @@ private fun StickerPanel(bridge: EditorBridge, onHide: () -> Unit) {
                         }
                     }
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(6.dp))
             }
         }
     }

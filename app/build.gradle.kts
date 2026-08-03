@@ -12,8 +12,8 @@ android {
         applicationId = "com.green.inorinal"
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "Alpha v0.2.1"
+        versionCode = 6
+        versionName = "Alpha v0.2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
