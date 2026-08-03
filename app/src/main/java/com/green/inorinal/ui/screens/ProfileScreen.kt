@@ -21,10 +21,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.green.inorinal.data.JournalViewModel
 import com.green.inorinal.ui.icons.ProfileAvatarIcon
+import com.green.inorinal.ui.layout.rememberAppWindowSize
 import com.green.inorinal.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -42,8 +45,8 @@ fun ProfileScreen(
     val favoriteCount by viewModel.favoriteCount.collectAsState()
     val streakCount by viewModel.streakCount.collectAsState()
     val scope = rememberCoroutineScope()
+    val windowSize = rememberAppWindowSize()
 
-    // 导出文件创建器
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip")
     ) { uri: Uri? ->
@@ -63,7 +66,6 @@ fun ProfileScreen(
         }
     }
 
-    // 导入文件选择器
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -105,27 +107,29 @@ fun ProfileScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(windowSize.contentPadding),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(if (windowSize.isNarrow) 12.dp else 16.dp))
 
-            // Material Icons 开源头像图标
             Box(
                 modifier = Modifier
-                    .size(100.dp)
+                    .size(windowSize.avatarSize)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
-                ProfileAvatarIcon(size = 80.dp, tint = MaterialTheme.colorScheme.primary)
+                ProfileAvatarIcon(
+                    size = windowSize.avatarIconSize,
+                    tint = MaterialTheme.colorScheme.primary
+                )
             }
 
             Spacer(Modifier.height(16.dp))
 
             Text(
                 "日记爱好者",
-                fontSize = 22.sp,
+                fontSize = windowSize.profileNameSp.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -134,63 +138,121 @@ fun ProfileScreen(
 
             Text(
                 "记录生活中的每一个美好瞬间",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                fontSize = if (windowSize.isNarrow) 13.sp else 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(0.92f)
             )
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(windowSize.sectionGap))
 
-            // 统计信息
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                StatItem(Icons.Filled.EditNote, "日记", "$totalCount", MaterialTheme.colorScheme.primary)
-                StatItem(Icons.Filled.LocalFireDepartment, "连续", "${streakCount}天", FireOrange)
-                StatItem(Icons.Filled.Star, "收藏", "$favoriteCount", StarYellow)
+                StatItem(
+                    icon = Icons.Filled.EditNote,
+                    label = "日记",
+                    value = "$totalCount",
+                    tint = MaterialTheme.colorScheme.primary,
+                    valueSp = windowSize.statValueSp,
+                    modifier = Modifier.weight(1f)
+                )
+                StatItem(
+                    icon = Icons.Filled.LocalFireDepartment,
+                    label = "连续",
+                    value = "${streakCount}天",
+                    tint = FireOrange,
+                    valueSp = windowSize.statValueSp,
+                    modifier = Modifier.weight(1f)
+                )
+                StatItem(
+                    icon = Icons.Filled.Star,
+                    label = "收藏",
+                    value = "$favoriteCount",
+                    tint = StarYellow,
+                    valueSp = windowSize.statValueSp,
+                    modifier = Modifier.weight(1f)
+                )
             }
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(windowSize.sectionGap))
 
-            // 导入导出按钮
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedButton(
-                    onClick = {
-                        exportLauncher.launch("祈_日记备份_${System.currentTimeMillis()}.zip")
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.primary
-                    )
+            // Stack import/export under ~360dp; keep side-by-side near the 380dp target.
+            if (windowSize.isCompact) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(Icons.Filled.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("导出条目")
+                    OutlinedButton(
+                        onClick = {
+                            exportLauncher.launch("祈_日记备份_${System.currentTimeMillis()}.zip")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Icon(Icons.Filled.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("导出条目", maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            importLauncher.launch(arrayOf("application/zip", "application/json", "*/*"))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Icon(Icons.Filled.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("导入条目", maxLines = 1)
+                    }
                 }
-
-                OutlinedButton(
-                    onClick = {
-                        importLauncher.launch(arrayOf("application/zip", "application/json", "*/*"))
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.primary
-                    )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(Icons.Filled.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("导入条目")
+                    OutlinedButton(
+                        onClick = {
+                            exportLauncher.launch("祈_日记备份_${System.currentTimeMillis()}.zip")
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Icon(Icons.Filled.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("导出条目", maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            importLauncher.launch(arrayOf("application/zip", "application/json", "*/*"))
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Icon(Icons.Filled.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("导入条目", maxLines = 1)
+                    }
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(if (windowSize.isNarrow) 16.dp else 24.dp))
 
-            // 设置选项 - 合并主题设置和提醒设置为单个"设置"入口
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -212,25 +274,38 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun StatItem(icon: ImageVector, label: String, value: String, tint: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun StatItem(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    tint: Color,
+    valueSp: Int,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier.padding(horizontal = 2.dp)
+    ) {
         Icon(
             imageVector = icon,
             contentDescription = label,
             tint = tint,
-            modifier = Modifier.size(28.dp)
+            modifier = Modifier.size(26.dp)
         )
         Spacer(Modifier.height(4.dp))
         Text(
             value,
-            fontSize = 20.sp,
+            fontSize = valueSp.sp,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
         Text(
             label,
             fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1
         )
     }
 }
@@ -245,7 +320,10 @@ private fun ProfileMenuItem(icon: ImageVector, title: String, onClick: () -> Uni
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
             Icon(
                 imageVector = icon,
                 contentDescription = title,
@@ -256,7 +334,9 @@ private fun ProfileMenuItem(icon: ImageVector, title: String, onClick: () -> Uni
             Text(
                 text = title,
                 fontSize = 16.sp,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
         Icon(

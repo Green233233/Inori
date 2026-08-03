@@ -743,10 +743,12 @@ function insertSticker(name) {
 }
 
 function insertImage(imageSrc) {
+    if (!imageSrc) return;
     const image = document.createElement('img');
     image.src = imageSrc;
     image.className = 'inserted-image';
     image.style.maxWidth = '100%';
+    image.style.display = 'block';
     image.style.cursor = 'pointer';
     bindImageClick(image);
     insertNodeAtSelection(image);
@@ -759,13 +761,24 @@ function insertNodeAtSelection(node) {
     const selection = window.getSelection();
     if (selection.rangeCount > 0) {
         const range = selection.getRangeAt(0);
-        range.deleteContents();
-        range.insertNode(node);
-        range.collapse(false);
+        if (!paper.contains(range.commonAncestorContainer)) {
+            paper.appendChild(node);
+        } else {
+            range.deleteContents();
+            range.insertNode(node);
+            range.setStartAfter(node);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
     } else {
         paper.appendChild(node);
     }
     saveSelection();
+    // Keep inserted media visible after picker returns focus.
+    if (typeof node.scrollIntoView === 'function') {
+        node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
 }
 
 function bindImageClick(image) {
@@ -817,7 +830,8 @@ function setContent(html) {
         resizeDoodleCanvas();
         syncDoodleCanvasScroll();
     });
-    notifyContentChanged();
+    // Do not notify Android here: native setContent already updates its content StateFlow.
+    // Notifying would re-trigger autosave and re-migrate inline images into duplicate files.
 }
 
 function sanitizeEditorHtml(html) {

@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.green.inorinal.data.Category
 import com.green.inorinal.data.JournalViewModel
+import com.green.inorinal.ui.layout.rememberAppWindowSize
 
 data class CategoryItem(
     val category: Category,
@@ -32,6 +33,7 @@ fun CategoryScreen(
     viewModel: JournalViewModel,
     onCategoryClick: (Category) -> Unit
 ) {
+    val windowSize = rememberAppWindowSize()
     val allEntries by viewModel.allEntries.collectAsState()
     val entriesLoaded by viewModel.entriesLoaded.collectAsState()
     val categoryCounts = allEntries.groupingBy { it.category }.eachCount()
@@ -66,9 +68,9 @@ fun CategoryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 8.dp)
+                .padding(horizontal = windowSize.contentPadding),
+            verticalArrangement = Arrangement.spacedBy(windowSize.listSpacing),
+            contentPadding = PaddingValues(vertical = windowSize.listSpacing)
         ) {
             items(categories) { item ->
                 Card(

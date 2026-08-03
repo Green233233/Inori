@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -13,7 +14,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.green.inorinal.debug.DebugLog
 import com.green.inorinal.media.JournalMediaStore
-import com.green.inorinal.media.JournalMediaStore.Companion.toUriString
+import com.green.inorinal.media.JournalMediaStore.Companion.mimeTypeForExtension
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,8 +27,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
-import java.io.ByteArrayOutputStream
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlin.coroutines.resume
 
@@ -73,6 +74,7 @@ class EditorBridge(private val context: Context) {
     }
 
     var onImageRequest: (() -> Unit)? = null
+    var onImageInsertFailed: (() -> Unit)? = null
 
     fun setupWebView(webView: WebView, initialContent: String = "") {
         this.webView = webView
@@ -104,15 +106,17 @@ class EditorBridge(private val context: Context) {
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 val url = request?.url ?: return null
-                if (url.scheme != "file") return null
-                return if (isAllowedLocalFile(url.toString())) {
-                    null
-                } else {
-                    WebResourceResponse(
-                        "text/plain",
-                        "utf-8",
-                        ByteArrayInputStream(ByteArray(0))
-                    )
+                when (url.scheme) {
+                    JournalMediaStore.EDITOR_MEDIA_SCHEME ->
+                        return serveEditorMediaResponse(url) ?: blockedLocalFileResponse()
+                    "file" -> {
+                        val urlString = url.toString()
+                        // Allow all bundled assets (editor + fonts).
+                        if (urlString.startsWith(ANDROID_ASSET_PREFIX)) return null
+                        // Legacy file:// journal_media references.
+                        return serveAllowedMediaResponse(urlString) ?: blockedLocalFileResponse()
+                    }
+                    else -> return null
                 }
             }
 
@@ -159,23 +163,27 @@ class EditorBridge(private val context: Context) {
      */
     fun setPendingContent(html: String) {
         if (html.isNotEmpty()) {
-            _content.value = html
+            val displayHtml = toDisplayableHtml(html)
+            _content.value = displayHtml
             if (pageLoaded) {
-                setContent(html)
+                setContent(displayHtml)
             } else {
-                pendingContent = html
+                pendingContent = displayHtml
             }
         }
     }
 
     fun setContent(html: String) {
-        _content.value = html
+        val displayHtml = toDisplayableHtml(html)
+        _content.value = displayHtml
         if (!pageLoaded) {
-            pendingContent = html
+            pendingContent = displayHtml
             return
         }
-        evaluateJavascript("setContent(${escapeForJs(html)})")
+        evaluateJavascript("setContent(${escapeForJs(displayHtml)})")
     }
+
+    fun toDisplayableHtml(html: String): String = mediaStore.toDisplayableHtml(html)
 
     /** 仅当 WebView 当前内容为空时才设置内容（避免覆盖用户已输入的内容） */
     fun setContentIfNeeded(html: String) {
@@ -234,25 +242,54 @@ class EditorBridge(private val context: Context) {
 
     fun insertImage(uri: Uri) {
         val entryId = currentEntryId ?: return
+        webView?.requestFocus()
+        // Open the stream on the picker callback thread so the temporary URI grant is retained.
+        val inputStream = runCatching {
+            context.contentResolver.openInputStream(uri)
+        }.getOrNull()
+        if (inputStream == null) {
+            DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
+            onImageInsertFailed?.invoke()
+            return
+        }
         bridgeScope.launch {
-            try {
-                val file = withContext(Dispatchers.IO) {
-                    processAndSaveImage(entryId, uri)
-                }
-                evaluateJavascript("insertImage(${escapeForJs(file.toUriString())})")
-            } catch (_: OutOfMemoryError) {
-                try {
-                    val file = withContext(Dispatchers.IO) {
-                        processAndSaveImage(entryId, uri, maxSizePixels = 500_000, quality = 50)
+            val sourceBytes = try {
+                withContext(Dispatchers.IO) {
+                    inputStream.use { it.readBytes() }.also { bytes ->
+                        require(bytes.isNotEmpty()) { "Empty image" }
                     }
-                    evaluateJavascript("insertImage(${escapeForJs(file.toUriString())})")
-                } catch (_: OutOfMemoryError) {
-                    DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
-                } catch (_: Exception) {
-                    DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
                 }
             } catch (_: Exception) {
                 DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
+                onImageInsertFailed?.invoke()
+                return@launch
+            }
+
+            try {
+                val dataUri = withContext(Dispatchers.IO) {
+                    val jpegBytes = compressImageBytes(sourceBytes, maxSizePixels = 1_500_000, quality = 75)
+                    mediaStore.saveImage(entryId, jpegBytes, "jpg")
+                    toJpegDataUri(jpegBytes)
+                }
+                evaluateJavascript("insertImage(${escapeForJs(dataUri)})")
+            } catch (_: OutOfMemoryError) {
+                try {
+                    val dataUri = withContext(Dispatchers.IO) {
+                        val jpegBytes = compressImageBytes(sourceBytes, maxSizePixels = 500_000, quality = 50)
+                        mediaStore.saveImage(entryId, jpegBytes, "jpg")
+                        toJpegDataUri(jpegBytes)
+                    }
+                    evaluateJavascript("insertImage(${escapeForJs(dataUri)})")
+                } catch (_: OutOfMemoryError) {
+                    DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
+                    onImageInsertFailed?.invoke()
+                } catch (_: Exception) {
+                    DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
+                    onImageInsertFailed?.invoke()
+                }
+            } catch (_: Exception) {
+                DebugLog.event(DebugLog.AppEvent.IMAGE_PROCESSING_FAILED)
+                onImageInsertFailed?.invoke()
             }
         }
     }
@@ -354,28 +391,25 @@ class EditorBridge(private val context: Context) {
 
     // ==================== 私有辅助 ====================
 
+    private fun toJpegDataUri(jpegBytes: ByteArray): String =
+        "data:image/jpeg;base64," + Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
+
     /**
      * 压缩图片并转为 JPEG 字节
      * @param maxSizePixels 最大像素数（宽×高），超过则等比缩放
      * @param quality JPEG 压缩质量 0-100
      */
-    private fun processAndSaveImage(
-        entryId: String,
-        uri: Uri,
+    private fun compressImageBytes(
+        sourceBytes: ByteArray,
         maxSizePixels: Int = 1_500_000,
         quality: Int = 75
-    ) = mediaStore.saveImage(entryId, compressImage(uri, maxSizePixels, quality), "jpg")
-
-    private fun compressImage(uri: Uri, maxSizePixels: Int = 1_500_000, quality: Int = 75): ByteArray {
+    ): ByteArray {
         val options = BitmapFactory.Options().apply {
             inJustDecodeBounds = true
         }
-        context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, options)
-        } ?: error("Unable to open image")
+        BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, options)
         require(options.outWidth > 0 && options.outHeight > 0) { "Invalid image" }
 
-        // 计算采样率以减少内存占用
         val totalPixels = options.outWidth.toLong() * options.outHeight.toLong()
         var sampleSize = 1
         if (totalPixels > maxSizePixels) {
@@ -386,11 +420,9 @@ class EditorBridge(private val context: Context) {
         val decodeOptions = BitmapFactory.Options().apply {
             inSampleSize = sampleSize
         }
-        val bitmap = context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, decodeOptions)
-        } ?: error("Unable to decode image")
+        val bitmap = BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, decodeOptions)
+            ?: error("Unable to decode image")
 
-        // 进一步缩放如果仍然太大
         var scaledBitmap = bitmap
         val currentPixels = bitmap.width.toLong() * bitmap.height
         if (currentPixels > maxSizePixels) {
@@ -403,17 +435,13 @@ class EditorBridge(private val context: Context) {
             }
         }
 
-        // 压缩为 JPEG
         val outputStream = ByteArrayOutputStream()
         scaledBitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
         val imageBytes = outputStream.toByteArray()
-
-        // 回收
         if (!scaledBitmap.isRecycled) {
             scaledBitmap.recycle()
         }
         outputStream.close()
-
         return imageBytes
     }
 
@@ -433,13 +461,59 @@ class EditorBridge(private val context: Context) {
         }
     }
 
-    private fun isAllowedLocalFile(url: String): Boolean {
-        if (url.startsWith(EDITOR_ASSET_PREFIX)) return true
+    private fun resolveAllowedMediaFile(url: String): File? {
         val path = Uri.parse(url).path.orEmpty()
-        val file = runCatching { File(path).canonicalFile }.getOrNull() ?: return false
-        val mediaRoot = runCatching { mediaStore.mediaRoot().canonicalFile }.getOrNull() ?: return false
-        return file.path == mediaRoot.path || file.path.startsWith(mediaRoot.path + File.separator)
+        if (path.isBlank()) return null
+        val file = runCatching { File(path).canonicalFile }.getOrNull() ?: return null
+        val mediaRoot = runCatching { mediaStore.mediaRoot().canonicalFile }.getOrNull() ?: return null
+        val underMediaRoot =
+            file.path == mediaRoot.path || file.path.startsWith(mediaRoot.path + File.separator)
+        return if (underMediaRoot && file.isFile) file else null
     }
+
+    private fun serveEditorMediaResponse(url: Uri): WebResourceResponse? {
+        if (url.host != "local") return null
+        val segments = url.pathSegments
+        if (segments.size < 2) return null
+        val entryId = segments[0]
+        val fileName = segments[1]
+        if (!JournalMediaStore.isSafeEntryId(entryId) || !JournalMediaStore.isSafeFileName(fileName)) {
+            return null
+        }
+        val file = runCatching {
+            File(mediaStore.entryDir(entryId), fileName).canonicalFile
+        }.getOrNull() ?: return null
+        val mediaRoot = runCatching { mediaStore.mediaRoot().canonicalFile }.getOrNull() ?: return null
+        if (!file.path.startsWith(mediaRoot.path + File.separator) || !file.isFile) return null
+        return mediaFileResponse(file)
+    }
+
+    private fun serveAllowedMediaResponse(url: String): WebResourceResponse? {
+        val file = resolveAllowedMediaFile(url) ?: return null
+        return mediaFileResponse(file)
+    }
+
+    private fun mediaFileResponse(file: File): WebResourceResponse? =
+        runCatching {
+            WebResourceResponse(
+                mimeTypeForExtension(file.extension),
+                null,
+                200,
+                "OK",
+                mapOf("Cache-Control" to "no-cache"),
+                file.inputStream()
+            )
+        }.getOrNull()
+
+    private fun blockedLocalFileResponse(): WebResourceResponse =
+        WebResourceResponse(
+            "text/plain",
+            "utf-8",
+            403,
+            "Forbidden",
+            emptyMap(),
+            ByteArrayInputStream(ByteArray(0))
+        )
 
     private suspend fun evaluateJavascriptForResult(script: String): String =
         withTimeoutOrNull(2_000) {
@@ -468,6 +542,6 @@ class EditorBridge(private val context: Context) {
 
     private companion object {
         const val EDITOR_URL = "file:///android_asset/editor/editor.html"
-        const val EDITOR_ASSET_PREFIX = "file:///android_asset/editor/"
+        const val ANDROID_ASSET_PREFIX = "file:///android_asset/"
     }
 }

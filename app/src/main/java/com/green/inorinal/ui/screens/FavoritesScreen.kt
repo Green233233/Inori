@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.sp
 import com.green.inorinal.data.JournalEntry
 import com.green.inorinal.data.JournalViewModel
 import com.green.inorinal.ui.components.JournalCard
+import com.green.inorinal.ui.layout.rememberAppWindowSize
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -22,6 +23,7 @@ fun FavoritesScreen(
     viewModel: JournalViewModel,
     onEntryClick: (String) -> Unit
 ) {
+    val windowSize = rememberAppWindowSize()
     val favoriteEntries by viewModel.favoriteEntries.collectAsState()
     var entryToDelete by remember { mutableStateOf<JournalEntry?>(null) }
 
@@ -70,18 +72,21 @@ fun FavoritesScreen(
                     .padding(innerPadding),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = windowSize.contentPadding)
+                ) {
                     Icon(
                         imageVector = Icons.Outlined.FavoriteBorder,
                         contentDescription = null,
-                        modifier = Modifier.size(64.dp),
+                        modifier = Modifier.size(windowSize.emptyIconSize),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     )
                     Spacer(Modifier.height(16.dp))
                     Text(
                         "收藏的日记将显示在这里",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 16.sp
+                        fontSize = if (windowSize.isNarrow) 14.sp else 16.sp
                     )
                 }
             }
@@ -90,8 +95,8 @@ fun FavoritesScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(horizontal = windowSize.contentPadding),
+                verticalArrangement = Arrangement.spacedBy(windowSize.listSpacing),
                 contentPadding = PaddingValues(vertical = 12.dp)
             ) {
                 items(favoriteEntries, key = { it.id }) { entry ->

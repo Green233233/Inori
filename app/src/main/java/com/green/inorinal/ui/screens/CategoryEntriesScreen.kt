@@ -15,6 +15,7 @@ import com.green.inorinal.data.Category
 import com.green.inorinal.data.JournalEntry
 import com.green.inorinal.data.JournalViewModel
 import com.green.inorinal.ui.components.JournalCard
+import com.green.inorinal.ui.layout.rememberAppWindowSize
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -24,6 +25,7 @@ fun CategoryEntriesScreen(
     onEntryClick: (String) -> Unit,
     onBack: () -> Unit
 ) {
+    val windowSize = rememberAppWindowSize()
     val entries by viewModel.allEntries.collectAsState()
     val filteredEntries = if (category == Category.ALL) entries else entries.filter { it.category == category }
     var entryToDelete by remember { mutableStateOf<JournalEntry?>(null) }
@@ -100,8 +102,8 @@ fun CategoryEntriesScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(horizontal = windowSize.contentPadding),
+                verticalArrangement = Arrangement.spacedBy(windowSize.listSpacing),
                 contentPadding = PaddingValues(vertical = 12.dp)
             ) {
                 items(filteredEntries, key = { it.id }) { entry ->

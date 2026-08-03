@@ -1,6 +1,7 @@
 package com.green.inorinal.ui.screens
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.background
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.green.inorinal.data.JournalEntry
 import com.green.inorinal.data.JournalViewModel
 import com.green.inorinal.ui.components.JournalCard
+import com.green.inorinal.ui.layout.rememberAppWindowSize
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -65,6 +68,7 @@ fun HomeScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val entries by viewModel.searchResults.collectAsState()
     var showSearch by remember { mutableStateOf(false) }
+    val windowSize = rememberAppWindowSize()
     var entryToDelete by remember { mutableStateOf<JournalEntry?>(null) }
     val fabScale = remember { Animatable(1f) }
     val scope = rememberCoroutineScope()
@@ -110,32 +114,45 @@ fun HomeScreen(
                 },
                 title = {
                     if (showSearch) {
-                        OutlinedTextField(
+                        BasicTextField(
                             value = searchQuery,
                             onValueChange = viewModel::setSearchQuery,
-                            modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text("搜索日记") },
                             singleLine = true,
-                            shape = RoundedCornerShape(24.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                            )
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = MaterialTheme.colorScheme.onSurface
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    MaterialTheme.colorScheme.surface,
+                                    RoundedCornerShape(20.dp)
+                                )
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            decorationBox = { inner ->
+                                if (searchQuery.isEmpty()) {
+                                    Text(
+                                        "搜索日记",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                inner()
+                            }
                         )
                     } else {
                         Text(
                             text = "祈",
-                            fontSize = 24.sp,
+                            fontSize = windowSize.brandTitleSp.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 },
                 actions = {
-                    IconButton(onClick = onNewEntry) {
-                        Icon(Icons.Filled.Add, contentDescription = "新建日记")
+                    if (!showSearch) {
+                        IconButton(onClick = onNewEntry) {
+                            Icon(Icons.Filled.Add, contentDescription = "新建日记")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
@@ -172,6 +189,7 @@ fun HomeScreen(
         if (entries.isEmpty()) {
             EmptyHomeState(
                 searching = searchQuery.isNotBlank(),
+                iconSize = windowSize.emptyIconSize,
                 modifier = Modifier.padding(innerPadding)
             )
         } else {
@@ -180,12 +198,12 @@ fun HomeScreen(
                     .fillMaxSize()
                     .padding(innerPadding),
                 contentPadding = PaddingValues(
-                    start = 12.dp,
-                    top = 12.dp,
-                    end = 12.dp,
-                    bottom = 104.dp
+                    start = windowSize.contentPadding,
+                    top = windowSize.contentPadding,
+                    end = windowSize.contentPadding,
+                    bottom = windowSize.fabBottomInset
                 ),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(windowSize.listSpacing)
             ) {
                 items(entries, key = { it.id }) { entry ->
                     JournalCard(
@@ -201,16 +219,23 @@ fun HomeScreen(
 }
 
 @Composable
-private fun EmptyHomeState(searching: Boolean, modifier: Modifier = Modifier) {
+private fun EmptyHomeState(
+    searching: Boolean,
+    iconSize: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier
+) {
     Box(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(horizontal = 24.dp)
+        ) {
             Icon(
                 imageVector = if (searching) Icons.Filled.Search else Icons.Filled.EditNote,
                 contentDescription = null,
-                modifier = Modifier.size(60.dp),
+                modifier = Modifier.size(iconSize),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
             )
             Spacer(Modifier.height(14.dp))

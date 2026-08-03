@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import com.green.inorinal.data.AppColorStyle
 import com.green.inorinal.data.AppThemeMode
 import com.green.inorinal.debug.DebugLog
+import com.green.inorinal.ui.layout.rememberAppWindowSize
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,6 +36,7 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val windowSize = rememberAppWindowSize()
     var showFontPicker by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
     var showDebugConfirmDialog by remember { mutableStateOf(false) }
@@ -167,7 +169,7 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp)
+                .padding(windowSize.contentPadding)
         ) {
             // 界面设置
             SectionHeader("界面设置")

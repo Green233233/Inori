@@ -1,0 +1,40 @@
+{
+  "mcpServers": {
+    "android-pilot": {
+      "command": "npx",
+      "args": ["-y", "android-pilot-mcp"],
+      "env": {
+        "ANDROID_HOME": "C:\\Users\\Green\\AppData\\Local\\Android\\Sdk",
+        "JAVA_HOME": "C:\\Program Files\\Android\\Android Studio\\jbr"
+      },
+      "autoApprove": [
+        "list_avds",
+        "start_emulator",
+        "stop_emulator",
+        "build_debug_apk",
+        "install_apk",
+        "launch_activity",
+        "capture_logcat",
+        "clear_app_data"
+      ]
+    },
+    "android-ui-test": {
+      "command": "uvx",
+      "args": ["mcp-server-android", "--emulator"],
+      "env": {
+        "ANDROID_HOME": "C:\\Users\\Green\\AppData\\Local\\Android\\Sdk"
+      },
+      "autoApprove": [
+        "get_ui_hierarchy",
+        "take_screenshot",
+        "click_element",
+        "input_text",
+        "swipe_screen",
+        "press_back"
+      ]
+    },
+    "as-code-intelligence": {
+      "url": "http://127.0.0.1:9876/mcp"
+    }
+  }
+}

@@ -2,6 +2,8 @@ package com.green.inorinal.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -13,12 +15,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.green.inorinal.ui.icons.AppIdentityIcon
+import com.green.inorinal.ui.layout.rememberAppWindowSize
 import com.green.inorinal.ui.icons.HeartIcon
 import com.green.inorinal.ui.icons.StarIcon
 import com.green.inorinal.ui.theme.*
@@ -42,6 +47,8 @@ fun AboutScreen(
     onLicensesClick: () -> Unit
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val windowSize = rememberAppWindowSize()
     var tapCount by remember { mutableIntStateOf(0) }
     var showEasterEgg by remember { mutableStateOf(false) }
     val particles = remember { mutableStateListOf<Particle>() }
@@ -116,6 +123,8 @@ fun AboutScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = windowSize.contentPadding)
                     .background(
                         Brush.verticalGradient(
                             colors = listOf(
@@ -127,15 +136,15 @@ fun AboutScreen(
                     ),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Spacer(Modifier.height(60.dp))
+                Spacer(Modifier.height(windowSize.aboutTopSpacer))
 
-                AppIdentityIcon(size = 120.dp, tint = MaterialTheme.colorScheme.primary)
+                AppIdentityIcon(size = windowSize.aboutIconSize, tint = MaterialTheme.colorScheme.primary)
 
                 Spacer(Modifier.height(20.dp))
 
                 Text(
                     "祈",
-                    fontSize = 48.sp,
+                    fontSize = windowSize.aboutHeroSp.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -159,9 +168,13 @@ fun AboutScreen(
 
                 Text(
                     "以本软件献给我最亲爱的小不点儿～",
-                    fontSize = 15.sp,
+                    fontSize = if (windowSize.isNarrow) 13.sp else 15.sp,
                     fontStyle = FontStyle.Italic,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
                 )
 
                 Spacer(Modifier.height(20.dp))
@@ -170,7 +183,11 @@ fun AboutScreen(
                 Text(
                     "本软件使用了若干开源组件与图标，详见许可证信息。",
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
                 )
 
                 Spacer(Modifier.height(24.dp))
@@ -224,8 +241,8 @@ fun AboutScreen(
                     Box(
                         modifier = Modifier
                             .offset(
-                                x = (particle.x * 800).dp,
-                                y = (particle.y * 1600).dp
+                                x = (particle.x * configuration.screenWidthDp).dp,
+                                y = (particle.y * configuration.screenHeightDp).dp
                             )
                     ) {
                         if (particle.isHeart) {

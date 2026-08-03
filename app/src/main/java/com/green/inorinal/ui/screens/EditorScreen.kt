@@ -8,7 +8,22 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,6 +43,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -43,6 +59,7 @@ import com.green.inorinal.debug.DebugLog
 import com.green.inorinal.editor.EditorBridge
 import com.green.inorinal.ui.icons.WeatherIcon
 import com.green.inorinal.ui.icons.MoodIcon
+import com.green.inorinal.ui.layout.rememberAppWindowSize
 import com.green.inorinal.ui.theme.*
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
@@ -74,7 +91,7 @@ private data class BrushSizeRange(
     val default: Float
 )
 
-@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
+@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class, ExperimentalLayoutApi::class)
 @Composable
 fun EditorScreen(
     viewModel: JournalViewModel,
@@ -85,9 +102,11 @@ fun EditorScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val windowSize = rememberAppWindowSize()
     val bridge = remember { EditorBridge(context) }
     val scope = rememberCoroutineScope()
     var entry by remember { mutableStateOf<JournalEntry?>(null) }
+    var showMetaMenu by remember { mutableStateOf(false) }
     var selectedWeather by remember { mutableStateOf(Weather.SUNNY) }
     var selectedMood by remember { mutableStateOf(Mood.HAPPY) }
     var selectedCategory by remember { mutableStateOf(Category.DAILY) }
@@ -139,6 +158,10 @@ fun EditorScreen(
         previewImageDataUrl = dataUrl
     }
 
+    bridge.onImageInsertFailed = {
+        Toast.makeText(context, "图片插入失败，请重试", Toast.LENGTH_SHORT).show()
+    }
+
     fun createDraftEntry(): JournalEntry {
         val now = LocalDate.now()
         val dayOfWeek = when (now.dayOfWeek.value) {
@@ -162,11 +185,8 @@ fun EditorScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            if (entry == null) {
-                entry = createDraftEntry().also { draft ->
-                    bridge.currentEntryId = draft.id
-                }
-            }
+            val targetEntry = entry ?: createDraftEntry().also { draft -> entry = draft }
+            bridge.currentEntryId = targetEntry.id
             bridge.insertImage(it)
         }
     }
@@ -220,8 +240,10 @@ fun EditorScreen(
                 )
                 entry = savedEntry
                 bridge.currentEntryId = savedEntry.id
-                lastSavedSnapshot = snapshot.copy(content = savedEntry.content)
-                if (savedEntry.content != snapshot.content) {
+                // Compare against display HTML (data URIs). DB may store journal-media:// refs.
+                val displayContent = bridge.toDisplayableHtml(savedEntry.content)
+                lastSavedSnapshot = snapshot.copy(content = displayContent)
+                if (displayContent != snapshot.content) {
                     bridge.setContent(savedEntry.content)
                 }
                 true
@@ -292,9 +314,11 @@ fun EditorScreen(
                         textStyle = LocalTextStyle.current.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 18.sp
+                            fontSize = if (windowSize.isCompact) 16.sp else 18.sp
                         ),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 4.dp),
                         decorationBox = { innerTextField ->
                             Box(
                                 modifier = Modifier
@@ -307,7 +331,9 @@ fun EditorScreen(
                                         "标题",
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f),
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 18.sp
+                                        fontSize = if (windowSize.isCompact) 16.sp else 18.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                                 innerTextField()
@@ -316,37 +342,68 @@ fun EditorScreen(
                     )
                 },
                 actions = {
-                    IconButton(onClick = {
-                        showWeatherPicker = !showWeatherPicker
-                        showMoodPicker = false
-                        showCategoryPicker = false
-                        currentToolbar = "none"
-                        bridge.toggleDoodleMode(false)
-                    }) {
-                        WeatherIcon(selectedWeather, size = 20.dp, tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = {
-                        showMoodPicker = !showMoodPicker
-                        showWeatherPicker = false
-                        showCategoryPicker = false
-                        currentToolbar = "none"
-                        bridge.toggleDoodleMode(false)
-                    }) {
-                        MoodIcon(selectedMood, size = 20.dp, tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = {
-                        showCategoryPicker = !showCategoryPicker
-                        showWeatherPicker = false
-                        showMoodPicker = false
-                        currentToolbar = "none"
-                        bridge.toggleDoodleMode(false)
-                    }) {
-                        Icon(
-                            Icons.Filled.Dashboard,
-                            contentDescription = "分类",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
+                    // Collapse weather / mood / category into one action to keep title usable at ~300dp.
+                    Box {
+                        IconButton(onClick = {
+                            showMetaMenu = true
+                            currentToolbar = "none"
+                            bridge.toggleDoodleMode(false)
+                        }) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier.padding(horizontal = 2.dp)
+                            ) {
+                                WeatherIcon(selectedWeather, size = 18.dp, tint = MaterialTheme.colorScheme.primary)
+                                MoodIcon(selectedMood, size = 18.dp, tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = showMetaMenu,
+                            onDismissRequest = { showMetaMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("天气：${selectedWeather.displayName}") },
+                                leadingIcon = {
+                                    WeatherIcon(selectedWeather, size = 18.dp, tint = MaterialTheme.colorScheme.primary)
+                                },
+                                onClick = {
+                                    showMetaMenu = false
+                                    showWeatherPicker = true
+                                    showMoodPicker = false
+                                    showCategoryPicker = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("心情：${selectedMood.displayName}") },
+                                leadingIcon = {
+                                    MoodIcon(selectedMood, size = 18.dp, tint = MaterialTheme.colorScheme.primary)
+                                },
+                                onClick = {
+                                    showMetaMenu = false
+                                    showMoodPicker = true
+                                    showWeatherPicker = false
+                                    showCategoryPicker = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("分类") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Dashboard,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showMetaMenu = false
+                                    showCategoryPicker = true
+                                    showWeatherPicker = false
+                                    showMoodPicker = false
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -538,14 +595,17 @@ fun EditorScreen(
             dragHandle = { BottomSheetDefaults.DragHandle() }
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = windowSize.sheetHorizontalPadding, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text("选择天气", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(16.dp))
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Weather.selectableEntries.forEach { weather ->
                         FilterChip(
@@ -579,14 +639,17 @@ fun EditorScreen(
             dragHandle = { BottomSheetDefaults.DragHandle() }
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = windowSize.sheetHorizontalPadding, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text("记录此刻心情", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(16.dp))
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Mood.selectableEntries.forEach { mood ->
                         FilterChip(
@@ -620,7 +683,9 @@ fun EditorScreen(
             dragHandle = { BottomSheetDefaults.DragHandle() }
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = windowSize.sheetHorizontalPadding, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text("日记分类", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -693,7 +758,7 @@ fun EditorScreen(
                             DebugLog.event(DebugLog.AppEvent.IMAGE_PREVIEW_FAILED)
                         }
                     }
-                }, modifier = Modifier.fillMaxWidth().height(420.dp))
+                }, modifier = Modifier.fillMaxWidth().height(windowSize.imagePreviewHeight))
             }
         )
     }
@@ -711,13 +776,16 @@ private fun colorToHex(color: Color): String {
 
 @Composable
 private fun TextToolbarPanel(bridge: EditorBridge, onHide: () -> Unit) {
+    val windowSize = rememberAppWindowSize()
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = windowSize.toolbarPanelPadding, vertical = 6.dp),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(if (windowSize.isNarrow) 10.dp else 12.dp)) {
             // 格式按钮行
             Row(
                 modifier = Modifier
@@ -740,7 +808,9 @@ private fun TextToolbarPanel(bridge: EditorBridge, onHide: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             // 字体和大小
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -832,13 +902,16 @@ private fun SmallIconButton(icon: ImageVector, onClick: () -> Unit) {
 @Composable
 private fun DoodleToolbarPanel(bridge: EditorBridge, onHide: () -> Unit) {
     val context = LocalContext.current
+    val windowSize = rememberAppWindowSize()
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = windowSize.toolbarPanelPadding, vertical = 6.dp),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(if (windowSize.isNarrow) 10.dp else 12.dp)) {
             // 笔刷类型
             var activeBrush by remember { mutableStateOf("pencil") }
             var brushSize by remember { mutableStateOf(2f) }
@@ -919,19 +992,45 @@ private fun DoodleToolbarPanel(bridge: EditorBridge, onHide: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(8.dp))
-            // 操作按钮
+            // 操作按钮：两行布局，避免 300dp 宽度挤压
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(onClick = { bridge.undoDoodle() }) { Text("撤销", fontSize = 12.sp) }
-                OutlinedButton(onClick = { bridge.redoDoodle() }) { Text("重做", fontSize = 12.sp) }
-                OutlinedButton(onClick = { bridge.clearDoodle() }) { Text("清除", fontSize = 12.sp) }
-                OutlinedButton(onClick = {
-                    bridge.insertDoodleImage()
-                    Toast.makeText(context, "已将涂鸦导出为图片插入正文", Toast.LENGTH_SHORT).show()
-                }) { Text("导出", fontSize = 12.sp) }
-                Button(onClick = { bridge.mergeDoodle(); onHide() }) { Text("确认", fontSize = 12.sp) }
+                OutlinedButton(
+                    onClick = { bridge.undoDoodle() },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                ) { Text("撤销", fontSize = 12.sp, maxLines = 1) }
+                OutlinedButton(
+                    onClick = { bridge.redoDoodle() },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                ) { Text("重做", fontSize = 12.sp, maxLines = 1) }
+                OutlinedButton(
+                    onClick = { bridge.clearDoodle() },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                ) { Text("清除", fontSize = 12.sp, maxLines = 1) }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        bridge.insertDoodleImage()
+                        Toast.makeText(context, "已将涂鸦导出为图片插入正文", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                ) { Text("导出", fontSize = 12.sp, maxLines = 1) }
+                Button(
+                    onClick = { bridge.mergeDoodle(); onHide() },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                ) { Text("确认", fontSize = 12.sp, maxLines = 1) }
             }
         }
     }
@@ -946,13 +1045,16 @@ private fun BrushChip(name: String, label: String, selected: Boolean, onClick: (
 
 @Composable
 private fun StickerPanel(bridge: EditorBridge, onHide: () -> Unit) {
+    val windowSize = rememberAppWindowSize()
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = windowSize.toolbarPanelPadding, vertical = 6.dp),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(if (windowSize.isNarrow) 10.dp else 12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -984,7 +1086,7 @@ private fun StickerPanel(bridge: EditorBridge, onHide: () -> Unit) {
                 StickerOption("sparkle", "✨"),
                 StickerOption("ribbon", "🎀")
             )
-            stickers.chunked(5).forEach { row ->
+            stickers.chunked(windowSize.stickerColumns).forEach { row ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
@@ -992,13 +1094,13 @@ private fun StickerPanel(bridge: EditorBridge, onHide: () -> Unit) {
                     row.forEach { sticker ->
                         Box(
                             modifier = Modifier
-                                .size(52.dp)
+                                .size(windowSize.stickerCell)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(MaterialTheme.colorScheme.surface)
                                 .clickable { bridge.insertSticker(sticker.name) },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(sticker.emoji, fontSize = 28.sp)
+                            Text(sticker.emoji, fontSize = windowSize.stickerEmojiSp.sp)
                         }
                     }
                 }

@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.green.inorinal.data.Category
 import com.green.inorinal.data.JournalEntry
 import com.green.inorinal.ui.icons.MoodIcon
+import com.green.inorinal.ui.layout.rememberAppWindowSize
 import com.green.inorinal.ui.icons.WeatherIcon
 import com.green.inorinal.util.htmlToPlainText
 
@@ -46,8 +47,9 @@ fun JournalCard(
     onDeleteClick: (() -> Unit)? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    val windowSize = rememberAppWindowSize()
     val preview = remember(entry.content) { htmlToPlainText(entry.content).trim() }
-    val cardShape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+    val cardShape = androidx.compose.foundation.shape.RoundedCornerShape(windowSize.cardCorner)
     val themePrimary = MaterialTheme.colorScheme.primary
     val complementaryColor = Color(
         red = 1f - themePrimary.red,
@@ -67,7 +69,7 @@ fun JournalCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 104.dp)
+            .defaultMinSize(minHeight = windowSize.cardMinHeight)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = { showMenu = true }
@@ -87,11 +89,16 @@ fun JournalCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, top = 14.dp, end = 8.dp, bottom = 14.dp),
+                    .padding(
+                        start = windowSize.cardInnerPaddingHorizontal,
+                        top = windowSize.cardInnerPaddingVertical,
+                        end = if (windowSize.isNarrow) 2.dp else 8.dp,
+                        bottom = windowSize.cardInnerPaddingVertical
+                    ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 DateBlock(entry)
-                Spacer(Modifier.width(14.dp))
+                Spacer(Modifier.width(windowSize.cardDateGap))
 
                 Column(
                     modifier = Modifier.weight(1f),
@@ -99,7 +106,11 @@ fun JournalCard(
                 ) {
                     Text(
                         text = entry.title.ifBlank { "未命名日记" },
-                        style = MaterialTheme.typography.titleMedium,
+                        style = if (windowSize.isNarrow) {
+                            MaterialTheme.typography.titleSmall
+                        } else {
+                            MaterialTheme.typography.titleMedium
+                        },
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
@@ -107,41 +118,49 @@ fun JournalCard(
                     )
                     Text(
                         text = preview.ifBlank { "暂无正文" },
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
+                        fontSize = if (windowSize.isNarrow) 12.sp else 13.sp,
+                        lineHeight = if (windowSize.isNarrow) 16.sp else 18.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
                             alpha = if (preview.isBlank()) 0.58f else 0.86f
                         ),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(Modifier.size(8.dp))
+                    Spacer(Modifier.size(if (windowSize.isNarrow) 6.dp else 8.dp))
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(if (windowSize.isNarrow) 4.dp else 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        StatusPill {
+                        StatusPill(compact = windowSize.isNarrow) {
                             WeatherIcon(
                                 weather = entry.weather.normalized(),
-                                size = 15.dp,
+                                size = if (windowSize.isNarrow) 13.dp else 15.dp,
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
-                        StatusPill {
+                        StatusPill(compact = windowSize.isNarrow) {
                             MoodIcon(
                                 mood = entry.mood.normalized(),
-                                size = 15.dp,
+                                size = if (windowSize.isNarrow) 13.dp else 15.dp,
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
-                        categoryLabel(entry.category)?.let { label ->
-                            StatusPill { Text(label, fontSize = 10.sp) }
+                        // Hide category label under ~340dp to keep the meta row from crowding.
+                        if (!windowSize.isNarrow) {
+                            categoryLabel(entry.category)?.let { label ->
+                                StatusPill(compact = false) {
+                                    Text(label, fontSize = 10.sp, maxLines = 1)
+                                }
+                            }
                         }
                     }
                 }
 
                 Box {
-                    IconButton(onClick = { showMenu = true }) {
+                    IconButton(
+                        onClick = { showMenu = true },
+                        modifier = Modifier.size(windowSize.cardActionSize)
+                    ) {
                         Icon(
                             imageVector = Icons.Filled.MoreVert,
                             contentDescription = "更多操作",
@@ -196,35 +215,41 @@ fun JournalCard(
 
 @Composable
 private fun DateBlock(entry: JournalEntry) {
+    val windowSize = rememberAppWindowSize()
     Column(
-        modifier = Modifier.width(52.dp),
+        modifier = Modifier.width(windowSize.cardDateWidth),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = entry.date.dayOfMonth.toString(),
-            fontSize = 34.sp,
-            lineHeight = 34.sp,
+            fontSize = windowSize.cardDateFontSp.sp,
+            lineHeight = windowSize.cardDateFontSp.sp,
             fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1
         )
         Text(
             text = "${entry.date.monthValue}月",
-            fontSize = 12.sp,
+            fontSize = if (windowSize.isNarrow) 11.sp else 12.sp,
             fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1
         )
     }
 }
 
 @Composable
-private fun StatusPill(content: @Composable RowScope.() -> Unit) {
+private fun StatusPill(compact: Boolean, content: @Composable RowScope.() -> Unit) {
     Surface(
         shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            modifier = Modifier.padding(
+                horizontal = if (compact) 5.dp else 7.dp,
+                vertical = if (compact) 2.dp else 3.dp
+            ),
             verticalAlignment = Alignment.CenterVertically,
             content = content
         )

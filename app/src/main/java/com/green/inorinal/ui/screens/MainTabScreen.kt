@@ -15,6 +15,7 @@ import com.green.inorinal.data.AppColorStyle
 import com.green.inorinal.data.AppThemeMode
 import com.green.inorinal.data.Category
 import com.green.inorinal.data.JournalViewModel
+import com.green.inorinal.ui.layout.rememberAppWindowSize
 
 @Composable
 fun MainTabScreen(
@@ -30,6 +31,7 @@ fun MainTabScreen(
     onCategoryClick: (Category) -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(0) }
+    val windowSize = rememberAppWindowSize()
 
     val tabs = listOf("首页", "分类", "收藏", "我的")
     val selectedIcons = listOf(
@@ -62,7 +64,8 @@ fun MainTabScreen(
                         label = {
                             Text(
                                 title,
-                                fontSize = 11.sp
+                                fontSize = windowSize.navLabelSp.sp,
+                                maxLines = 1
                             )
                         },
                         selected = selectedTab == index,
