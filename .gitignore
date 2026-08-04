@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Android Studio "Generate Signed Bundle/APK" default destination (OneDrive-locked).
+/app/release/

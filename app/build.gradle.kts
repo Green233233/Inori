@@ -31,6 +31,12 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // Avoid Windows file-lock failures on lint migrated-jars when Studio/Gradle overlap.
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
 }
 
 dependencies {
