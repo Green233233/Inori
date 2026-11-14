@@ -1,0 +1,423 @@
+import React, {useState} from 'react';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
+import {useAppTheme} from '../theme/AppThemeProvider';
+import {withAlpha} from '../theme/palette';
+import {Icon} from '../components/Icon';
+import {TopBar} from '../components/TopBar';
+import {AppDialog, AppSheet, Divider, TextButton} from '../components/Ui';
+import {SoftCard} from '../components/Surfaces';
+import {showToast} from '../components/toast';
+import {native, joinPath, paths} from '../native/InorinalNative';
+import {
+  AppSettings,
+  COLOR_STYLE_LABEL,
+  COLOR_STYLE_ORDER,
+  ColorStyle,
+  THEME_MODE_LABEL,
+  THEME_MODE_ORDER,
+  ThemeMode,
+} from '../data/types';
+import {clearLogs, setDebugEnabled, currentLogPath} from '../debug/logger';
+import {logEvent} from '../debug/logger';
+
+const FONT_OPTIONS = [
+  {label: '小', value: 14},
+  {label: '中', value: 16},
+  {label: '大', value: 18},
+  {label: '特大', value: 20},
+];
+
+export function SettingsScreen({
+  settings,
+  onChange,
+  onBack,
+}: {
+  settings: AppSettings;
+  onChange: (next: AppSettings) => void;
+  onBack: () => void;
+}) {
+  const {colors, tokens} = useAppTheme();
+  const [styleSheetOpen, setStyleSheetOpen] = useState(false);
+  const [themeSheetOpen, setThemeSheetOpen] = useState(false);
+  const [fontDialogOpen, setFontDialogOpen] = useState(false);
+  const [debugDialogOpen, setDebugDialogOpen] = useState(false);
+  const [cacheDialogOpen, setCacheDialogOpen] = useState(false);
+  const [pendingFont, setPendingFont] = useState(settings.fontSize);
+
+  const update = (patch: Partial<AppSettings>) => {
+    onChange({...settings, ...patch});
+  };
+
+  const comingSoon = (message: string) => () => showToast(message);
+
+  return (
+    <View style={styles.root}>
+      <TopBar title="设置" onBack={onBack} />
+      <ScrollView
+        contentContainerStyle={{
+          padding: tokens.contentPadding,
+          paddingBottom: 32,
+        }}>
+        <Group title="界面设置">
+          <Row
+            label="颜色风格"
+            value={COLOR_STYLE_LABEL[settings.colorStyle]}
+            onPress={() => setStyleSheetOpen(true)}
+          />
+          <Divider color={withAlpha(colors.outline, 0.3)} />
+          <Row
+            label="主题模式"
+            value={THEME_MODE_LABEL[settings.themeMode]}
+            onPress={() => setThemeSheetOpen(true)}
+          />
+          <Divider color={withAlpha(colors.outline, 0.3)} />
+          <Row
+            label="字体大小"
+            value={String(settings.fontSize)}
+            onPress={() => {
+              setPendingFont(settings.fontSize);
+              setFontDialogOpen(true);
+            }}
+          />
+          <Divider color={withAlpha(colors.outline, 0.3)} />
+          <Row
+            label="卡片样式"
+            onPress={comingSoon('卡片样式功能即将上线')}
+          />
+        </Group>
+
+        <Group title="编辑设置">
+          <Row
+            label="默认字体"
+            onPress={comingSoon('默认字体功能即将上线')}
+          />
+          <Divider color={withAlpha(colors.outline, 0.3)} />
+          <Row
+            label="默认笔刷"
+            onPress={comingSoon('默认笔刷功能即将上线')}
+          />
+        </Group>
+
+        <Group title="隐私设置">
+          <Row
+            label="应用锁"
+            onPress={comingSoon('应用锁功能即将上线，敬请期待')}
+          />
+          <Divider color={withAlpha(colors.outline, 0.3)} />
+          <Row
+            label="隐藏敏感内容"
+            onPress={comingSoon('隐藏敏感内容功能即将上线')}
+          />
+        </Group>
+
+        <Group title="开发者">
+          <View style={styles.switchRow}>
+            <View style={styles.switchTextWrap}>
+              <Text style={[styles.rowLabel, {color: colors.onSurface}]}>
+                调试模式
+              </Text>
+              <Text
+                style={[
+                  styles.rowSubtitle,
+                  {color: colors.onSurfaceVariant},
+                ]}>
+                自动记录日志，便于开发与调试
+              </Text>
+            </View>
+            <Switch
+              value={settings.debugMode}
+              onValueChange={value => {
+                if (value) {
+                  setDebugDialogOpen(true);
+                } else {
+                  update({debugMode: false});
+                  setDebugEnabled(false);
+                  clearLogs().then(() =>
+                    showToast('调试模式已关闭，已有日志将被删除'),
+                  );
+                }
+              }}
+              trackColor={{
+                false: withAlpha(colors.outline, 0.5),
+                true: colors.primary,
+              }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+          <Divider color={withAlpha(colors.outline, 0.3)} />
+          <Row
+            label="删除调试日志"
+            onPress={() => {
+              clearLogs().then(() => showToast('调试日志已删除'));
+            }}
+          />
+        </Group>
+
+        <Group title="其他">
+          <Row
+            label="清除缓存"
+            onPress={() => setCacheDialogOpen(true)}
+          />
+        </Group>
+      </ScrollView>
+
+      <AppSheet
+        visible={styleSheetOpen}
+        title="颜色风格"
+        onClose={() => setStyleSheetOpen(false)}>
+        <View style={{gap: 6}}>
+          {COLOR_STYLE_ORDER.map(option => (
+            <OptionRow
+              key={option}
+              label={COLOR_STYLE_LABEL[option]}
+              selected={settings.colorStyle === option}
+              onPress={() => {
+                update({colorStyle: option as ColorStyle});
+                setStyleSheetOpen(false);
+              }}
+            />
+          ))}
+        </View>
+      </AppSheet>
+
+      <AppSheet
+        visible={themeSheetOpen}
+        title="主题模式"
+        onClose={() => setThemeSheetOpen(false)}>
+        <View style={{gap: 6}}>
+          {THEME_MODE_ORDER.map(option => (
+            <OptionRow
+              key={option}
+              label={THEME_MODE_LABEL[option]}
+              selected={settings.themeMode === option}
+              onPress={() => {
+                update({themeMode: option as ThemeMode});
+                setThemeSheetOpen(false);
+              }}
+            />
+          ))}
+        </View>
+      </AppSheet>
+
+      <AppSheet
+        visible={fontDialogOpen}
+        title="字体大小"
+        onClose={() => setFontDialogOpen(false)}
+        footer={
+          <View style={styles.sheetFooter}>
+            <TextButton
+              label="取消"
+              color={colors.onSurfaceVariant}
+              onPress={() => setFontDialogOpen(false)}
+            />
+            <TextButton
+              label="确定"
+              onPress={() => {
+                update({fontSize: pendingFont});
+                setFontDialogOpen(false);
+                showToast(`字体大小已设置为${pendingFont}sp`);
+              }}
+            />
+          </View>
+        }>
+        <View style={{gap: 4}}>
+          {FONT_OPTIONS.map(option => (
+            <Pressable
+              key={option.value}
+              onPress={() => setPendingFont(option.value)}
+              style={({pressed}) => [
+                styles.optionRow,
+                pressed && {
+                  backgroundColor: withAlpha(colors.primary, 0.06),
+                },
+              ]}>
+              <Text
+                style={{
+                  fontSize: option.value,
+                  color: colors.onSurface,
+                  flex: 1,
+                }}>
+                {option.label}
+              </Text>
+              <Icon
+                name={
+                  pendingFont === option.value
+                    ? 'radio_button_checked'
+                    : 'radio_button_unchecked'
+                }
+                size={22}
+                color={
+                  pendingFont === option.value
+                    ? colors.primary
+                    : colors.onSurfaceVariant
+                }
+              />
+            </Pressable>
+          ))}
+        </View>
+      </AppSheet>
+
+      <AppDialog
+        visible={debugDialogOpen}
+        title="开启调试模式"
+        message="开启后应用会自动记录运行日志，可能会降低运行速度并增大应用所占磁盘空间。日志只记录技术事件和脱敏后的崩溃堆栈，不记录日记标题、正文或搜索内容；单个日志文件最大 2 MB，最多保留 7 天。日志会保存到应用专属目录。是否继续？"
+        confirmLabel="继续"
+        onConfirm={() => {
+          setDebugDialogOpen(false);
+          update({debugMode: true});
+          setDebugEnabled(true);
+          logEvent('DEBUG_ENABLED');
+          const logPath = joinPath(paths.logs, '');
+          showToast(`调试模式已开启，日志保存于：${logPath}`);
+        }}
+        dismissLabel="取消"
+        onDismiss={() => setDebugDialogOpen(false)}
+      />
+
+      <AppDialog
+        visible={cacheDialogOpen}
+        title="清除缓存"
+        message="确定要清除应用缓存吗？这不会删除你的日记数据。"
+        confirmLabel="清除"
+        onConfirm={() => {
+          setCacheDialogOpen(false);
+          native
+            .clearCache()
+            .then(() => showToast('缓存已清除'))
+            .catch((error: any) =>
+              showToast(`清除失败: ${error?.message ?? '未知错误'}`),
+            );
+        }}
+        dismissLabel="取消"
+        onDismiss={() => setCacheDialogOpen(false)}
+      />
+    </View>
+  );
+}
+
+function Group({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  const {colors} = useAppTheme();
+  return (
+    <View style={{marginBottom: 24}}>
+      <Text style={[styles.groupTitle, {color: colors.onSurfaceVariant}]}>
+        {title}
+      </Text>
+      <SoftCard radius={16} style={styles.groupCard}>
+        {children}
+      </SoftCard>
+    </View>
+  );
+}
+
+function Row({
+  label,
+  value,
+  onPress,
+}: {
+  label: string;
+  value?: string;
+  onPress: () => void;
+}) {
+  const {colors} = useAppTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({pressed}) => [
+        styles.row,
+        pressed && {backgroundColor: withAlpha(colors.primary, 0.05)},
+      ]}>
+      <Text style={[styles.rowLabel, {color: colors.onSurface}]}>{label}</Text>
+      {value !== undefined ? (
+        <Text style={[styles.rowValue, {color: colors.onSurfaceVariant}]}>
+          {value}
+        </Text>
+      ) : null}
+      <Icon name="chevron_right" size={20} color={colors.onSurfaceVariant} />
+    </Pressable>
+  );
+}
+
+function OptionRow({
+  label,
+  selected,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const {colors} = useAppTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({pressed}) => [
+        styles.optionRow,
+        pressed && {backgroundColor: withAlpha(colors.primary, 0.06)},
+      ]}>
+      <Text style={[styles.rowLabel, {color: colors.onSurface, flex: 1}]}>
+        {label}
+      </Text>
+      <Icon
+        name={selected ? 'radio_button_checked' : 'radio_button_unchecked'}
+        size={22}
+        color={selected ? colors.primary : colors.onSurfaceVariant}
+      />
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: {flex: 1},
+  groupTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 8,
+    paddingLeft: 4,
+  },
+  groupCard: {borderRadius: 12, overflow: 'hidden'},
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    gap: 8,
+  },
+  rowLabel: {fontSize: 16, flex: 1},
+  rowValue: {fontSize: 14},
+  rowSubtitle: {fontSize: 12, marginTop: 2},
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  switchTextWrap: {flex: 1},
+  optionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 13,
+    borderRadius: 10,
+  },
+  sheetFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 6,
+  },
+});

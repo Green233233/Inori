@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link rel="stylesheet" href="editor.css">
+    <title>祈 - 编辑器</title>
+</head>
+<body>
+    <div id="paper" contenteditable="true" spellcheck="false">
+    </div>
+
+    <!-- 涂鸦画布 -->
+    <canvas id="doodle-canvas"></canvas>
+    <button id="sticker-delete-btn" type="button" aria-label="删除贴纸" title="删除">×</button>
+
+    <script src="vendor/atrament.js"></script>
+    <script src="vendor/rough.js"></script>
+    <script src="vendor/moveable.min.js"></script>
+    <script src="editor.js"></script>
+</body>
+</html>

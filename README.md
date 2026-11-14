@@ -16,8 +16,11 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="GPLv3" /></a>
   <a href="https://developer.android.com/"><img src="https://img.shields.io/badge/Platform-Android%2029%2B-3DDC84.svg" alt="Android 29+" /></a>
-  <a href="#版本更新日志"><img src="https://img.shields.io/badge/Version-Alpha%20v0.2.3-orange.svg" alt="Alpha v0.2.3" /></a>
+  <a href="#版本更新日志"><img src="https://img.shields.io/badge/Version-Alpha%20v0.5.1--react-orange.svg" alt="Alpha v0.5.1-react" /></a>
 </p>
+
+> **分支说明**：本 `react` 分支使用 **React Native 0.88** 重构了应用界面，采用**轻拟物 + 毛玻璃质感**与**鲜活暖色撞色**设计，尽可能保持精简，并保留原有全部功能与布局结构；Jetpack Compose 版本保留在 `main` 分支。
+> 版本：**Alpha v0.5.1-react**（versionCode 7）。React Native 应用位于 [`react-native/`](react-native/)。
 
 ---
 
@@ -44,7 +47,7 @@
 
 项目英文名 **Inorinal** 来自 inori（祈）与 journal 的结合。应用内品牌名称为「祈」。关于页里有一句很私人的献词——那是作者写给最亲爱的人的。我们把这份温柔保留在开源仓库里，也希望使用者在自己的日常中，找到同样安静的角落。
 
-当前版本为 **Alpha v0.2.3**。功能已可用，但仍属于早期迭代：交互会继续打磨，稳定性会继续加强，欢迎 Issue 与 Pull Request。
+当前版本为 **Alpha v0.5.1-react**（React Native 重构版）。功能与 Compose 版本对齐，界面改为轻拟物、半透明磨砂与暖色撞色风格，仍属于 Alpha 迭代：交互会继续打磨，稳定性会继续加强，欢迎 Issue 与 Pull Request。
 
 ---
 
@@ -53,10 +56,10 @@
 | 维度 | 说明 |
 |------|------|
 | 平台 | Android 10（API 29）及以上 |
-| 数据 | 本地 Room 数据库 + 本地媒体目录，默认不上云 |
+| 数据 | 本地 JSON 条目库 + 本地媒体目录（`filesDir`），默认不上云 |
 | 编辑 | WebView 富文本编辑器（文字 / 涂鸦 / 照片 / 贴纸） |
-| 界面 | Jetpack Compose Material 3，浅色 / 深色 / 跟随系统 |
-| 备份 | ZIP 导出 / 导入，含条目媒体与用户贴纸库 |
+| 界面 | React Native 0.88，轻拟物 + 毛玻璃质感，鲜活暖色撞色，浅色 / 深色 / 跟随系统 |
+| 备份 | ZIP 导出 / 导入，含条目媒体与用户贴纸库，兼容 Compose 版备份格式 |
 | 许可 | GNU General Public License v3.0 |
 
 「祈」适合这样的人：
@@ -102,7 +105,17 @@
 
 - 窄屏（约 300–500dp 宽度）布局适配；
 - 系统返回与顶栏返回会尝试保存；
-- **空内容覆盖保护**：若检测到本有内容的手账即将被存成空白，会弹出确认对话框，避免异常情况下静默清空。
+- **空内容覆盖保护**：若检测到本有内容的手账即将被存成空白，会弹出确认对话框，避免异常情况下静默清空；
+- 首次启动会尝试从旧版（Compose/Room）数据库迁移既有日记与媒体（只读迁移，原数据库保留）。
+
+### React Native 重构说明（本分支）
+
+- 界面层从 Jetpack Compose 迁移到 **React Native 0.88**（TypeScript），保留首页 / 分类 / 收藏 / 我的四个标签页与全部全屏路由、编辑器布局与交互。
+- 视觉改为**轻拟物 + 毛玻璃 + 暖色撞色**：柔和双层描边营造轻拟物卡片，半透明与静态磨砂纹理模拟毛玻璃，珊瑚 / 蜜橘 / 芥末黄 / 松绿 / 莓紫等暖色块大胆撞色；保留樱粉 / 薄荷 / 长春花三套配色与深色模式，并刻意避开蓝紫科技渐变。为控制滚动与输入开销，未引入实时模糊，改用静态纹理、半透明层与 elevation。
+- 数据层由 Room 改为**本地 JSON 条目 + 元数据索引 + 文件媒体目录**，保持 `journal-media://local/<entryId>/<file>` 引用格式，备份 ZIP（`manifest.json` 数组、`media/`、`stickers/`）与 Compose 版本互通。
+- 编辑器继续复用 `assets/editor` 下的原 WebView 前端（Atrament / Rough / Moveable）与 LXGW 文楷字体，通过 RN ↔ WebView 消息桥接驱动，功能未削减。
+- 原生侧仅保留一个小型桥接模块（文件、媒体压缩、图片选择、SAF 导入导出、媒体迁移）；无重量级 UI 依赖。
+- 已知差异：`跟随系统` 配色风格在 RN 版固定回退为樱花粉（Android 12 动态取色不可移植）；分类页统一使用「情绪」文案；收藏夹网格图与 Compose 版保持同一信息结构。
 
 ---
 
@@ -138,37 +151,38 @@
 
 ## 技术架构
 
-### 总体分层
+### 总体分层（react 分支）
 
 ```
 ┌──────────────────────────────────────────────┐
-│  UI（Jetpack Compose · Material 3）          │
+│  UI（React Native 0.88 + TypeScript）        │
 │  Home / Category / Favorites / Profile / Editor │
 ├──────────────────────────────────────────────┤
-│  ViewModel · Repository · Room（JournalEntry）│
+│  JournalDataProvider · JSON 条目库 · 索引     │
 ├──────────────────────────────────────────────┤
-│  EditorBridge ←→ WebView（editor.html/js/css）│
+│  RN 消息桥 ←→ WebView（assets/editor）        │
 │  Atrament · Rough.js · Moveable.js           │
 ├──────────────────────────────────────────────┤
-│  JournalMediaStore · UserStickerStore        │
-│  JournalBackupManager（ZIP import/export）   │
+│  InorinalNative：文件 / 媒体压缩 / SAF / 迁移 │
+│  JSZip 备份（manifest.json + media + 贴纸）   │
 └──────────────────────────────────────────────┘
 ```
 
 ### 关键技术选型
 
-- **语言 / UI**：Kotlin、Jetpack Compose、Navigation Compose
-- **持久化**：Room、DataStore（主题与设置类偏好）
-- **编辑器**：Android WebView + 自托管前端资源
+- **语言 / UI**：TypeScript、React Native 0.88（New Architecture / Hermes）
+- **持久化**：应用私有目录 JSON 条目 + 索引（原 Room 数据可一次性只读迁移）
+- **编辑器**：react-native-webview + 自托管前端资源（与 Compose 版共用）
 - **涂鸦**：[Atrament.js](https://github.com/meltingice/atrament.js)、[Rough.js](https://github.com/rough-stuff/rough)
-- **贴纸变换**：[Moveable](https://github.com/daybrush/moveable)（vendored 于 `app/src/main/assets/editor/vendor/`）
-- **构建**：Android Gradle Plugin、KSP（Room）
+- **贴纸变换**：[Moveable](https://github.com/daybrush/moveable)（vendored 于 `react-native/android/app/src/main/assets/editor/vendor/`）
+- **备份**：JSZip + Android Storage Access Framework
+- **构建**：Android Gradle Plugin、Gradle 9、NDK 27（New Architecture codegen）
 
 ### 编辑器要点
 
-正文 HTML 保存在 Room 的 `content` 字段中。图片在保存路径上会尽量迁移为 `journal-media://` 本地引用，避免巨大的 Base64 长期堆积。贴纸以 `.journal-sticker` 节点写入 HTML，位置通过 `left` / `top`（及 data 属性）持久化。用户贴纸库独立存放在应用私有目录 `filesDir/user_stickers/`，与单篇条目解耦。
+正文 HTML 保存在条目 JSON 的 `content` 字段中。WebView 打开时把 `journal-media://` 引用转换为 base64 展示；保存时由原生桥把内联图片按 SHA-256 去重落盘到 `journal_media/<entryId>/`，再写回本地引用，避免重复保存产生孤儿文件。贴纸以 `.journal-sticker` 节点写入 HTML，位置通过 `left` / `top`（及 data 属性）持久化。用户贴纸库独立存放在应用私有目录 `user_stickers/`，与单篇条目解耦。
 
-自动保存采用防抖；退出时再拉取一次最新内容。针对「非空日记被异常写成空 HTML」的情况，退出保存前会弹出红色「继续保存」与「取消」选项：取消将强制恢复受保护内容并退出。
+自动保存采用 350ms 防抖；退出时再拉取一次最新内容。针对「非空日记被异常写成空 HTML」的情况，退出保存前会弹出红色「继续保存」与「取消」选项：取消将强制恢复受保护内容并退出。
 
 ---
 
@@ -187,37 +201,47 @@
 
 ### 环境要求
 
-- Android Studio Ladybug / 更新版本（或等价 JDK 17+ / 项目配置的 JDK）
-- Android SDK Platform 36（见 `compileSdk`）
+- Node.js ≥ 22.11（本仓库使用 Node 24）
+- Android Studio Ladybug / 更新版本（或等价 JDK 17/21；Gradle 已固定使用 Android Studio 自带 JBR 21）
+- Android SDK Platform 37 / Build-Tools 37、NDK 27.1（New Architecture 代码生成需要）
 - 推荐真机或 API 29+ 模拟器
 
-### 调试构建
+### React Native 应用（`react-native/`）
+
+```bash
+cd react-native
+npm install
+
+# 调试运行（需同时启动 Metro 并让模拟器可访问 8081）
+npx react-native start
+adb reverse tcp:8081 tcp:8081
+npx react-native run-android
+
+# 直接构建可独立安装的调试包（已内置 JS bundle，无需 Metro）
+cd android && ./gradlew :app:assembleDebug
+
+# 直接构建可独立安装的发行包（内置 JS bundle，推荐真机/回归测试）
+cd android && ./gradlew :app:assembleRelease
+```
+
+APK 输出（构建目录重定向到 `C:/rn-build`，避免 OneDrive 锁文件与 Windows 长路径问题；可用 `INORINAL_BUILD_ROOT` / `INORINAL_CXX_ROOT` 覆盖）：
+
+`C:/rn-build/app/outputs/apk/debug/app-debug.apk`
+`C:/rn-build/app/outputs/apk/release/app-release.apk`
+
+安装：
+
+```bash
+adb install -r app-debug.apk
+```
+
+### Jetpack Compose 旧版（`main` 分支）
 
 ```bash
 ./gradlew :app:assembleDebug
 ```
 
-Windows 示例输出目录（本仓库将 Gradle `buildDirectory` 重定向到本地 AppData，减轻 OneDrive 锁文件问题）：
-
-`%LOCALAPPDATA%\Inorinal\gradle-build\app\outputs\apk\debug\`
-
-### 发行构建
-
-```bash
-./gradlew :app:assembleRelease
-```
-
-若使用 Android Studio「Generate Signed Bundle / APK」，建议将输出目录设置在 OneDrive 之外，例如：
-
-`%LOCALAPPDATA%\Inorinal\release\`
-
-Release 构建默认关闭 `lintVital` 阻断（`checkReleaseBuilds = false`），以避免 Windows 下 lint 缓存 jar 被占用导致的偶发失败。你仍可单独运行 lint 任务做静态检查。
-
-### 安装
-
-```bash
-adb install -r app-debug.apk
-```
+Windows 示例输出目录：`%LOCALAPPDATA%\Inorinal\gradle-build\app\outputs\apk\debug\`。
 
 ---
 
@@ -225,18 +249,29 @@ adb install -r app-debug.apk
 
 ```
 Inorinal/
-├── app/
+├── app/                            # Jetpack Compose 旧版（main 分支保留）
 │   ├── build.gradle.kts
 │   └── src/main/
 │       ├── assets/editor/          # WebView 编辑器与 vendor
 │       ├── java/com/green/inorinal/
-│       │   ├── backup/             # ZIP 备份
-│       │   ├── data/               # Room / ViewModel
-│       │   ├── editor/             # EditorBridge
-│       │   ├── media/              # 条目媒体与用户贴纸库
-│       │   └── ui/                 # Compose 界面
 │       └── res/
-├── docs/images/                    # 自述文档配图
+├── react-native/                   # React Native 重构版（react 分支）
+│   ├── App.tsx                     # 导航 / 主题 / 数据 Provider
+│   ├── src/
+│   │   ├── components/             # 轻拟物卡片、玻璃面板、顶栏、对话框、图标
+│   │   ├── data/                   # 条目库、HTML 处理、备份、设置
+│   │   ├── editor/                 # WebView 消息桥 shim
+│   │   ├── native/                 # Kotlin 原生模块的 TS 封装
+│   │   ├── screens/                # 首页 / 分类 / 收藏 / 我的 / 编辑器 / 设置 / 关于
+│   │   └── theme/                  # 配色、布局 token、Material 图标码点
+│   └── android/
+│       └── app/src/main/
+│           ├── assets/editor/      # 复用的 WebView 编辑器资源
+│           ├── assets/fonts/       # LXGW 文楷 + Material Icons
+│           └── java/com/inorinal/nativebridge/  # 原生桥模块
+├── docs/
+│   ├── images/                     # 自述文档配图
+│   └── react-refactor/             # RN 重构规格与构建记录
 ├── LICENSE                         # GPL-3.0
 ├── CHANGELOG.md
 └── README.md
@@ -271,9 +306,18 @@ Inorinal/
 
 ## 版本更新日志
 
-完整历史见 [`CHANGELOG.md`](CHANGELOG.md)。以下摘录首个公开发行版要点。
+完整历史见 [`CHANGELOG.md`](CHANGELOG.md)。
 
-### Alpha v0.2.3（首个公开 GitHub Release）
+### Alpha v0.5.1-react（React Native 重构版）
+
+- 界面层迁移到 React Native 0.88 + TypeScript，保留四个标签页、全屏路由与编辑器布局
+- 全新**轻拟物 + 毛玻璃 + 暖色撞色**视觉；沿用樱粉 / 薄荷 / 长春花三套配色与深色模式
+- 全部功能保留：日记 CRUD、天气/心情/分类、搜索、收藏、分类浏览、JSON/媒体备份导入导出、贴纸库与自由贴纸、涂鸦、照片、字体与颜色、空内容覆盖保护
+- 数据层改为本地 JSON + 索引 + 媒体目录，备份 ZIP 与 Compose 版互通
+- 新增旧版 Room 日记只读迁移；保存时按 SHA-256 去重媒体文件，消除重复落盘
+- 原生依赖精简为自建桥接模块 + react-native-webview
+
+### Alpha v0.2.3（Compose 版，首个公开 GitHub Release）
 
 - 可交互贴纸：导入、拖动、缩放、旋转、删除；自由定位
 - 用户贴纸库：≤256KB 压缩、跨日记复用、长按删库、备份导入导出
@@ -312,5 +356,5 @@ Alpha 阶段可能探索的方向包括：更细的排版样式、贴纸与文�
 ---
 
 **仓库：** [github.com/Green233233/Inorinal](https://github.com/Green233233/Inorinal)  
-**当前版本：** Alpha v0.2.3  
+**当前版本：** Alpha v0.5.1-react（React Native 重构版）  
 **许可证：** GPL-3.0

@@ -16,3 +16,10 @@ local.properties
 
 # Android Studio "Generate Signed Bundle/APK" default destination (OneDrive-locked).
 /app/release/
+
+# local agent/build artifacts
+.kotlin/
+.cursor/
+
+# local build artifacts
+/dist/
