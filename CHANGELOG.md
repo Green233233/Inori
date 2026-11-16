@@ -10,6 +10,27 @@
 
 ---
 
+## [Alpha v0.5.3-react] — 2026-11-16
+
+**UI 升级：Apple Music「新发现」式鲜明撞色 + Glass Icons + 动效**
+
+### 变更
+
+- 视觉方向重做：黑底 / 冷白编辑感、Apple Music 式大标题与色块，替换上一版暖色轻拟物；三套配色重做为 **草莓波普 / 青柠电流 / 电光蓝调**
+- 首页改为「今天」大标题 + 分类 pill 轨道 + 今日 hero + 最近条目；分类改为两列高饱和磁贴；我的改为彩色 hero 与统计块；底部导航改为浮动玻璃 dock + 滑动指示器
+- 全部图形图标替换为 **Nucleo Glass Icons**（42 个语义图标 × 浅/深两套，构建时栅格化为 PNG）；删除 MaterialIcons 字体与码表
+- 新增轻量动效：tab 指示器、卡片按压、收藏弹跳、路由视差、搜索淡入、Sheet/Dialog、列表 stagger、骨架 pulse、统计 count-in；全部原生驱动并尊重 reduce-motion
+- 新增设计契约 `DESIGN.md`、参考重建稿 `docs/design-references/apple-music-cn-new.DESIGN.md` 与 Glass Icons 文档
+- 版本升级：`versionName` = `Alpha v0.5.3-react`，`versionCode` = 8
+
+### 构建信息
+
+- `versionName`：`Alpha v0.5.3-react`
+- `versionCode`：`8`
+- 应用包名：`com.green.inorinal`
+
+---
+
 ## [Alpha v0.5.1-react] — 2026-11-14
 
 **React Native 界面重构版（`react` 分支）**
@@ -114,7 +135,8 @@
 
 | 版本 | versionCode | 说明 |
 |------|-------------|------|
-| Alpha v0.5.1-react | 7 | React Native 重构；轻拟物 + 毛玻璃 + 暖色撞色界面；数据层迁移 |
+| Alpha v0.5.3-react | 8 | UI 升级：鲜明撞色 + Glass Icons + 动效 |
+| Alpha v0.5.1-react | 7 | React Native 重构；数据层迁移 |
 | Alpha v0.2.3 | 6 | 首个公开 GitHub Release；贴纸库与空保存保护 |
 | Alpha v0.2.1 | 5 | 涂鸦重建与稳健性 |
 | 更早 | — | 核心日记与备份 |
@@ -123,12 +145,18 @@
 
 ## 升级说明
 
-从 Alpha v0.2.3（Compose）升级到 Alpha v0.5.1-react：
+从 Alpha v0.2.3（Compose）升级到 Alpha v0.5.3-react：
 
 1. 建议先在旧版「我的 → 导出条目」导出一次 ZIP 备份；
 2. 安装新包（同包名覆盖安装，旧数据库会保留）；
 3. 首次启动会自动尝试从旧版 Room 数据库迁移日记与媒体；若迁移不完整，可在「我的 → 导入条目」中导入刚才的 ZIP；
 4. RN 版不再读取 Room，旧数据库只读保留，可随时回退旧版本。
+
+从 Alpha v0.5.1-react 升级到 v0.5.3-react：
+
+1. 直接覆盖安装即可，条目、媒体、设置与备份格式均不变；
+2. 三套配色显示名更新为草莓波普 / 青柠电流 / 电光蓝调，已有设置值继续生效；
+3. 若系统开启「减少动态效果」，tab/路由/入场动效会自动降级。
 
 从旧 Alpha 升级到 v0.2.3：
 

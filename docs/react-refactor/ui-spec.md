@@ -1,8 +1,8 @@
 # UI Spec — 祈 / Inorinal (Jetpack Compose → React Native)
 
 > **视觉风格修订（2026-11）**：本文件 §1.1 的颜色表是 Compose 原版 token，用作布局/尺寸/交互参考。
-> RN 最终实现已改为**轻拟物 + 毛玻璃 + 暖色撞色**，色板、材质 token、性能取舍以
-> [`design-language.md`](design-language.md) 为准；下文的布局、间距、交互与功能行为仍然有效。
+> RN 最终实现已改为 **Apple Music「新发现」式鲜明撞色 + 轻量玻璃 + Glass Icons**，色板、材质 token、动效与性能取舍以
+> [`design-language.md`](design-language.md)、[`DESIGN.md`](../../DESIGN.md) 为准；下文的布局、间距、交互与功能行为仍然有效。
 
 Scope: branch `react`. Read in full: `HomeScreen`, `MainTabScreen`, `CategoryScreen`, `CategoryEntriesScreen`, `FavoritesScreen`, `JournalCard`, `AppLayout`, `Color`, `Theme`, `Type`, `IconDrawables`, `HtmlText`, `MainActivity`, `res/values/{strings,themes,colors}.xml`; plus `AppNavigation`, `JournalEntry`, `JournalDao`, `ProfileScreen` for cross-cutting facts. No app source modified. Values below are transcribed, not inferred; where Compose behavior does not map 1:1 to RN the risk is flagged in §9. `L` = light, `D` = dark. All colors `#RRGGBB`, opaque unless an alpha is stated.
 

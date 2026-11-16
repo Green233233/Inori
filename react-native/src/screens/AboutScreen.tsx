@@ -9,20 +9,21 @@ import {
   View,
 } from 'react-native';
 import {useAppTheme} from '../theme/AppThemeProvider';
-import {ACCENT, withAlpha} from '../theme/palette';
-import {Icon} from '../components/Icon';
+import {onAccentFor, withAlpha} from '../theme/palette';
+import {type} from '../theme/typography';
+import {GlassIcon} from '../components/GlassIcon';
 import {TopBar} from '../components/TopBar';
 import {OutlinedButton} from '../components/Ui';
-import {SoftCard} from '../components/Surfaces';
+import {ColorField} from '../components/Surfaces';
 import {showToast} from '../components/toast';
+import {useReducedMotion} from '../motion/useReducedMotion';
 import {APP_NAME, DEDICATION, VERSION_NAME} from '../config';
 
 interface Particle {
   id: number;
   x: number;
   size: number;
-  icon: string;
-  color: string;
+  icon: 'favorite' | 'star';
   progress: Animated.Value;
   rotate: number;
 }
@@ -36,21 +37,21 @@ export function AboutScreen({
 }) {
   const {colors, tokens} = useAppTheme();
   const {width, height} = useWindowDimensions();
+  const reduced = useReducedMotion();
   const [particles, setParticles] = useState<Particle[]>([]);
   const taps = useRef(0);
 
   const spawnParticles = () => {
+    if (reduced) {
+      return;
+    }
     const next: Particle[] = [];
-    for (let i = 0; i < 30; i += 1) {
+    for (let i = 0; i < 24; i += 1) {
       next.push({
         id: Date.now() + i,
         x: Math.random(),
-        size: 12 + Math.random() * 20,
+        size: 12 + Math.random() * 18,
         icon: Math.random() < 0.5 ? 'favorite' : 'star',
-        color:
-          Math.random() < 0.5
-            ? withAlpha(ACCENT.favoriteRed, 0.8)
-            : withAlpha(ACCENT.starYellow, 0.8),
         progress: new Animated.Value(0),
         rotate: Math.random() * 360,
       });
@@ -76,76 +77,64 @@ export function AboutScreen({
 
   return (
     <View style={styles.root}>
-      <TopBar title="关于" onBack={onBack} />
+      <TopBar title="关于" onBack={onBack} titleSize={28} />
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: tokens.contentPadding,
+          paddingTop: 8,
           paddingBottom: 40,
-          alignItems: 'center',
         }}>
-        <View style={{height: tokens.aboutTopSpacer}} />
-        <SoftCard
-          radius={Math.round(tokens.aboutIconSize * 0.28)}
-          backgroundColor={colors.primaryContainer}
+        <ColorField color={colors.primary} radius={24} style={styles.hero}>
+          <View style={styles.iconBubble}>
+            <GlassIcon name="book" size={52} tone="onAccent" />
+          </View>
+          <Text style={[styles.appName, {color: onAccentFor(colors.primary)}]}>
+            {APP_NAME}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`版本 ${VERSION_NAME}`}
+            onPress={onVersionTap}
+            hitSlop={10}>
+            <Text
+              style={[
+                type.caption,
+                styles.version,
+                {color: withAlpha(onAccentFor(colors.primary), 0.8)},
+              ]}>
+              {VERSION_NAME}
+            </Text>
+          </Pressable>
+        </ColorField>
+
+        <Text
           style={[
-            styles.iconBlock,
+            styles.dedication,
             {
-              width: tokens.aboutIconSize,
-              height: tokens.aboutIconSize,
+              color: colors.onSurfaceVariant,
+              fontSize: tokens.isNarrow ? 13 : 15,
             },
           ]}>
-          <Icon
-            name="auto_stories"
-            size={tokens.aboutIconSize * 0.58}
-            color={colors.onPrimaryContainer}
-          />
-        </SoftCard>
-        <Text
-          style={{
-            fontSize: tokens.aboutHeroSize,
-            fontWeight: '700',
-            color: colors.primary,
-            marginTop: 20,
-          }}>
-          {APP_NAME}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`版本 ${VERSION_NAME}`}
-          onPress={onVersionTap}
-          hitSlop={10}
-          style={{marginTop: 8}}>
-          <Text style={{fontSize: 16, color: colors.onSurfaceVariant}}>
-            {VERSION_NAME}
-          </Text>
-        </Pressable>
-
-        <View style={{height: 40}} />
-        <Text style={[styles.dedication, {color: withAlpha(colors.onSurfaceVariant, 0.7), fontSize: tokens.isNarrow ? 13 : 15}]}>
           {DEDICATION}
         </Text>
-        <View style={{height: 20}} />
-        <Text
-          style={[
-            styles.note,
-            {color: withAlpha(colors.onSurfaceVariant, 0.7)},
-          ]}>
-          本软件使用了若干开源组件与图标，详见许可证信息。
+        <Text style={[type.caption, styles.note, {color: colors.onSurfaceVariant}]}>
+          本软件使用了若干开源组件与 Glass Icons，详见许可证信息。
         </Text>
-        <View style={{height: 24}} />
-        <OutlinedButton
-          label="开放源代码许可"
-          icon="description"
-          onPress={onOpenLicenses}
-          style={{alignSelf: 'stretch'}}
-        />
-        <View style={{height: 12}} />
-        <OutlinedButton
-          label="检查更新"
-          icon="update"
-          onPress={() => showToast('当前已是最新版本')}
-          style={{alignSelf: 'stretch'}}
-        />
+
+        <View style={styles.actions}>
+          <OutlinedButton
+            label="开放源代码许可"
+            icon="file"
+            onPress={onOpenLicenses}
+            textColor={colors.onSurface}
+          />
+          <OutlinedButton
+            label="检查更新"
+            icon="refresh"
+            onPress={() => showToast('当前已是最新版本')}
+            textColor={colors.onSurface}
+          />
+        </View>
       </ScrollView>
 
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -170,16 +159,15 @@ export function AboutScreen({
                 {
                   rotate: particle.progress.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [`${particle.rotate}deg`, `${particle.rotate + 360}deg`],
+                    outputRange: [
+                      `${particle.rotate}deg`,
+                      `${particle.rotate + 360}deg`,
+                    ],
                   }),
                 },
               ],
             }}>
-            <Icon
-              name={particle.icon}
-              size={particle.size}
-              color={particle.color}
-            />
+            <GlassIcon name={particle.icon} size={particle.size} />
           </Animated.View>
         ))}
       </View>
@@ -189,7 +177,34 @@ export function AboutScreen({
 
 const styles = StyleSheet.create({
   root: {flex: 1},
-  iconBlock: {alignItems: 'center', justifyContent: 'center'},
-  dedication: {fontStyle: 'italic', textAlign: 'center', paddingHorizontal: 8},
-  note: {fontSize: 12, textAlign: 'center'},
+  hero: {
+    minHeight: 248,
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconBubble: {
+    width: 96,
+    height: 96,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appName: {
+    fontSize: 38,
+    lineHeight: 42,
+    fontWeight: '800',
+    letterSpacing: -0.8,
+    marginTop: 16,
+  },
+  version: {marginTop: 4},
+  dedication: {
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingHorizontal: 8,
+    marginTop: 28,
+  },
+  note: {textAlign: 'center', marginTop: 12, opacity: 0.8},
+  actions: {marginTop: 28, gap: 10},
 });

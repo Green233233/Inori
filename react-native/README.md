@@ -1,8 +1,8 @@
 # 祈 / Inorinal — React Native 重构版
 
-本目录是「祈」的 **React Native 0.88（TypeScript）** 重构版，对应仓库 `react` 分支，版本 **Alpha v0.5.1-react**（versionCode 7，包名 `com.green.inorinal`）。
+本目录是「祈」的 **React Native 0.88（TypeScript）** 重构版，对应仓库 `react` 分支，版本 **Alpha v0.5.3-react**（versionCode 8，包名 `com.green.inorinal`）。
 
-界面采用**轻拟物 + 毛玻璃质感**与**鲜活暖色撞色**设计，保留原 Compose 版的全部功能与信息架构：
+界面采用 **Apple Music「新发现」式鲜明撞色 + 轻量玻璃** 设计，保留原 Compose 版的全部功能与信息架构：
 
 - 首页时间线（搜索 / 新建 / 收藏 / 长按菜单 / 删除确认）
 - 分类浏览（全部 / 日常 / 工作 / 目标 / 灵感 / 情绪）
@@ -12,9 +12,9 @@
 
 ## 视觉与性能
 
-- 轻拟物：`SoftCard` 用 1px 高光/阴影描边 + 低 elevation，按下切换为凹陷面。
-- 毛玻璃：`GlassSurface` 用半透明底色 + 64×64 静态磨砂纹理；用于顶栏、底栏、编辑工具栏、Sheet 与 Dialog。
-- 撞色：珊瑚红、蜜橘、芥末黄、松绿、莓紫；分类与统计使用固定暖色块。
+- 编辑式色块：`ColorField` 用纯色 + 半透明叠层，不使用线性渐变；卡片用 1px separator。
+- 轻量玻璃：`GlassSurface` 用半透明底色 + 静态磨砂纹理；只用于浮动 dock、工具 dock、Sheet 与 Dialog，不启用实时 blur。
+- 撞色：红、蓝、青、黄绿；分类、日期与统计使用高饱和实色块。
 - **不启用实时模糊**：避免 RenderEffect/BlurView 的逐帧离屏开销；靠纹理与透明层表达磨砂质感。
 - 详细设计 token 见 [`docs/react-refactor/design-language.md`](../docs/react-refactor/design-language.md)。
 
@@ -69,7 +69,7 @@ cd android
 
 - 「跟随系统」配色风格回退为樱花粉（动态取色不可移植）
 - 分类页使用统一文案「情绪」
-- 视觉为轻拟物 + 模拟毛玻璃 + 暖色撞色（不使用实时模糊，改用静态磨砂纹理与半透明层控制性能开销）
+- 视觉为 Apple Music 式鲜明撞色 + 轻量玻璃；图标为 Nucleo Glass Icons 构建时栅格化（不使用运行时 SVG filter/实时模糊）
 
 ## 许可
 

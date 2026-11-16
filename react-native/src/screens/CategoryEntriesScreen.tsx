@@ -1,21 +1,33 @@
 import React, {useMemo, useState} from 'react';
 import {FlatList, StyleSheet, Text, View} from 'react-native';
 import {useAppTheme} from '../theme/AppThemeProvider';
+import {CATEGORY_ACCENT, onAccentFor} from '../theme/palette';
+import {type} from '../theme/typography';
+import {GlassIcon} from '../components/GlassIcon';
+import {GlassIconName} from '../components/glass-icons.generated';
 import {JournalCard} from '../components/JournalCard';
-import {AppDialog} from '../components/Ui';
+import {TextButton, AppDialog} from '../components/Ui';
 import {TopBar} from '../components/TopBar';
+import {StaggerReveal} from '../motion/StaggerReveal';
 import {useJournalData} from '../data/JournalDataProvider';
 import {deleteEntry, setFavorite} from '../data/storage';
-import {CATEGORY_LABEL, Category, EntrySummary} from '../data/types';
+import {
+  CATEGORY_ICON,
+  CATEGORY_LABEL,
+  Category,
+  EntrySummary,
+} from '../data/types';
 
 export function CategoryEntriesScreen({
   category,
   onBack,
   onOpenEntry,
+  onNewEntry,
 }: {
   category: Category;
   onBack: () => void;
   onOpenEntry: (id: string) => void;
+  onNewEntry?: () => void;
 }) {
   const {colors, tokens} = useAppTheme();
   const {entries, loading, refresh} = useJournalData();
@@ -27,15 +39,27 @@ export function CategoryEntriesScreen({
     }
     return entries.filter(item => item.category === category);
   }, [entries, category]);
+  const accent = CATEGORY_ACCENT[category] ?? colors.primary;
 
   return (
     <View style={styles.root}>
-      <TopBar title={CATEGORY_LABEL[category]} onBack={onBack} />
+      <TopBar title={CATEGORY_LABEL[category]} onBack={onBack} titleSize={28} />
       {visible.length === 0 && !loading ? (
         <View style={styles.emptyWrap}>
-          <Text style={{color: colors.onSurfaceVariant}}>
-            该分类下暂无日记
+          <View style={[styles.iconBubble, {backgroundColor: accent}]}>
+            <GlassIcon
+              name={CATEGORY_ICON[category] as GlassIconName}
+              size={38}
+              tone={onAccentFor(accent) === '#FFFFFF' ? 'light' : 'dark'}
+            />
+          </View>
+          <Text style={[type.headline, {color: colors.onSurface}]}>
+            这里还是空的
           </Text>
+          <Text style={[type.body, styles.emptyBody, {color: colors.onSurfaceVariant}]}>
+            在这个分类下写下第一篇日记吧。
+          </Text>
+          {onNewEntry ? <TextButton label="写一篇" onPress={onNewEntry} /> : null}
         </View>
       ) : (
         <FlatList
@@ -43,19 +67,21 @@ export function CategoryEntriesScreen({
           keyExtractor={item => item.id}
           contentContainerStyle={{
             padding: tokens.contentPadding,
-            paddingTop: 12,
-            paddingBottom: 24,
+            paddingTop: 8,
+            paddingBottom: 32,
             gap: tokens.listSpacing,
           }}
-          renderItem={({item}) => (
-            <JournalCard
-              entry={item}
-              onPress={() => onOpenEntry(item.id)}
-              onFavorite={() => {
-                setFavorite(item.id, !item.isFavorite).then(refresh);
-              }}
-              onDelete={() => setDeleteTarget(item)}
-            />
+          renderItem={({item, index}) => (
+            <StaggerReveal index={index}>
+              <JournalCard
+                entry={item}
+                onPress={() => onOpenEntry(item.id)}
+                onFavorite={() => {
+                  setFavorite(item.id, !item.isFavorite).then(refresh);
+                }}
+                onDelete={() => setDeleteTarget(item)}
+              />
+            </StaggerReveal>
           )}
         />
       )}
@@ -85,5 +111,20 @@ export function CategoryEntriesScreen({
 
 const styles = StyleSheet.create({
   root: {flex: 1},
-  emptyWrap: {flex: 1, alignItems: 'center', justifyContent: 'center'},
+  emptyWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    gap: 10,
+  },
+  iconBubble: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  emptyBody: {textAlign: 'center'},
 });

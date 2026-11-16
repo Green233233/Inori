@@ -6,16 +6,23 @@ import {
   Text,
   View,
 } from 'react-native';
-import {EntrySummary, CATEGORY_LABEL, dateLabel} from '../data/types';
+import {
+  EntrySummary,
+  CATEGORY_LABEL,
+  MOOD_LABEL,
+  WEATHER_LABEL,
+  dateLabel,
+} from '../data/types';
 import {useAppTheme} from '../theme/AppThemeProvider';
-import {withAlpha} from '../theme/palette';
-import {Icon} from './Icon';
+import {CATEGORY_ACCENT, onAccentFor, withAlpha} from '../theme/palette';
+import {GlassIcon} from './GlassIcon';
+import {FavoriteButton} from '../motion/FavoriteButton';
 import {Pill} from './Ui';
-import {GlassSurface, SoftCard} from './Surfaces';
+import {ColorField, GlassSurface, SoftCard} from './Surfaces';
 
 /**
- * Flat color-block journal card: a solid date block on the left, title and
- * preview on the right, flat meta pills underneath. No gradient/shadow.
+ * Editorial journal card: a saturated date cover, flat/soft surface, and
+ * compact metadata. No warm neumorphic borders or gradient backgrounds.
  */
 export function JournalCard({
   entry,
@@ -28,10 +35,12 @@ export function JournalCard({
   onFavorite?: () => void;
   onDelete?: () => void;
 }) {
-  const {colors, surfaces, tokens} = useAppTheme();
+  const {colors, tokens} = useAppTheme();
   const [menuVisible, setMenuVisible] = useState(false);
   const {day, month} = dateLabel(entry.date);
   const preview = entry.preview.trim();
+  const accent = CATEGORY_ACCENT[entry.category] ?? colors.primary;
+  const onAccent = onAccentFor(accent);
 
   const closeMenu = () => setMenuVisible(false);
 
@@ -47,18 +56,13 @@ export function JournalCard({
           minHeight: tokens.cardMinHeight,
           flexDirection: 'row',
         }}>
-        <View
+        <ColorField
+          color={accent}
+          radius={12}
           style={[
             styles.dateBlock,
             {
               width: tokens.cardDateWidth,
-              borderRadius: Math.max(8, tokens.cardCorner - 6),
-              backgroundColor: colors.primaryContainer,
-              borderTopWidth: 1,
-              borderTopColor: surfaces.highlight,
-              borderBottomWidth: 1,
-              borderBottomColor: surfaces.shadowSoft,
-              elevation: 1,
             },
           ]}>
           <Text
@@ -66,7 +70,8 @@ export function JournalCard({
               fontSize: tokens.cardDateFontSize,
               lineHeight: tokens.cardDateFontSize + 2,
               fontWeight: '700',
-              color: colors.onPrimaryContainer,
+              color: onAccent,
+              fontVariant: ['tabular-nums'],
             }}>
             {day}
           </Text>
@@ -74,12 +79,12 @@ export function JournalCard({
             style={{
               fontSize: tokens.isNarrow ? 10 : 11,
               fontWeight: '600',
-              color: colors.onPrimaryContainer,
-              opacity: 0.8,
+              color: onAccent,
+              opacity: 0.85,
             }}>
             {month}
           </Text>
-        </View>
+        </ColorField>
 
         <View
           style={[
@@ -100,6 +105,12 @@ export function JournalCard({
               }}>
               {entry.title || '未命名日记'}
             </Text>
+              {onFavorite ? (
+                <FavoriteButton
+                  active={entry.isFavorite}
+                  onPress={onFavorite}
+                />
+              ) : null}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="更多操作"
@@ -116,11 +127,7 @@ export function JournalCard({
                     : 'transparent',
                 },
               ]}>
-              <Icon
-                name="more_vert"
-                size={18}
-                color={colors.onSurfaceVariant}
-              />
+              <GlassIcon name="more" size={20} />
             </Pressable>
           </View>
 
@@ -138,14 +145,14 @@ export function JournalCard({
 
           <View style={styles.metaRow}>
             <Pill
-              icon={weatherIcon(entry.weather)}
-              color={colors.primary}
-              background={withAlpha(colors.primary, 0.09)}
+              text={WEATHER_LABEL[entry.weather]}
+              color={colors.onSurfaceVariant}
+              background={withAlpha(colors.onSurfaceVariant, 0.12)}
             />
             <Pill
-              icon={moodIcon(entry.mood)}
-              color={colors.primary}
-              background={withAlpha(colors.primary, 0.09)}
+              text={MOOD_LABEL[entry.mood]}
+              color={colors.onSurfaceVariant}
+              background={withAlpha(colors.onSurfaceVariant, 0.12)}
             />
             {!tokens.isNarrow && entry.category !== 'ALL' ? (
               <Pill
@@ -155,9 +162,11 @@ export function JournalCard({
               />
             ) : null}
             {entry.isFavorite ? (
-              <View style={styles.favoriteMark}>
-                <Icon name="favorite" size={13} color="#D97D78" />
-              </View>
+              <Pill
+                text="已收藏"
+                color="#FF375F"
+                background={withAlpha('#FF375F', 0.14)}
+              />
             ) : null}
           </View>
         </View>
@@ -186,10 +195,10 @@ export function JournalCard({
                   closeMenu();
                   onFavorite();
                 }}>
-                <Icon
-                  name={entry.isFavorite ? 'favorite' : 'favorite_border'}
+                <GlassIcon
+                  name="favorite"
                   size={20}
-                  color={colors.onSurfaceVariant}
+                  tone={entry.isFavorite ? 'onAccent' : 'auto'}
                 />
                 <Text style={[styles.menuLabel, {color: colors.onSurface}]}>
                   {entry.isFavorite ? '取消收藏' : '收藏'}
@@ -207,7 +216,7 @@ export function JournalCard({
                   closeMenu();
                   onDelete();
                 }}>
-                <Icon name="delete" size={20} color={colors.error} />
+                <GlassIcon name="delete" size={20} />
                 <Text style={[styles.menuLabel, {color: colors.error}]}>
                   删除
                 </Text>
@@ -218,30 +227,6 @@ export function JournalCard({
       </Modal>
     </>
   );
-}
-
-function weatherIcon(weather: EntrySummary['weather']): string {
-  switch (weather) {
-    case 'RAINY':
-      return 'water_drop';
-    case 'CLOUDY':
-      return 'cloud';
-    case 'NIGHT_CLEAR':
-      return 'nights_stay';
-    default:
-      return 'wb_sunny';
-  }
-}
-
-function moodIcon(mood: EntrySummary['mood']): string {
-  switch (mood) {
-    case 'HAPPY':
-      return 'sentiment_very_satisfied';
-    case 'SAD':
-      return 'sentiment_very_dissatisfied';
-    default:
-      return 'sentiment_neutral';
-  }
 }
 
 const styles = StyleSheet.create({

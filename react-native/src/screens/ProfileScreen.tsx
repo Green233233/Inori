@@ -1,5 +1,7 @@
-import React, {useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {
+  Animated,
+  Easing,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -7,12 +9,14 @@ import {
   View,
 } from 'react-native';
 import {useAppTheme} from '../theme/AppThemeProvider';
-import {ACCENT, withAlpha} from '../theme/palette';
-import {Icon} from '../components/Icon';
-import {TopBar} from '../components/TopBar';
+import {onAccentFor, withAlpha} from '../theme/palette';
+import {type, tabularNums} from '../theme/typography';
+import {GlassIcon} from '../components/GlassIcon';
+import {GlassIconName} from '../components/glass-icons.generated';
 import {OutlinedButton} from '../components/Ui';
-import {SoftCard} from '../components/Surfaces';
+import {ColorField, SoftCard} from '../components/Surfaces';
 import {showToast} from '../components/toast';
+import {useReducedMotion} from '../motion/useReducedMotion';
 import {useJournalData} from '../data/JournalDataProvider';
 import {exportBackup, importBackup, importResultMessage} from '../data/backup';
 
@@ -58,159 +62,165 @@ export function ProfileScreen({
     }
   };
 
-  const statItems = [
+  const statsItems = [
     {
-      icon: 'edit_note',
-      label: '日记',
-      value: String(stats.total),
-      tint: '#FFFFFF',
-      fg: colors.onPrimary,
+      icon: 'edit' as GlassIconName,
+      label: '篇日记',
+      value: stats.total,
       background: colors.primary,
+      on: onAccentFor(colors.primary),
     },
     {
-      icon: 'local_fire_department',
-      label: '连续',
-      value: `${stats.streak}天`,
-      tint: '#FFFFFF',
-      fg: '#FFFFFF',
-      background: ACCENT.fireOrange,
+      icon: 'flame' as GlassIconName,
+      label: '天连续',
+      value: stats.streak,
+      background: '#32D7FF',
+      on: onAccentFor('#32D7FF'),
     },
     {
-      icon: 'star',
-      label: '收藏',
-      value: String(stats.favorite),
-      tint: '#4A3503',
-      fg: '#4A3503',
-      background: ACCENT.starYellow,
+      icon: 'favorite' as GlassIconName,
+      label: '个收藏',
+      value: stats.favorite,
+      background: '#C6FF3D',
+      on: onAccentFor('#C6FF3D'),
     },
   ];
 
   return (
     <View style={styles.root}>
-      <TopBar title="个人中心" />
       <ScrollView
         contentContainerStyle={{
           padding: tokens.contentPadding,
-          paddingBottom: 32,
-        }}>
-        <View style={styles.hero}>
-          <SoftCard
-            radius={tokens.avatarSize / 2}
-            backgroundColor={colors.primaryContainer}
-            style={[
-              styles.avatar,
-              {
-                width: tokens.avatarSize,
-                height: tokens.avatarSize,
-              },
-            ]}>
-            <Icon
-              name="account_circle"
-              size={tokens.avatarIconSize}
-              color={colors.onPrimaryContainer}
-            />
-          </SoftCard>
-          <Text
-            style={[
-              styles.name,
-              {fontSize: tokens.profileNameSize, color: colors.onSurface},
-            ]}>
-            日记爱好者
-          </Text>
-          <Text
-            style={[styles.tagline, {color: colors.onSurfaceVariant}]}>
-            记录生活中的每一个美好瞬间
-          </Text>
-        </View>
+          paddingTop: 8,
+          paddingBottom: 36,
+        }}
+        showsVerticalScrollIndicator={false}>
+        <Text style={[type.display, {color: colors.onSurface}]}>我的</Text>
+        <Text style={[type.body, {color: colors.onSurfaceVariant, marginTop: 4}]}>
+          把日子过成一本好看的书
+        </Text>
 
-        <View
-          style={[
-            styles.statsRow,
-            {marginTop: tokens.sectionGap, gap: tokens.listSpacing},
-          ]}>
-          {statItems.map(item => (
+        <ColorField
+          color={colors.primary}
+          radius={22}
+          style={styles.hero}>
+          <View style={styles.heroRow}>
+            <View style={styles.avatar}>
+              <GlassIcon name="profile" size={46} tone="onAccent" />
+            </View>
+            <View style={{flex: 1}}>
+              <Text style={[styles.name, {color: onAccentFor(colors.primary)}]}>
+                日记爱好者
+              </Text>
+              <Text
+                style={[
+                  type.caption,
+                  {color: withAlpha(onAccentFor(colors.primary), 0.78)},
+                ]}>
+                记录生活中的每一个美好瞬间
+              </Text>
+            </View>
+          </View>
+        </ColorField>
+
+        <View style={[styles.statsRow, {marginTop: 12}]}>
+          {statsItems.map(item => (
             <SoftCard
               key={item.label}
               radius={16}
               backgroundColor={item.background}
               style={styles.statBlock}>
-              <Icon name={item.icon} size={22} color={item.tint} />
-              <Text
-                style={[
-                  styles.statValue,
-                  {
-                    fontSize: tokens.statValueSize,
-                    color: item.fg,
-                  },
-                ]}>
-                {item.value}
-              </Text>
-              <Text
-                style={[
-                  styles.statLabel,
-                  {color: item.fg, opacity: 0.88},
-                ]}>
+              <GlassIcon
+                name={item.icon}
+                size={22}
+                tone={item.on === '#FFFFFF' ? 'light' : 'dark'}
+              />
+              <CountUp
+                value={item.value}
+                color={item.on}
+                style={styles.statValue}
+              />
+              <Text style={[type.caption, {color: item.on, opacity: 0.78}]}>
                 {item.label}
               </Text>
             </SoftCard>
           ))}
         </View>
 
-        <View
-          style={{
-            marginTop: tokens.sectionGap,
-            flexDirection: tokens.isCompact ? 'column' : 'row',
-            gap: 12,
-          }}>
+        <View style={styles.actionsRow}>
           <OutlinedButton
             label="导出条目"
-            icon="cloud_upload"
+            icon="cloudUpload"
             onPress={exportEntries}
             style={styles.actionButton}
+            textColor={colors.onSurface}
           />
           <OutlinedButton
             label="导入条目"
-            icon="cloud_download"
+            icon="cloudDownload"
             onPress={importEntries}
             style={styles.actionButton}
+            textColor={colors.onSurface}
           />
         </View>
 
-        <SoftCard
-          radius={16}
-          style={[
-            styles.menuCard,
-            {
-              marginTop: tokens.isNarrow ? 16 : 24,
-            },
-          ]}>
+        <Text style={[type.section, styles.sectionTitle, {color: colors.onSurface}]}>
+          更多
+        </Text>
+        <SoftCard radius={18} style={styles.menuCard}>
           <MenuRow
             icon="settings"
             label="设置"
             onPress={onOpenSettings}
-            color={colors.primary}
-            textColor={colors.onSurface}
             divider={withAlpha(colors.outline, 0.25)}
           />
           <MenuRow
-            icon="cloud_upload"
+            icon="cloudUpload"
             label="数据备份"
             onPress={exportEntries}
-            color={colors.primary}
-            textColor={colors.onSurface}
             divider={withAlpha(colors.outline, 0.25)}
           />
-          <MenuRow
-            icon="info"
-            label="关于"
-            onPress={onOpenAbout}
-            color={colors.primary}
-            textColor={colors.onSurface}
-            last
-          />
+          <MenuRow icon="info" label="关于" onPress={onOpenAbout} last />
         </SoftCard>
       </ScrollView>
     </View>
+  );
+}
+
+function CountUp({
+  value,
+  color,
+  style,
+}: {
+  value: number;
+  color: string;
+  style?: any;
+}) {
+  const reduced = useReducedMotion();
+  const [shown, setShown] = useState(reduced ? value : 0);
+  const anim = useRef(new Animated.Value(reduced ? value : 0)).current;
+
+  useEffect(() => {
+    if (reduced) {
+      setShown(value);
+      anim.setValue(value);
+      return;
+    }
+    const sub = anim.addListener(({value: next}) => setShown(Math.round(next)));
+    Animated.timing(anim, {
+      toValue: value,
+      duration: 450,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+    return () => {
+      anim.removeListener(sub);
+      anim.stopAnimation();
+    };
+  }, [anim, reduced, value]);
+
+  return (
+    <Text style={[type.title, tabularNums, {color}, style]}>{shown}</Text>
   );
 }
 
@@ -218,16 +228,12 @@ function MenuRow({
   icon,
   label,
   onPress,
-  color,
-  textColor,
   divider,
   last,
 }: {
-  icon: string;
+  icon: GlassIconName;
   label: string;
   onPress: () => void;
-  color: string;
-  textColor: string;
   divider?: string;
   last?: boolean;
 }) {
@@ -235,39 +241,52 @@ function MenuRow({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
       onPress={onPress}
       style={({pressed}) => [
         styles.menuRow,
-        pressed && {backgroundColor: withAlpha(colors.primary, 0.06)},
+        pressed && {backgroundColor: withAlpha(colors.primary, 0.08)},
         !last && divider
-          ? {borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: divider}
+          ? {
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: divider,
+            }
           : null,
       ]}>
-      <Icon name={icon} size={22} color={color} />
-      <Text style={[styles.menuText, {color: textColor}]}>{label}</Text>
-      <Icon name="chevron_right" size={20} color={colors.onSurfaceVariant} />
+      <GlassIcon name={icon} size={26} />
+      <Text style={[styles.menuText, {color: colors.onSurface}]}>{label}</Text>
+      <GlassIcon name="chevronRight" size={22} />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   root: {flex: 1},
-  hero: {alignItems: 'center', paddingTop: 12},
-  avatar: {alignItems: 'center', justifyContent: 'center'},
-  name: {fontWeight: '700', marginTop: 10},
-  tagline: {fontSize: 14, marginTop: 4, textAlign: 'center'},
-  statsRow: {flexDirection: 'row'},
+  hero: {marginTop: 20, padding: 18, minHeight: 136, justifyContent: 'center'},
+  heroRow: {flexDirection: 'row', alignItems: 'center', gap: 14},
+  avatar: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  name: {fontSize: 22, fontWeight: '800', letterSpacing: -0.3},
+  statsRow: {flexDirection: 'row', gap: 10},
   statBlock: {
     flex: 1,
-    borderRadius: 14,
-    alignItems: 'center',
-    paddingVertical: 12,
-    gap: 3,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    gap: 4,
+    alignItems: 'flex-start',
   },
-  statValue: {fontWeight: '700', marginTop: 1},
-  statLabel: {fontSize: 12},
+  statValue: {fontWeight: '800'},
+  actionsRow: {flexDirection: 'row', gap: 10, marginTop: 20},
   actionButton: {flex: 1},
-  menuCard: {borderRadius: 14, overflow: 'hidden'},
+  sectionTitle: {marginTop: 28, marginBottom: 10},
+  menuCard: {overflow: 'hidden'},
   menuRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -275,5 +294,5 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     gap: 12,
   },
-  menuText: {flex: 1, fontSize: 16},
+  menuText: {flex: 1, fontSize: 16, fontWeight: '600'},
 });

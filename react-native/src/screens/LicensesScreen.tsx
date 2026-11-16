@@ -12,40 +12,40 @@ const LICENSES: {
   note: string;
 }[] = [
   {
-    name: 'AndroidX Activity / Lifecycle / Navigation',
-    license: 'Apache License 2.0',
-    source: 'https://developer.android.com/jetpack/androidx',
-    note: '应用基础架构与导航。',
+    name: 'React Native',
+    license: 'MIT License',
+    source: 'https://github.com/facebook/react-native',
+    note: '应用界面运行时与原生桥接。',
   },
   {
-    name: 'Jetpack Compose / Material 3',
-    license: 'Apache License 2.0',
-    source: 'https://developer.android.com/jetpack/compose',
-    note: '界面框架与 Material 组件。',
+    name: 'React',
+    license: 'MIT License',
+    source: 'https://github.com/facebook/react',
+    note: '界面组件模型。',
   },
   {
-    name: 'Material Icons / Material Symbols',
-    license: 'Apache License 2.0',
-    source: 'https://github.com/google/material-design-icons',
-    note: '应用内天气、心情、头像、底部导航、日记卡片操作及装饰矢量图标。',
+    name: 'react-native-webview',
+    license: 'MIT License',
+    source: 'https://github.com/react-native-webview/react-native-webview',
+    note: '手账编辑器的 WebView 容器。',
   },
   {
-    name: 'Room',
-    license: 'Apache License 2.0',
-    source: 'https://developer.android.com/training/data-storage/room',
-    note: '本地数据库。',
+    name: 'react-native-safe-area-context',
+    license: 'MIT License',
+    source: 'https://github.com/th3rdwave/react-native-safe-area-context',
+    note: '安全区适配。',
   },
   {
-    name: 'DataStore',
-    license: 'Apache License 2.0',
-    source: 'https://developer.android.com/topic/libraries/architecture/datastore',
-    note: '用户设置存储。',
+    name: 'JSZip',
+    license: 'MIT License',
+    source: 'https://github.com/Stuk/jszip',
+    note: 'ZIP 备份导出与导入。',
   },
   {
-    name: 'Gson',
-    license: 'Apache License 2.0',
-    source: 'https://github.com/google/gson',
-    note: '备份清单与旧 JSON 导入导出。',
+    name: 'Nucleo Glass Icons',
+    license: 'Nucleo free icon license',
+    source: 'https://nucleoapp.com/svg-glass-icons',
+    note: '应用内导航、分类、天气、心情与操作图标（构建时栅格化）。',
   },
   {
     name: 'LXGW WenKai',
@@ -77,9 +77,13 @@ export function LicensesScreen({onBack}: {onBack: () => void}) {
   const {colors, tokens} = useAppTheme();
   return (
     <View style={styles.root}>
-      <TopBar title="开放源代码许可" onBack={onBack} />
+      <TopBar title="开放源代码许可" onBack={onBack} titleSize={24} />
       <ScrollView
-        contentContainerStyle={{padding: tokens.contentPadding, paddingBottom: 32}}>
+        contentContainerStyle={{
+          padding: tokens.contentPadding,
+          paddingTop: 8,
+          paddingBottom: 40,
+        }}>
         <Text style={[styles.intro, {color: colors.onSurfaceVariant}]}>
           感谢以下开源项目与资源。完整许可证文本请以各项目官方仓库为准。
         </Text>

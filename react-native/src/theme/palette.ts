@@ -1,11 +1,8 @@
 /**
- * Color schemes + surface tokens.
- *
- * Visual language: light neumorphism on warm paper with frosted-glass layers
- * and bold, warm contrasting color blocks (coral / tangerine / teal / mustard
- * / mulberry). Deliberately avoids the generic blue-purple "tech gradient"
- * look: every accent is warm or earthy, and dark themes stay cocoa/forest/plum
- * rather than navy.
+ * Pop-glass color schemes inspired by Apple Music "New" (not Apple assets):
+ * near-black canvas, editorial white type, bright album-art-like color blocks.
+ * Three scheme enums are kept for settings compatibility; labels/surfaces are
+ * re-themed. No warm cream/paper palette and no blue-purple tech gradients.
  */
 export interface ColorScheme {
   primary: string;
@@ -33,171 +30,177 @@ export type ColorStyleName = 'SAKURA' | 'MINT' | 'PERIWINKLE' | 'SYSTEM';
 export type ThemeModeName = 'LIGHT' | 'DARK' | 'SYSTEM';
 
 const SAKURA_LIGHT: ColorScheme = {
-  primary: '#D6435B',
+  primary: '#FA2D48',
   onPrimary: '#FFFFFF',
-  primaryContainer: '#FFB3A7',
-  onPrimaryContainer: '#5A1B18',
-  secondary: '#F08A3C',
+  primaryContainer: '#FFE0E4',
+  onPrimaryContainer: '#47000C',
+  secondary: '#007AFF',
   onSecondary: '#FFFFFF',
-  secondaryContainer: '#FFD9A8',
-  onSecondaryContainer: '#5A3410',
-  tertiary: '#2A9D8F',
-  onTertiary: '#FFFFFF',
-  background: '#FBF3E7',
-  onBackground: '#3A2A24',
-  surface: '#FFFCF5',
-  onSurface: '#3A2A24',
-  surfaceVariant: '#F6E7D8',
-  onSurfaceVariant: '#6F5348',
-  outline: '#C7A38D',
-  error: '#B3261E',
+  secondaryContainer: '#D6E9FF',
+  onSecondaryContainer: '#002B5C',
+  tertiary: '#65C400',
+  onTertiary: '#102000',
+  background: '#F5F5F7',
+  onBackground: '#111114',
+  surface: '#FFFFFF',
+  onSurface: '#111114',
+  surfaceVariant: '#ECECF0',
+  onSurfaceVariant: '#6E6E73',
+  outline: '#C7C7CC',
+  error: '#D70015',
   onError: '#FFFFFF',
 };
 
 const SAKURA_DARK: ColorScheme = {
-  primary: '#FF8B9B',
-  onPrimary: '#3A0E16',
-  primaryContainer: '#762A35',
-  onPrimaryContainer: '#FFD5D8',
-  secondary: '#FFB266',
-  onSecondary: '#3A2008',
-  secondaryContainer: '#5C3A1B',
-  onSecondaryContainer: '#FFE3C4',
-  tertiary: '#5FD0BE',
-  onTertiary: '#0C2622',
-  background: '#21141A',
-  onBackground: '#FFE9E3',
-  surface: '#2C1B22',
-  onSurface: '#FFE9E3',
-  surfaceVariant: '#3D2831',
-  onSurfaceVariant: '#E6C8C2',
-  outline: '#95756F',
-  error: '#FFB4AB',
-  onError: '#690005',
+  primary: '#FF2D55',
+  onPrimary: '#2A0008',
+  primaryContainer: '#5C1020',
+  onPrimaryContainer: '#FFD9DE',
+  secondary: '#32D7FF',
+  onSecondary: '#003A52',
+  secondaryContainer: '#0B3B57',
+  onSecondaryContainer: '#C9F2FF',
+  tertiary: '#C6FF3D',
+  onTertiary: '#1A2400',
+  background: '#050507',
+  onBackground: '#F5F5F7',
+  surface: '#121216',
+  onSurface: '#F5F5F7',
+  surfaceVariant: '#1C1C22',
+  onSurfaceVariant: '#A1A1AA',
+  outline: '#3A3A42',
+  error: '#FF453A',
+  onError: '#2A0000',
 };
 
 const MINT_LIGHT: ColorScheme = {
-  primary: '#128F78',
+  primary: '#0E9F5A',
   onPrimary: '#FFFFFF',
-  primaryContainer: '#A9E8D1',
-  onPrimaryContainer: '#063A2E',
-  secondary: '#E4572E',
+  primaryContainer: '#D5F5E3',
+  onPrimaryContainer: '#003B20',
+  secondary: '#007AFF',
   onSecondary: '#FFFFFF',
-  secondaryContainer: '#FFD3BE',
-  onSecondaryContainer: '#5C1F08',
-  tertiary: '#F2B705',
-  onTertiary: '#3A2A02',
-  background: '#F6F3E6',
-  onBackground: '#2A342E',
-  surface: '#FFFDF4',
-  onSurface: '#2A342E',
-  surfaceVariant: '#E8EEDF',
-  onSurfaceVariant: '#54655A',
-  outline: '#9CAF9F',
-  error: '#B3261E',
+  secondaryContainer: '#D6E9FF',
+  onSecondaryContainer: '#002B5C',
+  tertiary: '#F5C200',
+  onTertiary: '#241A00',
+  background: '#F2F7F2',
+  onBackground: '#111513',
+  surface: '#FFFFFF',
+  onSurface: '#111513',
+  surfaceVariant: '#E6EFE6',
+  onSurfaceVariant: '#66756A',
+  outline: '#B9C7BC',
+  error: '#D70015',
   onError: '#FFFFFF',
 };
 
 const MINT_DARK: ColorScheme = {
-  primary: '#6FE0C0',
-  onPrimary: '#063028',
-  primaryContainer: '#1C5548',
-  onPrimaryContainer: '#C9F7E8',
-  secondary: '#FF9B70',
-  onSecondary: '#3A1606',
-  secondaryContainer: '#5C2C18',
-  onSecondaryContainer: '#FFD9C7',
-  tertiary: '#F2C94C',
-  onTertiary: '#3A2A02',
-  background: '#12201B',
-  onBackground: '#E6F5EC',
-  surface: '#1B2C25',
-  onSurface: '#E6F5EC',
-  surfaceVariant: '#2A3D34',
-  onSurfaceVariant: '#C6DED0',
-  outline: '#7E9788',
-  error: '#FFB4AB',
-  onError: '#690005',
+  primary: '#C6FF3D',
+  onPrimary: '#1A2400',
+  primaryContainer: '#33420A',
+  onPrimaryContainer: '#E6FFC2',
+  secondary: '#64D2FF',
+  onSecondary: '#003A52',
+  secondaryContainer: '#0B3B57',
+  onSecondaryContainer: '#C9F2FF',
+  tertiary: '#FFD60A',
+  onTertiary: '#241A00',
+  background: '#050805',
+  onBackground: '#F2F7EE',
+  surface: '#10150F',
+  onSurface: '#F2F7EE',
+  surfaceVariant: '#1B241A',
+  onSurfaceVariant: '#A5B5A5',
+  outline: '#354034',
+  error: '#FF453A',
+  onError: '#2A0000',
 };
 
 const PERIWINKLE_LIGHT: ColorScheme = {
-  primary: '#8C3F63',
+  primary: '#007AFF',
   onPrimary: '#FFFFFF',
-  primaryContainer: '#F4B8D0',
-  onPrimaryContainer: '#4E1630',
-  secondary: '#2A9D8F',
+  primaryContainer: '#D6E9FF',
+  onPrimaryContainer: '#002B5C',
+  secondary: '#FF2D55',
   onSecondary: '#FFFFFF',
-  secondaryContainer: '#BDEBE2',
-  onSecondaryContainer: '#083A34',
-  tertiary: '#F2B705',
-  onTertiary: '#3A2A02',
-  background: '#F9F1EC',
-  onBackground: '#382A33',
-  surface: '#FFFBF7',
-  onSurface: '#382A33',
-  surfaceVariant: '#F1E2E8',
-  onSurfaceVariant: '#6D5462',
-  outline: '#B99AA8',
-  error: '#B3261E',
+  secondaryContainer: '#FFE0E6',
+  onSecondaryContainer: '#4A0014',
+  tertiary: '#65C400',
+  onTertiary: '#102000',
+  background: '#F2F5FA',
+  onBackground: '#11151D',
+  surface: '#FFFFFF',
+  onSurface: '#11151D',
+  surfaceVariant: '#E6EDF7',
+  onSurfaceVariant: '#667080',
+  outline: '#B8C2D0',
+  error: '#D70015',
   onError: '#FFFFFF',
 };
 
 const PERIWINKLE_DARK: ColorScheme = {
-  primary: '#F2A9C6',
-  onPrimary: '#3A0F22',
-  primaryContainer: '#6B2A47',
-  onPrimaryContainer: '#FFD6E5',
-  secondary: '#6FE0C0',
-  onSecondary: '#063028',
-  secondaryContainer: '#1C5548',
-  onSecondaryContainer: '#C9F7E8',
-  tertiary: '#F2C94C',
-  onTertiary: '#3A2A02',
-  background: '#22141F',
-  onBackground: '#FBE7EE',
-  surface: '#2D1C28',
-  onSurface: '#FBE7EE',
-  surfaceVariant: '#3E2A37',
-  onSurfaceVariant: '#E3C9D4',
-  outline: '#997C8B',
-  error: '#FFB4AB',
-  onError: '#690005',
+  primary: '#4DA3FF',
+  onPrimary: '#001B3A',
+  primaryContainer: '#0B2A4A',
+  onPrimaryContainer: '#C9E3FF',
+  secondary: '#FF6482',
+  onSecondary: '#3A0010',
+  secondaryContainer: '#5C1024',
+  onSecondaryContainer: '#FFD9E0',
+  tertiary: '#C6FF3D',
+  onTertiary: '#1A2400',
+  background: '#04070C',
+  onBackground: '#F2F6FC',
+  surface: '#0E141C',
+  onSurface: '#F2F6FC',
+  surfaceVariant: '#17202C',
+  onSurfaceVariant: '#9AA7B8',
+  outline: '#354254',
+  error: '#FF453A',
+  onError: '#2A0000',
 };
 
 export const SCHEMES: Record<
   Exclude<ColorStyleName, 'SYSTEM'>,
-  { light: ColorScheme; dark: ColorScheme }
+  {light: ColorScheme; dark: ColorScheme}
 > = {
-  SAKURA: { light: SAKURA_LIGHT, dark: SAKURA_DARK },
-  MINT: { light: MINT_LIGHT, dark: MINT_DARK },
-  PERIWINKLE: { light: PERIWINKLE_LIGHT, dark: PERIWINKLE_DARK },
+  SAKURA: {light: SAKURA_LIGHT, dark: SAKURA_DARK},
+  MINT: {light: MINT_LIGHT, dark: MINT_DARK},
+  PERIWINKLE: {light: PERIWINKLE_LIGHT, dark: PERIWINKLE_DARK},
 };
 
-/** Bold, warm category accents used for solid color blocks. */
 export const CATEGORY_ACCENT: Record<string, string> = {
-  ALL: '#2A9D8F',
-  DAILY: '#F2B705',
-  WORK: '#E4572E',
-  GOAL: '#128F78',
-  INSPIRATION: '#D6435B',
-  EMOTION: '#8C3F63',
+  ALL: '#0A84FF',
+  DAILY: '#FFD60A',
+  WORK: '#FF9F0A',
+  GOAL: '#28CD41',
+  INSPIRATION: '#FF375F',
+  EMOTION: '#32D7FF',
 };
 
-/** Semantic accents. */
 export const ACCENT = {
-  favoriteRed: '#E4572E',
-  starYellow: '#F2B705',
-  fireOrange: '#FF8A3D',
-  darkGrey: '#333333',
+  favoriteRed: '#FF375F',
+  starYellow: '#FFD60A',
+  fireOrange: '#FF9F0A',
+  darkGrey: '#111114',
   white: '#FFFFFF',
 };
+
+/** Pick white or near-black text/icon for a solid accent block. */
+export function onAccentFor(hex: string): string {
+  const clean = hex.replace('#', '');
+  const r = parseInt(clean.slice(0, 2), 16) / 255;
+  const g = parseInt(clean.slice(2, 4), 16) / 255;
+  const b = parseInt(clean.slice(4, 6), 16) / 255;
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return luminance > 0.62 ? '#111114' : '#FFFFFF';
+}
 
 export function resolveScheme(
   style: ColorStyleName,
   dark: boolean,
 ): ColorScheme {
-  // "SYSTEM" style used Android 12 dynamic color; below API 31 it fell back to
-  // Sakura, so the RN build consistently uses Sakura (documented deviation).
   const key = style === 'SYSTEM' ? 'SAKURA' : style;
   return SCHEMES[key][dark ? 'dark' : 'light'];
 }
@@ -207,27 +210,6 @@ export function withAlpha(hex: string, alpha: number): string {
     .toString(16)
     .padStart(2, '0');
   return `${hex}${a}`;
-}
-
-function parseHex(hex: string): [number, number, number] {
-  const clean = hex.replace('#', '');
-  return [
-    parseInt(clean.slice(0, 2), 16),
-    parseInt(clean.slice(2, 4), 16),
-    parseInt(clean.slice(4, 6), 16),
-  ];
-}
-
-/** Linear RGB mix (ratio = weight of `to`). */
-export function mixColor(from: string, to: string, ratio: number): string {
-  const [r1, g1, b1] = parseHex(from);
-  const [r2, g2, b2] = parseHex(to);
-  const r = Math.round(r1 + (r2 - r1) * ratio);
-  const g = Math.round(g1 + (g2 - g1) * ratio);
-  const b = Math.round(b1 + (b2 - b1) * ratio);
-  return `#${[r, g, b]
-    .map(v => v.toString(16).padStart(2, '0'))
-    .join('')}`;
 }
 
 export interface SurfaceTokens {
@@ -248,32 +230,19 @@ export function buildSurfaces(
   colors: ColorScheme,
   isDark: boolean,
 ): SurfaceTokens {
-  const raised = isDark
-    ? mixColor(colors.surface, '#FFFFFF', 0.06)
-    : mixColor(colors.background, '#FFFFFF', 0.82);
-  const raisedAlt = isDark
-    ? mixColor(colors.surface, '#000000', 0.14)
-    : mixColor(colors.surfaceVariant, '#FFFFFF', 0.55);
-  const sunken = isDark
-    ? mixColor(colors.background, '#000000', 0.24)
-    : mixColor(colors.background, '#8C5A48', 0.10);
   return {
-    raised,
-    raisedAlt,
-    sunken,
-    glass: withAlpha(
-      mixColor(colors.surface, colors.primary, isDark ? 0.06 : 0.035),
-      isDark ? 0.66 : 0.56,
-    ),
-    glassStrong: withAlpha(
-      mixColor(colors.surface, colors.primary, isDark ? 0.04 : 0.02),
-      isDark ? 0.94 : 0.92,
-    ),
-    highlight: isDark ? 'rgba(255,255,255,0.11)' : 'rgba(255,255,255,0.94)',
-    highlightSoft: isDark ? 'rgba(255,255,255,0.055)' : 'rgba(255,255,255,0.58)',
-    shadow: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(120,78,62,0.22)',
-    shadowSoft: isDark ? 'rgba(0,0,0,0.35)' : 'rgba(120,78,62,0.10)',
-    ambientA: withAlpha(colors.primary, isDark ? 0.18 : 0.14),
-    ambientB: withAlpha(colors.secondary, isDark ? 0.16 : 0.11),
+    raised: isDark ? colors.surfaceVariant : '#FFFFFF',
+    raisedAlt: isDark ? '#23232B' : '#F7F7FA',
+    sunken: isDark ? '#0B0B0E' : '#EDEDF2',
+    glass: withAlpha(isDark ? '#0C0C11' : '#FFFFFF', isDark ? 0.72 : 0.80),
+    glassStrong: withAlpha(isDark ? '#111116' : '#FFFFFF', isDark ? 0.97 : 0.98),
+    highlight: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.92)',
+    highlightSoft: isDark
+      ? 'rgba(255,255,255,0.07)'
+      : 'rgba(255,255,255,0.58)',
+    shadow: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.12)',
+    shadowSoft: isDark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.07)',
+    ambientA: withAlpha(colors.primary, isDark ? 0.16 : 0.10),
+    ambientB: withAlpha(colors.secondary, isDark ? 0.14 : 0.08),
   };
 }

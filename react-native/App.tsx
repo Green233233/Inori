@@ -1,6 +1,7 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   ActivityIndicator,
+  Animated,
   BackHandler,
   StatusBar,
   StyleSheet,
@@ -109,22 +110,45 @@ function AppShell({
   settings: AppSettings;
   onSettingsChange: (next: AppSettings) => void;
 }) {
-  const {colors} = useAppTheme();
   const insets = useSafeAreaInsets();
   const {refresh} = useJournalData();
   const [tab, setTab] = useState<MainTabKey>('home');
   const [stack, setStack] = useState<Route[]>([]);
+  const [closing, setClosing] = useState(false);
   const stackRef = useRef(stack);
   stackRef.current = stack;
+  const mainProgress = useRef(new Animated.Value(0)).current;
 
   const push = useCallback((route: Route) => {
+    setClosing(false);
     setStack(previous => [...previous, route]);
   }, []);
 
-  const pop = useCallback(() => {
+  const finishPop = useCallback(() => {
     setStack(previous => previous.slice(0, -1));
+    setClosing(false);
     refresh();
   }, [refresh]);
+
+  const pop = useCallback(() => {
+    setClosing(true);
+  }, []);
+
+  useEffect(() => {
+    Animated.timing(mainProgress, {
+      toValue: stack.length > 0 ? 1 : 0,
+      duration: 280,
+      useNativeDriver: true,
+    }).start();
+  }, [mainProgress, stack.length]);
+
+  useEffect(() => {
+    if (!closing) {
+      return;
+    }
+    const timer = setTimeout(finishPop, 240);
+    return () => clearTimeout(timer);
+  }, [closing, finishPop]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -141,14 +165,28 @@ function AppShell({
     });
     return () => sub.remove();
   }, [pop]);
-
   const top = stack.length > 0 ? stack[stack.length - 1] : null;
 
   return (
     <View style={styles.root}>
       <AmbientBackground />
-      <View
-        style={{flex: 1, paddingTop: insets.top}}
+      <Animated.View
+        style={{
+          flex: 1,
+          paddingTop: insets.top,
+          opacity: mainProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [1, 0.82],
+          }),
+          transform: [
+            {
+              scale: mainProgress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [1, 0.985],
+              }),
+            },
+          ],
+        }}
         importantForAccessibility={
           stack.length > 0 ? 'no-hide-descendants' : 'auto'
         }
@@ -163,10 +201,12 @@ function AppShell({
           onOpenSettings={() => push({name: 'settings'})}
           onOpenAbout={() => push({name: 'about'})}
         />
-      </View>
+      </Animated.View>
 
       {top ? (
-        <View style={StyleSheet.absoluteFill}>
+        <RouteLayer
+          key={`${top.name}-${'entryId' in top ? top.entryId : ''}`}
+          closing={closing}>
           <AmbientBackground />
           <View
             style={{
@@ -178,6 +218,7 @@ function AppShell({
                 category={top.category}
                 onBack={pop}
                 onOpenEntry={id => push({name: 'editor', entryId: id})}
+                onNewEntry={() => push({name: 'editor', entryId: 'new'})}
               />
             ) : null}
             {top.name === 'editor' ? (
@@ -203,9 +244,61 @@ function AppShell({
             ) : null}
             {top.name === 'licenses' ? <LicensesScreen onBack={pop} /> : null}
           </View>
-        </View>
+        </RouteLayer>
       ) : null}
     </View>
+  );
+}
+
+function RouteLayer({
+  children,
+  closing,
+}: {
+  children: React.ReactNode;
+  closing: boolean;
+}) {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(progress, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [progress]);
+
+  useEffect(() => {
+    if (!closing) {
+      return;
+    }
+    Animated.timing(progress, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [closing, progress]);
+
+  return (
+    <Animated.View
+      style={[
+        StyleSheet.absoluteFill,
+        {
+          opacity: progress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.5, 1],
+          }),
+          transform: [
+            {
+              translateX: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [26, 0],
+              }),
+            },
+          ],
+        },
+      ]}>
+      {children}
+    </Animated.View>
   );
 }
 

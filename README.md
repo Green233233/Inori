@@ -16,11 +16,11 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="GPLv3" /></a>
   <a href="https://developer.android.com/"><img src="https://img.shields.io/badge/Platform-Android%2029%2B-3DDC84.svg" alt="Android 29+" /></a>
-  <a href="#版本更新日志"><img src="https://img.shields.io/badge/Version-Alpha%20v0.5.1--react-orange.svg" alt="Alpha v0.5.1-react" /></a>
+  <a href="#版本更新日志"><img src="https://img.shields.io/badge/Version-Alpha%20v0.5.3--react-orange.svg" alt="Alpha v0.5.3-react" /></a>
 </p>
 
-> **分支说明**：本 `react` 分支使用 **React Native 0.88** 重构了应用界面，采用**轻拟物 + 毛玻璃质感**与**鲜活暖色撞色**设计，尽可能保持精简，并保留原有全部功能与布局结构；Jetpack Compose 版本保留在 `main` 分支。
-> 版本：**Alpha v0.5.1-react**（versionCode 7）。React Native 应用位于 [`react-native/`](react-native/)。
+> **分支说明**：本 `react` 分支使用 **React Native 0.88** 重构了应用界面，采用 **Apple Music「新发现」式黑底亮色、轻量玻璃与鲜明撞色** 设计，尽可能保持精简，并保留原有全部功能与布局结构；Jetpack Compose 版本保留在 `main` 分支。
+> 版本：**Alpha v0.5.3-react**（versionCode 8）。React Native 应用位于 [`react-native/`](react-native/)。
 
 ---
 
@@ -47,7 +47,7 @@
 
 项目英文名 **Inorinal** 来自 inori（祈）与 journal 的结合。应用内品牌名称为「祈」。关于页里有一句很私人的献词——那是作者写给最亲爱的人的。我们把这份温柔保留在开源仓库里，也希望使用者在自己的日常中，找到同样安静的角落。
 
-当前版本为 **Alpha v0.5.1-react**（React Native 重构版）。功能与 Compose 版本对齐，界面改为轻拟物、半透明磨砂与暖色撞色风格，仍属于 Alpha 迭代：交互会继续打磨，稳定性会继续加强，欢迎 Issue 与 Pull Request。
+当前版本为 **Alpha v0.5.3-react**（React Native 重构版）。功能与 Compose 版本对齐，界面改为黑底编辑感、轻量玻璃与鲜明撞色风格，仍属于 Alpha 迭代：交互会继续打磨，稳定性会继续加强，欢迎 Issue 与 Pull Request。
 
 ---
 
@@ -58,7 +58,7 @@
 | 平台 | Android 10（API 29）及以上 |
 | 数据 | 本地 JSON 条目库 + 本地媒体目录（`filesDir`），默认不上云 |
 | 编辑 | WebView 富文本编辑器（文字 / 涂鸦 / 照片 / 贴纸） |
-| 界面 | React Native 0.88，轻拟物 + 毛玻璃质感，鲜活暖色撞色，浅色 / 深色 / 跟随系统 |
+| 界面 | React Native 0.88，Apple Music 式鲜明撞色 + 轻量玻璃，浅色 / 深色 / 跟随系统 |
 | 备份 | ZIP 导出 / 导入，含条目媒体与用户贴纸库，兼容 Compose 版备份格式 |
 | 许可 | GNU General Public License v3.0 |
 
@@ -111,7 +111,7 @@
 ### React Native 重构说明（本分支）
 
 - 界面层从 Jetpack Compose 迁移到 **React Native 0.88**（TypeScript），保留首页 / 分类 / 收藏 / 我的四个标签页与全部全屏路由、编辑器布局与交互。
-- 视觉改为**轻拟物 + 毛玻璃 + 暖色撞色**：柔和双层描边营造轻拟物卡片，半透明与静态磨砂纹理模拟毛玻璃，珊瑚 / 蜜橘 / 芥末黄 / 松绿 / 莓紫等暖色块大胆撞色；保留樱粉 / 薄荷 / 长春花三套配色与深色模式，并刻意避开蓝紫科技渐变。为控制滚动与输入开销，未引入实时模糊，改用静态纹理、半透明层与 elevation。
+- 视觉改为 **Apple Music「新发现」式的黑底亮色、编辑感大字与青绿/红/蓝撞色**：分类磁贴、日期块与统计块使用高饱和实色，顶栏/底栏/工具 dock/Sheet 使用轻量静态玻璃；保留三套配色与深色模式，避开蓝紫科技渐变。全部图形图标改为 Nucleo Glass Icons（构建时栅格化）；动效使用原生驱动的 tab 指示器、按压、路由视差、Sheet 与列表入场。为控制滚动与输入开销，仍不启用实时 blur。
 - 数据层由 Room 改为**本地 JSON 条目 + 元数据索引 + 文件媒体目录**，保持 `journal-media://local/<entryId>/<file>` 引用格式，备份 ZIP（`manifest.json` 数组、`media/`、`stickers/`）与 Compose 版本互通。
 - 编辑器继续复用 `assets/editor` 下的原 WebView 前端（Atrament / Rough / Moveable）与 LXGW 文楷字体，通过 RN ↔ WebView 消息桥接驱动，功能未削减。
 - 原生侧仅保留一个小型桥接模块（文件、媒体压缩、图片选择、SAF 导入导出、媒体迁移）；无重量级 UI 依赖。
@@ -122,26 +122,28 @@
 ## 界面印象
 
 > 下列配图用于说明产品气质与信息架构，部分为示意合成图；实机界面以安装包为准。
+>
+> 更多截图与设计契约：[`design-language.md`](docs/react-refactor/design-language.md)、[`DESIGN.md`](DESIGN.md)、[`glass-icons.md`](docs/react-refactor/glass-icons.md)。
 
 ### 首页
 
-首页强调「一本本摊开的日子」：日期、标题、天气与心情一目了然，底部导航收敛为首页 / 分类 / 收藏 / 我的。
+首页采用 Apple Music「新发现」式编辑布局：左上品牌与日期、大字「今天」、高饱和分类轨道、今日 Hero 与最近条目；底部是浮动玻璃 dock。
 
 <p align="center">
-  <img src="docs/images/screenshot-home.png" alt="首页时间线示意" width="320" />
+  <img src="docs/react-refactor/screenshots/home-light.png" alt="首页时间线示意" width="320" />
 </p>
 
 ### 编辑页
 
-编辑页像一张铺开的纸。底部工具栏在「文字、涂鸦、照片、贴纸」之间切换；贴纸以绝对定位叠在纸面上，可随时再选中调整。
+编辑页保留一张可书写的纸：顶部玻璃栏、底部四工具 dock 与文字面板；贴纸仍可拖动、缩放、旋转。
 
 <p align="center">
-  <img src="docs/images/screenshot-editor.png" alt="编辑器与贴纸示意" width="320" />
+  <img src="docs/react-refactor/screenshots/editor-light.png" alt="编辑器与贴纸示意" width="320" />
 </p>
 
 ### 架构鸟瞰
 
-本地优先：Compose UI 负责导航与面板，Room 负责条目元数据，WebView 负责正文画布，文件系统负责图片与贴纸库，备份以 ZIP 打包上述内容。
+本地优先：React Native 负责导航与面板，JSON + 索引负责条目元数据，WebView 负责正文画布，文件系统负责图片与贴纸库，备份以 ZIP 打包上述内容。
 
 <p align="center">
   <img src="docs/images/architecture-overview.png" alt="架构示意：列表、编辑器、本地备份" width="100%" />
@@ -258,7 +260,7 @@ Inorinal/
 ├── react-native/                   # React Native 重构版（react 分支）
 │   ├── App.tsx                     # 导航 / 主题 / 数据 Provider
 │   ├── src/
-│   │   ├── components/             # 轻拟物卡片、玻璃面板、顶栏、对话框、图标
+│   │   ├── components/             # Pop 卡片、玻璃面板、顶栏、对话框、Glass Icons
 │   │   ├── data/                   # 条目库、HTML 处理、备份、设置
 │   │   ├── editor/                 # WebView 消息桥 shim
 │   │   ├── native/                 # Kotlin 原生模块的 TS 封装
@@ -308,10 +310,16 @@ Inorinal/
 
 完整历史见 [`CHANGELOG.md`](CHANGELOG.md)。
 
+### Alpha v0.5.3-react（UI 升级）
+
+- 视觉重做为 **Apple Music「新发现」式鲜明撞色 + 轻量玻璃**：黑底/冷白编辑感、大标题、分类磁贴、浮动玻璃 dock；三套配色为草莓波普 / 青柠电流 / 电光蓝调
+- 全部图形图标替换为 Nucleo Glass Icons（构建时栅格化，浅/深两套）；新增 tab 指示器、按压、收藏弹跳、路由视差、Sheet、stagger、骨架与 count-in 动效
+- 新增 `DESIGN.md` 设计契约与 Apple Music 参考重建稿
+
 ### Alpha v0.5.1-react（React Native 重构版）
 
 - 界面层迁移到 React Native 0.88 + TypeScript，保留四个标签页、全屏路由与编辑器布局
-- 全新**轻拟物 + 毛玻璃 + 暖色撞色**视觉；沿用樱粉 / 薄荷 / 长春花三套配色与深色模式
+- 初版 React Native 视觉（轻拟物 + 暖色），后续由 v0.5.3 替换
 - 全部功能保留：日记 CRUD、天气/心情/分类、搜索、收藏、分类浏览、JSON/媒体备份导入导出、贴纸库与自由贴纸、涂鸦、照片、字体与颜色、空内容覆盖保护
 - 数据层改为本地 JSON + 索引 + 媒体目录，备份 ZIP 与 Compose 版互通
 - 新增旧版 Room 日记只读迁移；保存时按 SHA-256 去重媒体文件，消除重复落盘
@@ -356,5 +364,5 @@ Alpha 阶段可能探索的方向包括：更细的排版样式、贴纸与文�
 ---
 
 **仓库：** [github.com/Green233233/Inorinal](https://github.com/Green233233/Inorinal)  
-**当前版本：** Alpha v0.5.1-react（React Native 重构版）  
+**当前版本：** Alpha v0.5.3-react（React Native 重构版）  
 **许可证：** GPL-3.0

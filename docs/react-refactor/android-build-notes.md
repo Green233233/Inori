@@ -1,6 +1,6 @@
 # RN rewrite — Android build notes
 
-Status: **complete for Alpha v0.5.1-react** — debug + release APKs build on Windows; both were
+Status: **complete for Alpha v0.5.3-react (UI upgrade)** — debug + release APKs build on Windows; both were
 installed and exercised on an API 36 emulator (Pixel_9_Pro). Owner: Lead (build/verification).
 
 ## Dependency versions
@@ -27,7 +27,7 @@ installed and exercised on an API 36 emulator (Pixel_9_Pro). Owner: Lead (build/
 ## App configuration
 
 - namespace `com.inorinal`, applicationId `com.green.inorinal`.
-- versionCode `7`, versionName `Alpha v0.5.1-react`.
+- versionCode `8`, versionName `Alpha v0.5.3-react`.
 - label `祈`; Compose adaptive icon vectors copied verbatim.
 - `allowBackup="false"`, `supportsRtl="true"`, `windowSoftInputMode="adjustResize"`.
 - Release build currently signs with the template **debug keystore** (Alpha build; not for store

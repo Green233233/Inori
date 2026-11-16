@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import {useAppTheme} from '../theme/AppThemeProvider';
 import {withAlpha} from '../theme/palette';
-import {Icon} from '../components/Icon';
+import {GlassIcon} from '../components/GlassIcon';
 import {TopBar} from '../components/TopBar';
 import {AppDialog, AppSheet, Divider, TextButton} from '../components/Ui';
 import {SoftCard} from '../components/Surfaces';
@@ -24,7 +24,7 @@ import {
   THEME_MODE_ORDER,
   ThemeMode,
 } from '../data/types';
-import {clearLogs, setDebugEnabled, currentLogPath} from '../debug/logger';
+import {clearLogs, setDebugEnabled} from '../debug/logger';
 import {logEvent} from '../debug/logger';
 
 const FONT_OPTIONS = [
@@ -59,11 +59,12 @@ export function SettingsScreen({
 
   return (
     <View style={styles.root}>
-      <TopBar title="设置" onBack={onBack} />
+      <TopBar title="设置" onBack={onBack} titleSize={28} />
       <ScrollView
         contentContainerStyle={{
           padding: tokens.contentPadding,
-          paddingBottom: 32,
+          paddingTop: 8,
+          paddingBottom: 40,
         }}>
         <Group title="界面设置">
           <Row
@@ -145,10 +146,11 @@ export function SettingsScreen({
                 }
               }}
               trackColor={{
-                false: withAlpha(colors.outline, 0.5),
+                false: withAlpha(colors.outline, 0.6),
                 true: colors.primary,
               }}
               thumbColor="#FFFFFF"
+              ios_backgroundColor={withAlpha(colors.outline, 0.6)}
             />
           </View>
           <Divider color={withAlpha(colors.outline, 0.3)} />
@@ -246,18 +248,9 @@ export function SettingsScreen({
                 }}>
                 {option.label}
               </Text>
-              <Icon
-                name={
-                  pendingFont === option.value
-                    ? 'radio_button_checked'
-                    : 'radio_button_unchecked'
-                }
+              <GlassIcon
+                name={pendingFont === option.value ? 'check' : 'circle'}
                 size={22}
-                color={
-                  pendingFont === option.value
-                    ? colors.primary
-                    : colors.onSurfaceVariant
-                }
               />
             </Pressable>
           ))}
@@ -346,7 +339,7 @@ function Row({
           {value}
         </Text>
       ) : null}
-      <Icon name="chevron_right" size={20} color={colors.onSurfaceVariant} />
+      <GlassIcon name="chevronRight" size={22} />
     </Pressable>
   );
 }
@@ -372,11 +365,7 @@ function OptionRow({
       <Text style={[styles.rowLabel, {color: colors.onSurface, flex: 1}]}>
         {label}
       </Text>
-      <Icon
-        name={selected ? 'radio_button_checked' : 'radio_button_unchecked'}
-        size={22}
-        color={selected ? colors.primary : colors.onSurfaceVariant}
-      />
+      <GlassIcon name={selected ? 'check' : 'circle'} size={22} />
     </Pressable>
   );
 }
@@ -384,20 +373,22 @@ function OptionRow({
 const styles = StyleSheet.create({
   root: {flex: 1},
   groupTitle: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6,
     marginBottom: 8,
     paddingLeft: 4,
+    opacity: 0.9,
   },
-  groupCard: {borderRadius: 12, overflow: 'hidden'},
+  groupCard: {borderRadius: 16, overflow: 'hidden'},
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 15,
+    paddingVertical: 16,
     gap: 8,
   },
-  rowLabel: {fontSize: 16, flex: 1},
+  rowLabel: {fontSize: 15, flex: 1, fontWeight: '500'},
   rowValue: {fontSize: 14},
   rowSubtitle: {fontSize: 12, marginTop: 2},
   switchRow: {

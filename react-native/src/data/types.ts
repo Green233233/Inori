@@ -79,14 +79,14 @@ export const CATEGORY_LABEL: Record<Category, string> = {
 
 /** CategoryScreen used "情感" for EMOTION (label divergence); one canonical
  * label ("情绪") is used here, matching JournalCard/Editor/CategoryEntries. */
-export const CATEGORY_ICON: Record<Category, string> = {
-  ALL: 'menu_book',
-  DAILY: 'wb_sunny',
-  WORK: 'work',
-  GOAL: 'track_changes',
-  INSPIRATION: 'lightbulb',
-  EMOTION: 'favorite',
-};
+export const CATEGORY_ICON = {
+  ALL: 'categoryAll',
+  DAILY: 'categoryDaily',
+  WORK: 'categoryWork',
+  GOAL: 'categoryGoal',
+  INSPIRATION: 'categoryInspiration',
+  EMOTION: 'categoryEmotion',
+} as const satisfies Record<Category, string>;
 
 export const CATEGORY_ORDER: Category[] = [
   'ALL',
@@ -153,9 +153,9 @@ export type ColorStyle = 'SAKURA' | 'MINT' | 'PERIWINKLE' | 'SYSTEM';
 export type ThemeMode = 'LIGHT' | 'DARK' | 'SYSTEM';
 
 export const COLOR_STYLE_LABEL: Record<ColorStyle, string> = {
-  SAKURA: '樱花粉',
-  MINT: '薄荷绿',
-  PERIWINKLE: '长春花色',
+  SAKURA: '草莓波普',
+  MINT: '青柠电流',
+  PERIWINKLE: '电光蓝调',
   SYSTEM: '跟随系统',
 };
 

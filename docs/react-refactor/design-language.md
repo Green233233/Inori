@@ -1,81 +1,67 @@
-# 视觉语言：轻拟物 + 毛玻璃 + 暖色撞色
+# 视觉语言：Apple Music「新发现」式鲜明撞色 + 轻量玻璃
 
-本文件记录 `react` 分支最终采用的视觉方向、设计 token 与性能取舍，作为
-`ui-spec.md` / `profile-spec.md` / `editor-spec.md` 在配色与材质方面的补充。
-早期版本曾采用扁平色块，现已整体替换。
+本分支（`react`）的视觉方向以 Apple Music CN「新发现」页为参考，但不复制其商标、Logo 或专辑资产。目标是：**黑底编辑感、明亮饱和度、青春撞色、克制的玻璃层**；同时明显避开「蓝紫 AI 科技风」和上一版的暖米色纸感。
 
-## 目标与约束
+设计契约见根目录 [`DESIGN.md`](../../DESIGN.md)；Apple Music 参考重建稿见 [`docs/design-references/apple-music-cn-new.DESIGN.md`](../design-references/apple-music-cn-new.DESIGN.md)。
 
-- **轻拟物**：卡片、按钮、日期块像微微浮起的纸片/亚克力片，而不是纯色平面。
-- **毛玻璃**：顶栏、底栏、编辑工具栏、底部弹层、对话框呈现半透明磨砂质感。
-- **有活力的撞色**：珊瑚红、蜜橘、芥末黄、松绿、莓紫等暖色大胆并置，避免灰扑扑。
-- **不做 AI 味蓝紫科技风**：不使用蓝紫渐变、霓虹光晕、玻璃拟态常见的青紫辉光；
-  深色主题使用可可棕 / 森林绿 / 深莓紫，底色偏暖。
-- **性能优先**：不引入实时模糊（RenderEffect / RenderScript / BlurView），
-  用静态纹理 + 半透明 + elevation 模拟景深，保证滚动和 WebView 输入流畅。
+## 核心原则
+
+1. **黑/白是舞台，颜色是内容**：深色 `#050507`、浅色 `#F5F5F7`；高饱和红、蓝、青、黄绿只用于分类、日期、统计、主 CTA 与 hero。
+2. **编辑式大标题**：页面标题 30–34px/700，左对齐；分区标题 20px/700；正文 15/20；说明 12/16；导航标签 11/14。
+3. **玻璃是 chrome，不是背景**：浮动 dock、顶栏、工具 dock、Sheet、Dialog 才使用半透明玻璃；列表卡片是实色 surface + 1px separator。
+4. **轻量但可读的 Glass Icons**：Nucleo Glass 的 42 个图标在构建时栅格化为浅/深两套 PNG；颜色由所在色块提供。极小尺寸的辅助信息改用文字 pill，避免玻璃图标缩成圆点。
+5. **动效只服务反馈与空间关系**：按压、tab、路由、sheet、收藏、列表入场；全部 transform/opacity、原生驱动、可被系统 reduce-motion 关闭。
 
 ## 色板
 
-三套配色，每套含浅色/深色两版（`src/theme/palette.ts`）：
+| 语义 | 深色 | 浅色 |
+|---|---|---|
+| canvas | `#050507` | `#F5F5F7` |
+| surface | `#121216` | `#FFFFFF` |
+| elevated | `#1C1C22` | `#FFFFFF` |
+| ink | `#F5F5F7` | `#111114` |
+| muted | `#A1A1AA` | `#6E6E73` |
+| separator | `rgba(255,255,255,.12)` | `rgba(0,0,0,.08)` |
+| primary | `#FF2D55` | `#FA2D48` |
+| blue | `#0A84FF` | `#007AFF` |
+| cyan | `#32D7FF` | `#00B8D9` |
+| lime | `#C6FF3D` | `#65C400` |
+| yellow | `#FFD60A` | `#F5C200` |
+| green | `#28CD41` | `#1DB954` |
 
-| 风格 | 浅色主色 | 浅色点缀 | 深色主色 | 深色底色 |
-| --- | --- | --- | --- | --- |
-| 樱花粉 SAKURA | `#D6435B` 珊瑚红 | `#F08A3C` 蜜橘 / `#2A9D8F` 松绿 | `#FF8B9B` | `#21141A` 可可 |
-| 薄荷绿 MINT | `#128F78` 松石绿 | `#E4572E` 朱砂 / `#F2B705` 芥末 | `#6FE0C0` | `#12201B` 森林 |
-| 长春花 PERIWINKLE | `#8C3F63` 莓紫 | `#2A9D8F` 松绿 / `#F2B705` 芥末 | `#F2A9C6` | `#22141F` 深莓 |
+分类：全部蓝、日常黄、工作橙、目标绿、灵感粉、情绪青。统计：日记红、连续青、收藏黄绿。
 
-配套 token：
+## 形状与间距
 
-- `background` 暖纸底色（米白 / 奶油 / 象牙）
-- `surface` 更亮的卡片纸色
-- `surfaceVariant` 次级纸色
-- `primaryContainer` 用于日期块、头像、About 图标等实色色块
-- `outline` 低对比暖灰描边
+- 圆角：8 小控件 / 12 小卡 / 16–18 卡片 / 20 hero / 26–28 浮动 dock / 999 pill。
+- 间距：4、8、12、16、20、24、28、32、40；页面 gutter 16（窄屏 12）。
+- 深度：深色主要靠 surface 层级和 separator；浅色可用极轻 elevation，但不使用暖色投影或双层拟物描边。
 
-分类色块使用固定的暖色 accent（`CATEGORY_ACCENT`）：全部松绿、日常芥末、
-工作朱砂、目标松石、灵感珊瑚、情绪莓紫。统计色块同理：日记珊瑚、连续蜜橘、
-收藏芥末。
+## 玻璃
 
-## 材质 token
+`GlassSurface` = 半透明 fill + 静态 frost texture + 1px 高光边。**不使用实时 backdrop blur**：Apple Music 的 `blur(60px)` 在 RN/Android 上会带来持续离屏合成成本，本项目用静态纹理模拟。玻璃只出现在导航、工具 dock、Sheet、Dialog 和少量顶栏。
 
-`buildSurfaces(colors, isDark)` 派生：
+## 动效
 
-| Token | 浅色 | 深色 | 用途 |
-| --- | --- | --- | --- |
-| `raised` | 纸底向白混 82% | surface 向白混 6% | 卡片、底板 |
-| `raisedAlt` | surfaceVariant 向白混 55% | surface 向黑混 14% | 次级块 |
-| `sunken` | 纸底向暖棕混 10% | 纸底向黑混 24% | 按下/凹陷、搜索框 |
-| `glass` | surface→primary 3.5% + alpha 56% | 同色 + alpha 66% | 顶栏/底栏 |
-| `glassStrong` | 同色 + alpha 92% | 同色 + alpha 94% | 弹层/对话框/工具栏 |
-| `highlight` | `rgba(255,255,255,.94)` | `rgba(255,255,255,.11)` | 上/左边高光 |
-| `shadow` | `rgba(120,78,62,.22)` | `rgba(0,0,0,.55)` | 下/右边阴影 |
-| `ambientA/B` | primary / secondary 低透明 | 同色更低透明 | 环境光斑 |
+参数集中在 `src/theme/motion.ts`：
 
-## 组件实现
+| 场景 | 动效 | 参数 |
+|---|---|---|
+| 底部 tab | Liquid tab indicator | spring，indicator translateX |
+| 卡片按下 | 轻缩放 | 140ms，scale 0.975 |
+| 收藏 | 心形弹跳 | spring 1→1.28→1 |
+| 页面 push/pop | Back Parallax | 300/220ms，translateX + 底层 scale |
+| 搜索 | 淡入下滑 | 180ms |
+| Sheet | scrim + translateY | 240ms，native driver |
+| 列表首次出现 | Stagger Settle | 40ms 间隔，最多 6 项 |
+| 骨架 | opacity pulse | 900ms，load 后停止 |
+| 统计 | count-in | 450ms，一次 |
 
-- `AmbientBackground`：一张 256px 径向光晕 PNG（`src/assets/glow.png`）用
-  `tintColor` 染成主题色，叠 2~3 次形成柔和环境光；不使用渐变库或动画。
-- `SoftCard`：1px 上/左高光 + 1px 下/右阴影 + elevation 1~2 + 顶部 38% 微高光；
-  按下时翻转为凹陷（背景 `sunken`、elevation 0、描边互换）。
-- `GlassSurface`：半透明底色 + 64px 磨砂噪点纹理（`src/assets/frost.png`，
-  `resizeMode="repeat"`）+ 顶部高光 + 底边细线 + elevation。
-  只用于少数条/面板/弹层，不铺在列表卡片上。
-- 顶栏/底栏去掉左右和外侧描边，只留底/顶细线，避免出现“白色相框”。
-- 底部弹层与对话框使用 `glassStrong`（92%+），保证文字可读；背景内容只轻微透出。
+所有循环动画在卸载时停止；reduce-motion 下改为短淡入/静态。
 
-## 性能取舍
+## 性能约束
 
-- Android 的 `shadowColor/Offset` 不可靠，统一用 `elevation` + 双色描边表达轻拟物。
-- 不使用实时高斯模糊：省掉逐帧离屏渲染和 RenderScript/RenderEffect 兼容分支。
-- 磨砂纹理为 64×64 PNG 平铺，内存占用极小；光晕为单张 256×256 PNG。
-- 玻璃面板只在顶栏、底栏、编辑工具栏、Sheet、Dialog 出现，数量有限；
-  列表卡片仅 elevation，无 blur、无动画。
-- 所有按压反馈均为颜色/ elevation 变化，不做弹簧/缩放动画。
-
-## 相关文件
-
-- `src/theme/palette.ts`（色板 + surface tokens）
-- `src/theme/AppThemeProvider.tsx`（注入 colors/surfaces）
-- `src/components/Surfaces.tsx`（AmbientBackground / SoftCard / GlassSurface）
-- `src/assets/glow.png`、`src/assets/frost.png`
-- 各屏幕与 `JournalCard`、`TopBar`、`Ui` 的样式
+- 不引入实时模糊、不在动画里改 layout/paint、不做 scroll 驱动的 JS 动画。
+- 图标是构建时 PNG，不运行时渲染 SVG filter。
+- 列表动效只做首屏一次；长列表不逐项常驻动画。
+- 视觉验收与性能验收同时通过才算完成。

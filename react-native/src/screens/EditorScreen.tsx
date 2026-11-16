@@ -1,7 +1,6 @@
 import React, {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -26,8 +25,10 @@ import {WebView as RNWebView} from 'react-native-webview';
 // type here so the screen stays type-checkable.
 const WebView: any = RNWebView;
 import {useAppTheme} from '../theme/AppThemeProvider';
-import {withAlpha} from '../theme/palette';
-import {Icon} from '../components/Icon';
+import {onAccentFor, withAlpha} from '../theme/palette';
+import {Z} from '../theme/zIndex';
+import {GlassIcon} from '../components/GlassIcon';
+import {GlassIconName} from '../components/glass-icons.generated';
 import {AppSheet, AppDialog, TextButton, FlatButton} from '../components/Ui';
 import {GlassSurface} from '../components/Surfaces';
 import {showToast} from '../components/toast';
@@ -147,27 +148,27 @@ function formatBrushSize(value: number): string {
   return value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-function weatherIcon(weather: Weather): string {
+function weatherIcon(weather: Weather): GlassIconName {
   switch (weather) {
     case 'RAINY':
-      return 'water_drop';
+      return 'weatherRain';
     case 'CLOUDY':
-      return 'cloud';
+      return 'weatherCloud';
     case 'NIGHT_CLEAR':
-      return 'nights_stay';
+      return 'weatherNight';
     default:
-      return 'wb_sunny';
+      return 'weatherSun';
   }
 }
 
-function moodIcon(mood: Mood): string {
+function moodIcon(mood: Mood): GlassIconName {
   switch (mood) {
     case 'SAD':
-      return 'sentiment_very_dissatisfied';
+      return 'moodSad';
     case 'HAPPY':
-      return 'sentiment_very_satisfied';
+      return 'moodHappy';
     default:
-      return 'sentiment_neutral';
+      return 'moodNeutral';
   }
 }
 
@@ -184,7 +185,9 @@ export function EditorScreen({
   const insets = useSafeAreaInsets();
   const webRef = useRef<any>(null);
   const [loaded, setLoaded] = useState(false);
-  const [pageReady, setPageReady] = useState(false);  const [title, setTitle] = useState('');
+  const [pageReady, setPageReady] = useState(false);
+  const [contentDrawn, setContentDrawn] = useState(false);
+  const [title, setTitle] = useState('');
   const [weather, setWeather] = useState<Weather>('SUNNY');
   const [mood, setMood] = useState<Mood>('HAPPY');
   const [category, setCategory] = useState<Category>('DAILY');
@@ -394,6 +397,17 @@ export function EditorScreen({
     }
   }, [loaded, flushPending]);
 
+  // Keep a calm veil over the blank WebView until its first paint is likely
+  // done. The editor usually posts `content`; this is the safety net for an
+  // empty/new page and slower devices.
+  useEffect(() => {
+    if (!loaded || !pageReady) {
+      return;
+    }
+    const timer = setTimeout(() => setContentDrawn(true), 1200);
+    return () => clearTimeout(timer);
+  }, [loaded, pageReady]);
+
   /* ---------------------------------------------------------------- */
   /* Save                                                             */
   /* ---------------------------------------------------------------- */
@@ -574,6 +588,7 @@ export function EditorScreen({
           break;
         case 'content':
           contentRef.current = String(data.html ?? '');
+          setContentDrawn(true);
           scheduleSave();
           break;
         case 'imageClick':
@@ -703,12 +718,13 @@ export function EditorScreen({
   }, [doSave]);
 
   useEffect(() => {
+    const replies = repliesRef.current;
     return () => {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
-      repliesRef.current.forEach(finish => finish(undefined));
-      repliesRef.current.clear();
+      replies.forEach(finish => finish(undefined));
+      replies.clear();
     };
   }, []);
 
@@ -787,7 +803,7 @@ export function EditorScreen({
             hitSlop={8}
             onPress={saveAndExit}
             style={styles.topIcon}>
-            <Icon name="arrow_back" size={24} color={colors.onSurface} />
+            <GlassIcon name="back" size={24} />
           </Pressable>
           <TextInput
             value={title}
@@ -815,8 +831,7 @@ export function EditorScreen({
               invoke('toggleDoodleMode', false);
             }}
             style={styles.metaButton}>
-            <Icon name={weatherIcon(weather)} size={18} color={colors.primary} />
-            <Icon name={moodIcon(mood)} size={18} color={colors.primary} />
+            <GlassIcon name="info" size={22} />
           </Pressable>
         </View>
       </GlassSurface>
@@ -858,7 +873,7 @@ export function EditorScreen({
           }
         />
 
-        {!loaded || !pageReady ? (
+        {!loaded || !pageReady || !contentDrawn ? (
           <View
             style={[
               styles.loadingOverlay,
@@ -883,7 +898,7 @@ export function EditorScreen({
               left: 0,
               right: 0,
               bottom: 0,
-              zIndex: 2,
+              zIndex: Z.dock,
             }}>
             {toolbar === 'text' ? (
               <TextToolbar
@@ -965,28 +980,28 @@ export function EditorScreen({
           ]}>
           <ToolbarTab
             label="文字"
-            icon="text_fields"
+            icon="text"
             active={toolbar === 'text'}
             colors={colors}
             onPress={() => toggleToolbar('text')}
           />
           <ToolbarTab
             label="涂鸦"
-            icon="brush"
+            icon="doodle"
             active={toolbar === 'doodle'}
             colors={colors}
             onPress={() => toggleToolbar('doodle')}
           />
           <ToolbarTab
             label="照片"
-            icon="add_photo_alternate"
+            icon="photo"
             active={false}
             colors={colors}
             onPress={pickPhoto}
           />
           <ToolbarTab
             label="贴纸"
-            icon="auto_awesome"
+            icon="sticker"
             active={toolbar === 'sticker'}
             colors={colors}
             onPress={() => toggleToolbar('sticker')}
@@ -1025,7 +1040,7 @@ export function EditorScreen({
               }}
             />
             <MenuItem
-              icon="dashboard"
+              icon="category"
               label="分类"
               color={colors.onSurface}
               iconColor={colors.primary}
@@ -1170,7 +1185,7 @@ function ToolbarTab({
   onPress,
 }: {
   label: string;
-  icon: string;
+  icon: GlassIconName;
   active: boolean;
   colors: {primary: string; onSurfaceVariant: string};
   onPress: () => void;
@@ -1179,22 +1194,24 @@ function ToolbarTab({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{selected: active}}
       onPress={onPress}
       style={styles.toolbarTab}>
       <View
         style={[
           styles.toolbarPill,
-          active && {backgroundColor: withAlpha(colors.primary, 0.12)},
+          active && {backgroundColor: colors.primary},
         ]}>
-        <Icon
+        <GlassIcon
           name={icon}
           size={22}
-          color={active ? colors.primary : colors.onSurfaceVariant}
+          tone={active ? 'onAccent' : 'auto'}
         />
       </View>
       <Text
         style={{
           fontSize: 10,
+          fontWeight: '600',
           color: active ? colors.primary : colors.onSurfaceVariant,
         }}>
         {label}
@@ -1229,6 +1246,16 @@ function TextToolbar({
         ].map(item => (
           <Pressable
             key={item.cmd}
+            accessibilityRole="button"
+            accessibilityLabel={
+              item.cmd === 'bold'
+                ? '粗体'
+                : item.cmd === 'italic'
+                ? '斜体'
+                : item.cmd === 'underline'
+                ? '下划线'
+                : '删除线'
+            }
             onPress={() => onCmd(item.cmd)}
             style={({pressed}) => [
               styles.formatButton,
@@ -1255,19 +1282,35 @@ function TextToolbar({
         ))}
         <View style={styles.panelGap} />
         {[
-          {icon: 'format_align_left', cmd: 'justifyLeft'},
-          {icon: 'format_align_center', cmd: 'justifyCenter'},
-          {icon: 'format_align_right', cmd: 'justifyRight'},
-          {icon: 'undo', cmd: 'undo'},
-          {icon: 'redo', cmd: 'redo'},
+          {label: '左', cmd: 'justifyLeft', a11y: '左对齐'},
+          {label: '中', cmd: 'justifyCenter', a11y: '居中对齐'},
+          {label: '右', cmd: 'justifyRight', a11y: '右对齐'},
         ].map(item => (
           <Pressable
             key={item.cmd}
+            accessibilityRole="button"
+            accessibilityLabel={item.a11y}
             onPress={() => onCmd(item.cmd)}
             style={styles.smallIconButton}>
-            <Icon name={item.icon} size={19} color={colors.onSurfaceVariant} />
+            <Text style={{fontSize: 14, color: colors.onSurfaceVariant}}>
+              {item.label}
+            </Text>
           </Pressable>
         ))}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="撤销"
+          onPress={() => onCmd('undo')}
+          style={styles.smallIconButton}>
+          <GlassIcon name="undo" size={19} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="重做"
+          onPress={() => onCmd('redo')}
+          style={styles.smallIconButton}>
+          <GlassIcon name="redo" size={19} />
+        </Pressable>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         <View style={[styles.panelRow, {paddingVertical: 6}]}>
@@ -1517,7 +1560,7 @@ function StickerPanel({
                 : 'transparent',
             },
           ]}>
-          <Icon name="add_photo_alternate" size={18} color={colors.primary} />
+          <GlassIcon name="photo" size={18} />
           <Text style={{fontSize: 13, color: colors.primary, fontWeight: '600'}}>
             导入贴纸
           </Text>
@@ -1598,7 +1641,7 @@ function ChoiceChip({
   onPress,
   small,
 }: {
-  icon?: string;
+  icon?: GlassIconName;
   label: string;
   selected: boolean;
   colors: any;
@@ -1615,26 +1658,26 @@ function ChoiceChip({
         {
           borderColor: selected ? colors.primary : withAlpha(colors.outline, 0.4),
           backgroundColor: selected
-            ? withAlpha(colors.primary, 0.14)
+            ? colors.primary
             : pressed
-            ? withAlpha(colors.primary, 0.06)
+            ? withAlpha(colors.primary, 0.08)
             : 'transparent',
           paddingVertical: small ? 6 : 9,
           paddingHorizontal: small ? 10 : 13,
         },
       ]}>
       {icon ? (
-        <Icon
+        <GlassIcon
           name={icon}
           size={small ? 15 : 18}
-          color={selected ? colors.primary : colors.onSurfaceVariant}
+          tone={selected ? 'onAccent' : 'auto'}
         />
       ) : null}
       <Text
         style={{
           fontSize: small ? 12 : 14,
-          color: selected ? colors.primary : colors.onSurface,
-          fontWeight: selected ? '600' : '400',
+          color: selected ? onAccentFor(colors.primary) : colors.onSurface,
+          fontWeight: selected ? '700' : '400',
         }}>
         {label}
       </Text>
@@ -1650,10 +1693,9 @@ function MenuItem({
   icon,
   label,
   color,
-  iconColor,
   onPress,
 }: {
-  icon: string;
+  icon: GlassIconName;
   label: string;
   color: string;
   iconColor: string;
@@ -1662,12 +1704,13 @@ function MenuItem({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
       onPress={onPress}
       style={({pressed}) => [
         styles.menuItem,
         pressed && {backgroundColor: 'rgba(0,0,0,0.04)'},
       ]}>
-      <Icon name={icon} size={20} color={iconColor} />
+      <GlassIcon name={icon} size={20} />
       <Text style={{fontSize: 15, color}}>{label}</Text>
     </Pressable>
   );
@@ -1706,28 +1749,28 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 3,
+    zIndex: Z.sticky,
   },
   webview: {flex: 1, backgroundColor: 'transparent'},
   bottomBar: {
     flexDirection: 'row',
+    paddingTop: 8,
+    paddingHorizontal: 10,
+    gap: 4,
     borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 6,
+    borderTopColor: 'rgba(255,255,255,0.10)',
   },
-  toolbarTab: {flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 2},
+  toolbarTab: {flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 2, gap: 2},
   toolbarPill: {
-    width: 52,
-    height: 30,
-    borderRadius: 15,
+    width: 44,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
   panel: {
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    padding: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(0,0,0,0.08)',
+    borderRadius: 20,
+    padding: 12,
   },
   panelRow: {flexDirection: 'row', alignItems: 'center', gap: 6},
   panelGap: {width: 8},

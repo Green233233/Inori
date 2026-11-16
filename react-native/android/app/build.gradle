@@ -101,8 +101,8 @@ android {
         applicationId "com.green.inorinal"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 7
-        versionName "Alpha v0.5.1-react"
+        versionCode 8
+        versionName "Alpha v0.5.3-react"
     }
     signingConfigs {
         debug {

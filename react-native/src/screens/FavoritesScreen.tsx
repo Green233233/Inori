@@ -2,18 +2,22 @@ import React, {useState} from 'react';
 import {FlatList, StyleSheet, Text, View} from 'react-native';
 import {useAppTheme} from '../theme/AppThemeProvider';
 import {withAlpha} from '../theme/palette';
-import {Icon} from '../components/Icon';
+import {type} from '../theme/typography';
+import {GlassIcon} from '../components/GlassIcon';
 import {JournalCard} from '../components/JournalCard';
 import {TopBar} from '../components/TopBar';
-import {AppDialog} from '../components/Ui';
+import {AppDialog, TextButton} from '../components/Ui';
+import {StaggerReveal} from '../motion/StaggerReveal';
 import {useJournalData} from '../data/JournalDataProvider';
 import {deleteEntry, setFavorite} from '../data/storage';
 import {EntrySummary} from '../data/types';
 
 export function FavoritesScreen({
   onOpenEntry,
+  onNewEntry,
 }: {
   onOpenEntry: (id: string) => void;
+  onNewEntry?: () => void;
 }) {
   const {colors, tokens} = useAppTheme();
   const {favorites, loading, refresh} = useJournalData();
@@ -21,24 +25,28 @@ export function FavoritesScreen({
 
   return (
     <View style={styles.root}>
-      <TopBar title="收藏" />
+      <TopBar title="收藏" titleSize={28} />
       {favorites.length === 0 && !loading ? (
         <View style={styles.emptyWrap}>
-          <Icon
-            name="favorite_border"
-            size={tokens.emptyIconSize}
-            color={withAlpha(colors.onSurfaceVariant, 0.5)}
-          />
+          <View
+            style={[
+              styles.iconBubble,
+              {backgroundColor: withAlpha('#FF375F', 0.18)},
+            ]}>
+            <GlassIcon name="favorite" size={42} />
+          </View>
+          <Text style={[type.headline, {color: colors.onSurface}]}>
+            还没有收藏
+          </Text>
           <Text
             style={[
+              type.body,
               styles.emptyText,
-              {
-                color: colors.onSurfaceVariant,
-                fontSize: tokens.isNarrow ? 14 : 16,
-              },
+              {color: colors.onSurfaceVariant},
             ]}>
-            收藏的日记将显示在这里
+            把喜欢的日记收进来，随时回看。
           </Text>
+          {onNewEntry ? <TextButton label="写一篇" onPress={onNewEntry} /> : null}
         </View>
       ) : (
         <FlatList
@@ -46,19 +54,21 @@ export function FavoritesScreen({
           keyExtractor={item => item.id}
           contentContainerStyle={{
             padding: tokens.contentPadding,
-            paddingTop: 12,
-            paddingBottom: 24,
+            paddingTop: 8,
+            paddingBottom: 96,
             gap: tokens.listSpacing,
           }}
-          renderItem={({item}) => (
-            <JournalCard
-              entry={item}
-              onPress={() => onOpenEntry(item.id)}
-              onFavorite={() => {
-                setFavorite(item.id, !item.isFavorite).then(refresh);
-              }}
-              onDelete={() => setDeleteTarget(item)}
-            />
+          renderItem={({item, index}) => (
+            <StaggerReveal index={index}>
+              <JournalCard
+                entry={item}
+                onPress={() => onOpenEntry(item.id)}
+                onFavorite={() => {
+                  setFavorite(item.id, !item.isFavorite).then(refresh);
+                }}
+                onDelete={() => setDeleteTarget(item)}
+              />
+            </StaggerReveal>
           )}
         />
       )}
@@ -88,6 +98,20 @@ export function FavoritesScreen({
 
 const styles = StyleSheet.create({
   root: {flex: 1},
-  emptyWrap: {flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24},
+  emptyWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    gap: 10,
+  },
+  iconBubble: {
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
   emptyText: {textAlign: 'center'},
 });

@@ -1,5 +1,6 @@
-import React from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {
+  Animated,
   Modal,
   Pressable,
   StyleSheet,
@@ -8,9 +9,15 @@ import {
   ViewStyle,
 } from 'react-native';
 import {useAppTheme} from '../theme/AppThemeProvider';
-import {withAlpha} from '../theme/palette';
-import {Icon} from './Icon';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {onAccentFor} from '../theme/palette';
+import {DURATION, EASE, USE_NATIVE_DRIVER} from '../theme/motion';
+import {type} from '../theme/typography';
+import {GlassIcon} from './GlassIcon';
+import {GlassIconName} from './glass-icons.generated';
 import {GlassSurface} from './Surfaces';
+import {useReducedMotion} from '../motion/useReducedMotion';
+import {usePressScale} from '../motion/usePressScale';
 
 /* ------------------------------------------------------------------ */
 /* Buttons                                                             */
@@ -28,40 +35,44 @@ export function FlatButton({
   label: string;
   onPress: () => void;
   disabled?: boolean;
-  icon?: string;
+  icon?: GlassIconName;
   style?: ViewStyle;
   textColor?: string;
   backgroundColor?: string;
 }) {
-  const {colors, surfaces, isDark} = useAppTheme();
+  const {colors} = useAppTheme();
+  const press = usePressScale({pressedScale: 0.97});
   const fg = textColor ?? colors.onPrimary;
   const bg = backgroundColor ?? colors.primary;
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
       disabled={disabled}
       onPress={onPress}
-      style={({pressed}) => [
+      onPressIn={press.onPressIn}
+      onPressOut={press.onPressOut}
+      style={[
         styles.flatButton,
         {
           backgroundColor: bg,
-          borderTopColor: surfHighlight(surfaces.highlight, isDark),
-          borderBottomColor: surfaces.shadow,
-          opacity: disabled ? 0.45 : pressed ? 0.9 : 1,
-          elevation: pressed || disabled ? 0 : 3,
+          opacity: disabled ? 0.45 : 1,
         },
+        press.style,
         style,
       ]}>
-      {icon ? <Icon name={icon} size={18} color={fg} /> : null}
+      {icon ? (
+        <GlassIcon
+          name={icon}
+          size={18}
+          tone={onAccentFor(bg) === '#FFFFFF' ? 'light' : 'dark'}
+        />
+      ) : null}
       <Text style={[styles.flatButtonLabel, {color: fg}]} numberOfLines={1}>
         {label}
       </Text>
     </Pressable>
   );
-}
-
-function surfHighlight(value: string, _isDark: boolean): string {
-  return value;
 }
 
 export function OutlinedButton({
@@ -73,29 +84,30 @@ export function OutlinedButton({
 }: {
   label: string;
   onPress: () => void;
-  icon?: string;
+  icon?: GlassIconName;
   style?: ViewStyle;
   textColor?: string;
 }) {
   const {colors, surfaces} = useAppTheme();
-  const fg = textColor ?? colors.primary;
+  const press = usePressScale({pressedScale: 0.97});
+  const fg = textColor ?? colors.onSurface;
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
       onPress={onPress}
-      style={({pressed}) => [
+      onPressIn={press.onPressIn}
+      onPressOut={press.onPressOut}
+      style={[
         styles.outlinedButton,
         {
-          borderTopColor: surfaces.highlight,
-          borderBottomColor: surfaces.shadow,
-          borderLeftColor: surfaces.highlightSoft,
-          borderRightColor: surfaces.shadowSoft,
-          backgroundColor: pressed ? surfaces.sunken : surfaces.raised,
-          elevation: pressed ? 0 : 2,
+          backgroundColor: surfaces.raised,
+          borderColor: surfaces.highlightSoft,
         },
+        press.style,
         style,
       ]}>
-      {icon ? <Icon name={icon} size={18} color={fg} /> : null}
+      {icon ? <GlassIcon name={icon} size={18} /> : null}
       <Text style={[styles.outlinedLabel, {color: fg}]} numberOfLines={1}>
         {label}
       </Text>
@@ -116,6 +128,7 @@ export function TextButton({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
       onPress={onPress}
       hitSlop={8}
       style={({pressed}) => ({opacity: pressed ? 0.6 : 1})}>
@@ -129,34 +142,78 @@ export function TextButton({
 export function RoundIconButton({
   name,
   onPress,
-  size = 24,
-  color,
+  size = 22,
   accessibilityLabel,
   style,
+  tone = 'auto',
 }: {
-  name: string;
+  name: GlassIconName;
   onPress: () => void;
   size?: number;
   color?: string;
   accessibilityLabel?: string;
   style?: ViewStyle;
+  tone?: 'auto' | 'light' | 'dark' | 'onAccent';
 }) {
-  const {colors} = useAppTheme();
+  const {surfaces} = useAppTheme();
+  const press = usePressScale({pressedScale: 0.92});
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       focusable={false}
       onPress={onPress}
+      onPressIn={press.onPressIn}
+      onPressOut={press.onPressOut}
       hitSlop={6}
-      style={({pressed}) => [
+      style={[
         styles.roundButton,
-        {backgroundColor: pressed ? withAlpha(colors.onSurface, 0.06) : 'transparent'},
+        {
+          backgroundColor: surfaces.raised,
+          borderColor: surfaces.highlightSoft,
+        },
+        press.style,
         style,
       ]}>
-      <Icon name={name} size={size} color={color ?? colors.onSurface} />
+      <GlassIcon name={name} size={size} tone={tone} />
     </Pressable>
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Presence animation for modal surfaces                               */
+/* ------------------------------------------------------------------ */
+
+function useModalPresence(visible: boolean) {
+  const reduced = useReducedMotion();
+  const [mounted, setMounted] = useState(visible);
+  const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      Animated.timing(progress, {
+        toValue: 1,
+        duration: reduced ? 0 : DURATION.base,
+        easing: EASE.out,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }).start();
+    } else if (mounted) {
+      Animated.timing(progress, {
+        toValue: 0,
+        duration: reduced ? 0 : DURATION.fast,
+        easing: EASE.in,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }).start(({finished}) => {
+        if (finished) {
+          setMounted(false);
+        }
+      });
+    }
+    return () => progress.stopAnimation();
+  }, [mounted, progress, reduced, visible]);
+
+  return {mounted, progress, reduced};
 }
 
 /* ------------------------------------------------------------------ */
@@ -184,48 +241,59 @@ export function AppDialog({
   onDismiss?: () => void;
   destructive?: boolean;
 }) {
-  const {colors, surfaces} = useAppTheme();
+  const {colors} = useAppTheme();
+  const {mounted, progress} = useModalPresence(visible);
+  if (!mounted) {
+    return null;
+  }
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onDismiss ?? onConfirm}>
-      <View style={styles.dialogScrim}>
+    <Modal visible transparent animationType="none" onRequestClose={onDismiss ?? onConfirm}>
+      <Animated.View style={[styles.dialogScrim, {opacity: progress}]}>
         <Pressable
           style={StyleSheet.absoluteFill}
           onPress={onDismiss ?? onConfirm}
         />
-        <GlassSurface
-          radius={24}
-          strong
-          elevation={20}
-          style={styles.dialogCard}>
-          <Text style={[styles.dialogTitle, {color: colors.onSurface}]}>
-            {title}
-          </Text>
-          {message ? (
-            <Text style={[styles.dialogMessage, {color: colors.onSurfaceVariant}]}>
-              {message}
+        <Animated.View
+          style={{
+            width: '100%',
+            maxWidth: 420,
+            transform: [
+              {
+                scale: progress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.96, 1],
+                }),
+              },
+            ],
+          }}>
+          <GlassSurface radius={24} strong elevation={20} style={styles.dialogCard}>
+            <Text style={[styles.dialogTitle, {color: colors.onSurface}]}>
+              {title}
             </Text>
-          ) : null}
-          {children}
-          <View style={styles.dialogActions}>
-            {dismissLabel && onDismiss ? (
-              <TextButton
-                label={dismissLabel}
-                onPress={onDismiss}
-                color={colors.onSurfaceVariant}
-              />
+            {message ? (
+              <Text
+                style={[styles.dialogMessage, {color: colors.onSurfaceVariant}]}>
+                {message}
+              </Text>
             ) : null}
-            <TextButton
-              label={confirmLabel}
-              onPress={onConfirm}
-              color={destructive ? colors.error : colors.primary}
-            />
-          </View>
-        </GlassSurface>
-      </View>
+            {children}
+            <View style={styles.dialogActions}>
+              {dismissLabel && onDismiss ? (
+                <TextButton
+                  label={dismissLabel}
+                  onPress={onDismiss}
+                  color={colors.onSurfaceVariant}
+                />
+              ) : null}
+              <TextButton
+                label={confirmLabel}
+                onPress={onConfirm}
+                color={destructive ? colors.error : colors.primary}
+              />
+            </View>
+          </GlassSurface>
+        </Animated.View>
+      </Animated.View>
     </Modal>
   );
 }
@@ -248,30 +316,45 @@ export function AppSheet({
   footer?: React.ReactNode;
 }) {
   const {colors, tokens} = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const {mounted, progress} = useModalPresence(visible);
+  if (!mounted) {
+    return null;
+  }
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}>
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
       <View style={styles.sheetRoot}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <GlassSurface
-          strong
-          radius={26}
-          elevation={18}
-          style={styles.sheetCard}>
-          <View style={[styles.sheetHandle, {backgroundColor: colors.outline}]} />
-          {title ? (
-            <Text style={[styles.sheetTitle, {color: colors.onSurface}]}>
-              {title}
-            </Text>
-          ) : null}
-          <View style={{paddingHorizontal: tokens.sheetPadding, paddingBottom: 12}}>
-            {children}
-          </View>
-          {footer ? <View style={{padding: tokens.sheetPadding}}>{footer}</View> : null}
-        </GlassSurface>
+        <Animated.View
+          style={[StyleSheet.absoluteFill, styles.sheetScrim, {opacity: progress}]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        </Animated.View>
+        <Animated.View
+          style={{
+            transform: [
+              {
+                translateY: progress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [28, 0],
+                }),
+              },
+            ],
+          }}>
+          <GlassSurface strong radius={26} elevation={18} style={[styles.sheetCard, {paddingBottom: insets.bottom + 4}]}>
+            <View style={[styles.sheetHandle, {backgroundColor: colors.outline}]} />
+            {title ? (
+              <Text style={[styles.sheetTitle, {color: colors.onSurface}]}>
+                {title}
+              </Text>
+            ) : null}
+            <View
+              style={{paddingHorizontal: tokens.sheetPadding, paddingBottom: 12}}>
+              {children}
+            </View>
+            {footer ? (
+              <View style={{padding: tokens.sheetPadding}}>{footer}</View>
+            ) : null}
+          </GlassSurface>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -288,24 +371,19 @@ export function Pill({
   background,
 }: {
   text?: string;
-  icon?: string;
+  icon?: GlassIconName;
   color: string;
   background: string;
 }) {
-  const {isDark} = useAppTheme();
   return (
-    <View
-      style={[
-        styles.pill,
-        {
-          backgroundColor: background,
-          borderTopWidth: 1,
-          borderTopColor: isDark
-            ? 'rgba(255,255,255,0.06)'
-            : 'rgba(255,255,255,0.5)',
-        },
-      ]}>
-      {icon ? <Icon name={icon} size={12} color={color} /> : null}
+    <View style={[styles.pill, {backgroundColor: background}]}>
+      {icon ? (
+        <GlassIcon
+          name={icon}
+          size={12}
+          tone={onAccentFor(background) === '#FFFFFF' ? 'light' : 'dark'}
+        />
+      ) : null}
       {text ? (
         <Text style={[styles.pillText, {color}]} numberOfLines={1}>
           {text}
@@ -316,7 +394,9 @@ export function Pill({
 }
 
 export function Divider({color}: {color: string}) {
-  return <View style={{height: StyleSheet.hairlineWidth, backgroundColor: color}} />;
+  return (
+    <View style={{height: StyleSheet.hairlineWidth, backgroundColor: color}} />
+  );
 }
 
 export const styles = StyleSheet.create({
@@ -325,37 +405,39 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    borderRadius: 14,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderLeftWidth: StyleSheet.hairlineWidth,
-    borderRightWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 20,
+    height: 46,
+    borderRadius: 999,
   },
-  flatButtonLabel: {fontSize: 14, fontWeight: '600'},
+  flatButtonLabel: {fontSize: 15, fontWeight: '700'},
   outlinedButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 14,
-    borderWidth: 1,
+    height: 44,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  outlinedLabel: {fontSize: 13, fontWeight: '600'},
-  textButtonLabel: {fontSize: 14, fontWeight: '600', paddingHorizontal: 10, paddingVertical: 6},
+  outlinedLabel: {fontSize: 14, fontWeight: '600'},
+  textButtonLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   roundButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
   dialogScrim: {
     flex: 1,
-    backgroundColor: 'rgba(28,18,16,0.42)',
+    backgroundColor: 'rgba(0,0,0,0.62)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
@@ -365,8 +447,8 @@ export const styles = StyleSheet.create({
     maxWidth: 420,
     padding: 22,
   },
-  dialogTitle: {fontSize: 19, fontWeight: '700', marginBottom: 10},
-  dialogMessage: {fontSize: 14, lineHeight: 21, marginBottom: 8},
+  dialogTitle: {...type.headline, fontSize: 19, lineHeight: 24, marginBottom: 10},
+  dialogMessage: {...type.body, fontSize: 14, lineHeight: 21, marginBottom: 8},
   dialogActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -374,14 +456,21 @@ export const styles = StyleSheet.create({
     gap: 4,
     marginTop: 14,
   },
-  sheetRoot: {flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(28,18,16,0.32)'},
+  sheetRoot: {flex: 1, justifyContent: 'flex-end'},
+  sheetScrim: {backgroundColor: 'rgba(0,0,0,0.62)'},
   sheetCard: {
     width: '100%',
     paddingTop: 10,
     maxHeight: '85%',
   },
-  sheetHandle: {width: 36, height: 4, borderRadius: 2, alignSelf: 'center', opacity: 0.5},
-  sheetTitle: {fontSize: 17, fontWeight: '700', padding: 18, paddingBottom: 10},
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
+    opacity: 0.6,
+  },
+  sheetTitle: {...type.section, padding: 18, paddingBottom: 10},
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -391,5 +480,5 @@ export const styles = StyleSheet.create({
     borderRadius: 999,
     maxWidth: 110,
   },
-  pillText: {fontSize: 10},
+  pillText: {fontSize: 10, fontWeight: '500'},
 });

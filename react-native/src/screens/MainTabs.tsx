@@ -1,9 +1,19 @@
-import React from 'react';
-import {Pressable, StyleSheet, Text, View} from 'react-native';
+import React, {useEffect, useRef} from 'react';
+import {
+  Animated,
+  Pressable,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useAppTheme} from '../theme/AppThemeProvider';
-import {withAlpha} from '../theme/palette';
-import {Icon} from '../components/Icon';
+import {onAccentFor} from '../theme/palette';
+import {USE_NATIVE_DRIVER, spring} from '../theme/motion';
+import {type} from '../theme/typography';
+import {GlassIcon} from '../components/GlassIcon';
+import {GlassIconName} from '../components/glass-icons.generated';
 import {GlassSurface} from '../components/Surfaces';
 import {HomeScreen} from './HomeScreen';
 import {CategoryScreen} from './CategoryScreen';
@@ -13,11 +23,11 @@ import {Category} from '../data/types';
 
 export type MainTabKey = 'home' | 'category' | 'favorites' | 'profile';
 
-const TABS: {key: MainTabKey; label: string; icon: string}[] = [
+const TABS: {key: MainTabKey; label: string; icon: GlassIconName}[] = [
   {key: 'home', label: '首页', icon: 'home'},
-  {key: 'category', label: '分类', icon: 'dashboard'},
+  {key: 'category', label: '分类', icon: 'category'},
   {key: 'favorites', label: '收藏', icon: 'favorite'},
-  {key: 'profile', label: '我的', icon: 'person'},
+  {key: 'profile', label: '我的', icon: 'profile'},
 ];
 
 export function MainTabs({
@@ -39,18 +49,44 @@ export function MainTabs({
 }) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
+  const {width} = useWindowDimensions();
+  const dockWidth = width - 24;
+  const tabWidth = dockWidth / TABS.length;
+  const activeIndex = Math.max(
+    0,
+    TABS.findIndex(tab => tab.key === activeTab),
+  );
+  const indicator = useRef(new Animated.Value(activeIndex)).current;
+
+  useEffect(() => {
+    Animated.spring(indicator, {
+      toValue: activeIndex,
+      ...spring.pop,
+      useNativeDriver: USE_NATIVE_DRIVER,
+    }).start();
+  }, [activeIndex, indicator]);
+
+  const activeColor = colors.primary;
+  const activeOn = onAccentFor(activeColor);
 
   return (
     <View style={styles.root}>
-      <View style={styles.content}>
+      <View style={[styles.content, {paddingBottom: 72 + insets.bottom}]}>
         {activeTab === 'home' ? (
-          <HomeScreen onOpenEntry={onOpenEntry} onNewEntry={onNewEntry} />
+          <HomeScreen
+            onOpenEntry={onOpenEntry}
+            onNewEntry={onNewEntry}
+            onOpenCategory={onOpenCategory}
+          />
         ) : null}
         {activeTab === 'category' ? (
           <CategoryScreen onOpenCategory={onOpenCategory} />
         ) : null}
         {activeTab === 'favorites' ? (
-          <FavoritesScreen onOpenEntry={onOpenEntry} />
+          <FavoritesScreen
+            onOpenEntry={onOpenEntry}
+            onNewEntry={onNewEntry}
+          />
         ) : null}
         {activeTab === 'profile' ? (
           <ProfileScreen
@@ -60,58 +96,58 @@ export function MainTabs({
         ) : null}
       </View>
 
-      <GlassSurface
-        radius={0}
-        elevation={6}
-        style={[
-          styles.navBar,
-          {
-            paddingBottom: insets.bottom,
-            borderLeftWidth: 0,
-            borderRightWidth: 0,
-            borderBottomWidth: 0,
-            borderTopWidth: StyleSheet.hairlineWidth,
-            borderTopColor: withAlpha(colors.outline, 0.24),
-          },
-        ]}>
-        {TABS.map(tab => {
-          const active = activeTab === tab.key;
-          return (
-            <Pressable
-              key={tab.key}
-              accessibilityRole="tab"
-              accessibilityState={{selected: active}}
-              accessibilityLabel={tab.label}
-              onPress={() => onTabChange(tab.key)}
-              style={styles.tab}>
-              <View
-                style={[
-                  styles.iconPill,
-                  active && {
-                    backgroundColor: withAlpha(colors.primary, 0.12),
-                    borderTopWidth: 1,
-                    borderTopColor: withAlpha('#FFFFFF', 0.6),
+      <View
+        pointerEvents="box-none"
+        style={[styles.dockWrap, {bottom: insets.bottom + 8}]}>
+        <GlassSurface radius={28} strong elevation={12} style={styles.dock}>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.indicator,
+              {
+                width: tabWidth - 8,
+                backgroundColor: activeColor,
+                transform: [
+                  {
+                    translateX: indicator.interpolate({
+                      inputRange: [0, TABS.length - 1],
+                      outputRange: [4, dockWidth - tabWidth + 4],
+                    }),
                   },
-                ]}>
-                <Icon
+                ],
+              },
+            ]}
+          />
+          {TABS.map(tab => {
+            const active = activeTab === tab.key;
+            return (
+              <Pressable
+                key={tab.key}
+                accessibilityRole="tab"
+                accessibilityState={{selected: active}}
+                accessibilityLabel={tab.label}
+                onPress={() => onTabChange(tab.key)}
+                style={styles.tab}>
+                <GlassIcon
                   name={tab.icon}
-                  size={23}
-                  color={active ? colors.primary : colors.onSurfaceVariant}
+                  size={22}
+                  tone={active ? 'onAccent' : 'auto'}
                 />
-              </View>
-              <Text
-                style={{
-                  fontSize: tokens.navLabelSize,
-                  marginTop: 2,
-                  color: active ? colors.primary : colors.onSurfaceVariant,
-                  fontWeight: active ? '600' : '400',
-                }}>
-                {tab.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </GlassSurface>
+                <Text
+                  style={[
+                    styles.label,
+                    {
+                      fontSize: tokens.navLabelSize,
+                      color: active ? activeOn : colors.onSurfaceVariant,
+                    },
+                  ]}>
+                  {tab.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </GlassSurface>
+      </View>
     </View>
   );
 }
@@ -119,17 +155,30 @@ export function MainTabs({
 const styles = StyleSheet.create({
   root: {flex: 1},
   content: {flex: 1},
-  navBar: {
-    flexDirection: 'row',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 6,
+  dockWrap: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
   },
-  tab: {flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 4},
-  iconPill: {
-    width: 54,
-    height: 30,
-    borderRadius: 15,
+  dock: {
+    height: 62,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  indicator: {
+    position: 'absolute',
+    left: 0,
+    top: 6,
+    bottom: 6,
+    borderRadius: 22,
+  },
+  tab: {
+    flex: 1,
+    height: 50,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 2,
   },
+  label: {...type.label},
 });
