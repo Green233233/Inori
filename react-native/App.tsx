@@ -13,12 +13,15 @@ import {AppThemeProvider, useAppTheme} from './src/theme/AppThemeProvider';
 import {JournalDataProvider, useJournalData} from './src/data/JournalDataProvider';
 import {DEFAULT_SETTINGS, AppSettings, Category} from './src/data/types';
 import {
+  getEntry,
   loadSettings as loadSettingsFromDisk,
   saveSettings as saveSettingsToDisk,
 } from './src/data/storage';
+import {isSimpleTextHtml} from './src/journal/simpleHtml';
 import {MainTabs, MainTabKey} from './src/screens/MainTabs';
 import {CategoryEntriesScreen} from './src/screens/CategoryEntriesScreen';
 import {EditorScreen} from './src/screens/EditorScreen';
+import {NativeEditorScreen} from './src/screens/NativeEditorScreen';
 import {SettingsScreen} from './src/screens/SettingsScreen';
 import {AboutScreen} from './src/screens/AboutScreen';
 import {LicensesScreen} from './src/screens/LicensesScreen';
@@ -54,6 +57,7 @@ import type {Coupon} from './src/data/pairTypes';
 type Route =
   | {name: 'category'; category: Category}
   | {name: 'editor'; entryId: string}
+  | {name: 'nativeEditor'; entryId: string}
   | {name: 'partner'; entryId: string}
   | {name: 'permissionCenter'}
   | {name: 'controlCenter'}
@@ -218,9 +222,17 @@ function AppShell({
   const openEntry = useCallback(
     async (id: string) => {
       const partner = await isPartnerEntry(id).catch(() => false);
-      push(
-        partner ? {name: 'partner', entryId: id} : {name: 'editor', entryId: id},
-      );
+      if (partner) {
+        push({name: 'partner', entryId: id});
+        return;
+      }
+      // 纯文字日记走原生编辑器；含图片/贴纸/涂鸦的仍交给完整编辑器。
+      const entry = id === 'new' ? null : await getEntry(id).catch(() => null);
+      const simple = !entry || isSimpleTextHtml(entry.content);
+      push({
+        name: simple ? 'nativeEditor' : 'editor',
+        entryId: id,
+      });
     },
     [push],
   );
@@ -307,7 +319,7 @@ function AppShell({
           activeTab={tab}
           onTabChange={setTab}
           onOpenEntry={openEntry}
-          onNewEntry={() => push({name: 'editor', entryId: 'new'})}
+          onNewEntry={() => push({name: 'nativeEditor', entryId: 'new'})}
           onOpenCategory={category => push({name: 'category', category})}
           onOpenSettings={() => push({name: 'settings'})}
           onOpenAbout={() => push({name: 'about'})}
@@ -346,7 +358,7 @@ function AppShell({
                 category={top.category}
                 onBack={pop}
                 onOpenEntry={openEntry}
-                onNewEntry={() => push({name: 'editor', entryId: 'new'})}
+                onNewEntry={() => push({name: 'nativeEditor', entryId: 'new'})}
               />
             ) : null}
             {top.name === 'editor' ? (
@@ -355,6 +367,20 @@ function AppShell({
                 entryId={top.entryId}
                 settings={settings}
                 onBack={pop}
+              />
+            ) : null}
+            {top.name === 'nativeEditor' ? (
+              <NativeEditorScreen
+                key={top.entryId}
+                entryId={top.entryId}
+                settings={settings}
+                onBack={pop}
+                onOpenWebEditor={() =>
+                  setStack(previous => [
+                    ...previous.slice(0, -1),
+                    {name: 'editor', entryId: top.entryId},
+                  ])
+                }
               />
             ) : null}
             {top.name === 'partner' ? (
