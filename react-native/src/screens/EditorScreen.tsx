@@ -34,6 +34,7 @@ import {GlassSurface} from '../components/Surfaces';
 import {showToast} from '../components/toast';
 import {native} from '../native/InorinalNative';
 import {BRIDGE_SHIM} from '../editor/bridgeShim';
+import {ImageViewer} from '../components/ImageViewer';
 import {getEntry, saveEntry} from '../data/storage';
 import {
   AppSettings,
@@ -79,7 +80,7 @@ const STICKERS: {key: string; emoji: string}[] = [
   {key: 'snow', emoji: '❄️'},
   {key: 'leaf', emoji: '🍃'},
   {key: 'cat', emoji: '🐱'},
-  {key: 'dog', emoji: '🐶'},
+  {key: 'puppy', emoji: '🐶'},
   {key: 'bird', emoji: '🐦'},
   {key: 'fish', emoji: '🐟'},
   {key: 'cake', emoji: '🎂'},
@@ -404,7 +405,7 @@ export function EditorScreen({
     if (!loaded || !pageReady) {
       return;
     }
-    const timer = setTimeout(() => setContentDrawn(true), 1200);
+    const timer = setTimeout(() => setContentDrawn(true), 700);
     return () => clearTimeout(timer);
   }, [loaded, pageReady]);
 
@@ -590,6 +591,10 @@ export function EditorScreen({
           contentRef.current = String(data.html ?? '');
           setContentDrawn(true);
           scheduleSave();
+          break;
+        case 'painted':
+          // The page finished its first paint; drop the veil right away.
+          setContentDrawn(true);
           break;
         case 'imageClick':
           if (data.src) {
@@ -846,7 +851,7 @@ export function EditorScreen({
           allowUniversalAccessFromFileURLs={false}
           javaScriptEnabled
           domStorageEnabled
-          cacheEnabled={false}
+          cacheEnabled
           mixedContentMode="never"
           setSupportMultipleWindows={false}
           javaScriptCanOpenWindowsAutomatically={false}
@@ -1106,26 +1111,11 @@ export function EditorScreen({
         </ChipFlow>
       </AppSheet>
 
-      <Modal
+      <ImageViewer
         visible={previewSrc !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setPreviewSrc(null)}>
-        <View style={styles.previewScrim}>
-          <GlassSurface strong radius={20} elevation={20} style={styles.previewCard}>
-            {previewSrc ? (
-              <Image
-                source={{uri: previewSrc}}
-                resizeMode="contain"
-                style={{width: '100%', height: tokens.imagePreviewHeight}}
-              />
-            ) : null}
-            <View style={{alignItems: 'flex-end'}}>
-              <TextButton label="关闭" onPress={() => setPreviewSrc(null)} />
-            </View>
-          </GlassSurface>
-        </View>
-      </Modal>
+        uri={previewSrc}
+        onClose={() => setPreviewSrc(null)}
+      />
 
       <AppDialog
         visible={emptyDialog.visible}

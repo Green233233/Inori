@@ -1,8 +1,42 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <application
+    <!-- The guard is a foreground service; specialUse covers the "remote care
+         companion" role, mediaProjection is only active during a capture. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Permission center capabilities. Every one is explained in-app before it
+         is requested; none is granted silently. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- Needed to resolve other apps' labels for the usage list on Android 11+. -->
+  <queries>
+    <intent>
+      <action android:name="android.intent.action.MAIN" />
+      <category android:name="android.intent.category.LAUNCHER" />
+    </intent>
+  </queries>
+
+  <application
       android:name=".MainApplication"
       android:label="@string/app_name"
       android:icon="@mipmap/ic_launcher"
@@ -10,6 +44,7 @@
       android:allowBackup="false"
       android:theme="@style/AppTheme"
       android:usesCleartextTraffic="${usesCleartextTraffic}"
+      android:networkSecurityConfig="@xml/network_security_config"
       android:supportsRtl="true">
       <activity
         android:name=".MainActivity"
@@ -23,5 +58,72 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+
+      <!-- The only resident component: foreground service with the adaptive
+           long-poll loop. Exported=false because nothing outside the app may
+           start or stop it. -->
+      <service
+        android:name=".qi.PuppyGuardService"
+        android:exported="false"
+        android:stopWithTask="false"
+        android:foregroundServiceType="specialUse|mediaProjection">
+        <property
+          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+          android:value="remote_care_companion"
+          tools:targetApi="31" />
+      </service>
+
+      <!-- Notification access: system binds it, the platform permission limits
+           who can reach it. The relay starts with an empty whitelist. -->
+      <service
+        android:name=".qi.NotificationRelayService"
+        android:exported="true"
+        android:label="@string/app_name"
+        android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+        <intent-filter>
+          <action android:name="android.service.notification.NotificationListenerService" />
+        </intent-filter>
+      </service>
+
+      <!-- Device admin exists solely to allow lockNow(); one policy only. -->
+      <receiver
+        android:name=".qi.QiDeviceAdminReceiver"
+        android:exported="true"
+        android:permission="android.permission.BIND_DEVICE_ADMIN">
+        <meta-data
+          android:name="android.app.device_admin"
+          android:resource="@xml/device_admin" />
+        <intent-filter>
+          <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+        </intent-filter>
+      </receiver>
+
+      <!-- One-shot catch-up after boot or an app update. -->
+      <receiver
+        android:name=".qi.AutoStartReceiver"
+        android:exported="true"
+        android:enabled="true">
+        <intent-filter>
+          <action android:name="android.intent.action.BOOT_COMPLETED" />
+          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        </intent-filter>
+      </receiver>
+
+      <!-- Home-screen widget: state only, never touches the network itself. -->
+      <receiver
+        android:name=".qi.QiWidgetProvider"
+        android:exported="true"
+        android:label="@string/app_name">
+        <intent-filter>
+          <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+        </intent-filter>
+        <meta-data
+          android:name="android.appwidget.provider"
+          android:resource="@xml/qi_widget_info" />
+      </receiver>
+      <!-- Daily reminders: one alarm → one notification, no service. -->
+      <receiver
+        android:name=".qi.ReminderReceiver"
+        android:exported="false" />
     </application>
 </manifest>

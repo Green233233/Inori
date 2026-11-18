@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Force-lock only. Wipe, password policy, keyguard reset and silent install are
+  intentionally absent: the app must never be able to do more than lock the
+  screen on request.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <force-lock />
+    </uses-policies>
+</device-admin>

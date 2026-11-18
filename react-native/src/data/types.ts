@@ -23,6 +23,11 @@ export interface JournalEntry {
   imageUrl?: string | null;
   createdAt: number;
   updatedAt: number;
+  /** 祈 v0.6.0：共享/私密与作者（旧数据缺省视为本人共享）。 */
+  visibility?: 'private' | 'pair';
+  authorDeviceId?: string;
+  revision?: number;
+  deletedAt?: number | null;
 }
 
 /** Lightweight row kept in index.json for fast list rendering/search. */
@@ -39,6 +44,10 @@ export interface EntrySummary {
   updatedAt: number;
   preview: string;
   searchText: string;
+  /** 对方的日记在本地只读镜像中出现：带作者与只读标记。 */
+  visibility?: 'private' | 'pair';
+  authorDeviceId?: string;
+  readOnly?: boolean;
 }
 
 export const WEATHER_LABEL: Record<Weather, string> = {

@@ -200,9 +200,32 @@ body {
 /* 插入的图片样式 */
 .inserted-image {
     max-width: 100%;
+    height: auto;
     border-radius: 8px;
     margin: 8px 0;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    /* 图片不能吃掉竖向滚动：否则整页都是图片时无法下滑 */
+    touch-action: pan-y;
+    -webkit-user-drag: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* 只读浏览模式：同一套排版，去掉所有编辑态手势 */
+body.view-mode #paper {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    caret-color: transparent;
+}
+
+body.view-mode .journal-sticker,
+body.view-mode .inserted-sticker {
+    touch-action: pan-y;
+    cursor: default;
+}
+
+body.view-mode .journal-sticker.is-selected {
+    outline: none;
 }
 
 /* 字体定义 */

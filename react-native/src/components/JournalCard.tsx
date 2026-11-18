@@ -105,6 +105,19 @@ export function JournalCard({
               }}>
               {entry.title || '未命名日记'}
             </Text>
+            {entry.readOnly ? (
+              <Pill
+                text="TA"
+                color={colors.onSurfaceVariant}
+                background={withAlpha(colors.outline, 0.35)}
+              />
+            ) : entry.visibility === 'private' ? (
+              <Pill
+                text="私密"
+                color={colors.onSurfaceVariant}
+                background={withAlpha(colors.outline, 0.35)}
+              />
+            ) : null}
               {onFavorite ? (
                 <FavoriteButton
                   active={entry.isFavorite}

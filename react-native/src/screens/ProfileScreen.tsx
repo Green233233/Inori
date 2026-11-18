@@ -13,22 +13,49 @@ import {onAccentFor, withAlpha} from '../theme/palette';
 import {type, tabularNums} from '../theme/typography';
 import {GlassIcon} from '../components/GlassIcon';
 import {GlassIconName} from '../components/glass-icons.generated';
-import {OutlinedButton} from '../components/Ui';
+import {OutlinedButton, Pill} from '../components/Ui';
+import {RoleAvatar} from '../components/RoleAvatar';
 import {ColorField, SoftCard} from '../components/Surfaces';
 import {showToast} from '../components/toast';
 import {useReducedMotion} from '../motion/useReducedMotion';
 import {useJournalData} from '../data/JournalDataProvider';
 import {exportBackup, importBackup, importResultMessage} from '../data/backup';
+import {useQi} from '../features/qi/QiProvider';
 
 export function ProfileScreen({
   onOpenSettings,
   onOpenAbout,
+  onOpenQi,
+  onOpenPermissionCenter,
+  onOpenResponseConfig,
+  onOpenAutoRules,
+  onOpenAppearance,
 }: {
   onOpenSettings: () => void;
   onOpenAbout: () => void;
+  onOpenQi?: () => void;
+  onOpenPermissionCenter?: () => void;
+  onOpenResponseConfig?: () => void;
+  onOpenAutoRules?: () => void;
+  onOpenAppearance?: () => void;
 }) {
   const {colors, tokens} = useAppTheme();
   const {stats, refresh} = useJournalData();
+  const {role, state} = useQi();
+  const heroColor = role === 'PUPPY' ? colors.secondary : colors.primary;
+  const roleLabel =
+    role === 'MASTER' ? '主人端' : role === 'PUPPY' ? '小狗端' : '未联结';
+  const displayName =
+    state.displayName ||
+    state.username ||
+    (role === 'MASTER' ? '主人' : role === 'PUPPY' ? '小狗' : '还没有联结');
+  const avatarUri = state.avatarImagePath
+    ? state.avatarImagePath.startsWith('file://')
+      ? state.avatarImagePath
+      : `file://${state.avatarImagePath}`
+    : null;
+  const avatarStyle =
+    state.avatarStyle === 'photo' && !avatarUri ? 'role' : state.avatarStyle;
   const [busy, setBusy] = useState(false);
 
   const exportEntries = async () => {
@@ -97,27 +124,52 @@ export function ProfileScreen({
         showsVerticalScrollIndicator={false}>
         <Text style={[type.display, {color: colors.onSurface}]}>我的</Text>
         <Text style={[type.body, {color: colors.onSurfaceVariant, marginTop: 4}]}>
-          把日子过成一本好看的书
+          {roleLabel} · 一对一的联结，日记只是其中一页
         </Text>
 
-        <ColorField
-          color={colors.primary}
-          radius={22}
-          style={styles.hero}>
+        <ColorField color={heroColor} radius={22} style={styles.hero}>
           <View style={styles.heroRow}>
-            <View style={styles.avatar}>
-              <GlassIcon name="profile" size={46} tone="onAccent" />
-            </View>
+            <RoleAvatar
+              role={role}
+              name={displayName}
+              size={76}
+              avatarStyle={avatarStyle}
+              imageUri={avatarUri}
+              ringColor={
+                state.appearance.frame === 'default'
+                  ? withAlpha(onAccentFor(heroColor), 0.55)
+                  : withAlpha(
+                      state.appearance.frame === 'rose'
+                        ? '#FF5C8A'
+                        : state.appearance.frame === 'mint'
+                          ? '#31D0AA'
+                          : '#F2B544',
+                      0.9,
+                    )
+              }
+              onColor={onAccentFor(heroColor)}
+            />
             <View style={{flex: 1}}>
-              <Text style={[styles.name, {color: onAccentFor(colors.primary)}]}>
-                日记爱好者
-              </Text>
+              <View style={styles.nameRow}>
+                <Text style={[styles.name, {color: onAccentFor(heroColor)}]}>
+                  {displayName}
+                </Text>
+                <Pill
+                  text={roleLabel}
+                  color={onAccentFor(heroColor)}
+                  background={withAlpha(onAccentFor(heroColor), 0.18)}
+                />
+              </View>
               <Text
                 style={[
                   type.caption,
-                  {color: withAlpha(onAccentFor(colors.primary), 0.78)},
+                  {color: withAlpha(onAccentFor(heroColor), 0.8)},
                 ]}>
-                记录生活中的每一个美好瞬间
+                {state.pair
+                  ? `${state.pair.ownerName} 与 ${state.pair.puppyName} · ${
+                      state.pair.verified ? '绑定已校验' : '待校验'
+                    }`
+                  : '还没有联结 · 在「我的身份与联结」里完成绑定'}
               </Text>
             </View>
           </View>
@@ -165,19 +217,75 @@ export function ProfileScreen({
         </View>
 
         <Text style={[type.section, styles.sectionTitle, {color: colors.onSurface}]}>
-          更多
+          联结
+        </Text>
+        <SoftCard radius={18} style={styles.menuCard}>
+          {onOpenQi ? (
+            <MenuRow
+              icon="favorite"
+              label="我的身份与联结"
+              onPress={onOpenQi}
+              divider={withAlpha(colors.outline, 0.25)}
+            />
+          ) : null}
+          <MenuRow
+            icon="profile"
+            label="头像与昵称"
+            onPress={onOpenSettings}
+            divider={onOpenAppearance ? withAlpha(colors.outline, 0.25) : undefined}
+            last={!onOpenAppearance && !onOpenQi}
+          />
+          {onOpenAppearance ? (
+            <MenuRow icon="moodHappy" label="装扮" onPress={onOpenAppearance} last />
+          ) : null}
+        </SoftCard>
+
+        {onOpenPermissionCenter ? (
+          <>
+            <Text
+              style={[
+                type.section,
+                styles.sectionTitle,
+                {color: colors.onSurface},
+              ]}>
+              隐私与权限
+            </Text>
+            <SoftCard radius={18} style={styles.menuCard}>
+              <MenuRow
+                icon="info"
+                label="权限管控中心"
+                onPress={onOpenPermissionCenter}
+                divider={withAlpha(colors.outline, 0.25)}
+              />
+              {onOpenResponseConfig ? (
+                <MenuRow
+                  icon="settings"
+                  label="响应配置"
+                  onPress={onOpenResponseConfig}
+                  divider={onOpenAutoRules ? withAlpha(colors.outline, 0.25) : undefined}
+                  last={!onOpenAutoRules}
+                />
+              ) : null}
+              {onOpenAutoRules ? (
+                <MenuRow
+                  icon="weatherNight"
+                  label="自动规则"
+                  onPress={onOpenAutoRules}
+                  last
+                />
+              ) : null}
+            </SoftCard>
+          </>
+        ) : null}
+
+        <Text style={[type.section, styles.sectionTitle, {color: colors.onSurface}]}>
+          应用
         </Text>
         <SoftCard radius={18} style={styles.menuCard}>
           <MenuRow
             icon="settings"
             label="设置"
             onPress={onOpenSettings}
-            divider={withAlpha(colors.outline, 0.25)}
-          />
-          <MenuRow
-            icon="cloudUpload"
-            label="数据备份"
-            onPress={exportEntries}
             divider={withAlpha(colors.outline, 0.25)}
           />
           <MenuRow icon="info" label="关于" onPress={onOpenAbout} last />
@@ -273,6 +381,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   name: {fontSize: 22, fontWeight: '800', letterSpacing: -0.3},
+  nameRow: {flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap'},
   statsRow: {flexDirection: 'row', gap: 10},
   statBlock: {
     flex: 1,

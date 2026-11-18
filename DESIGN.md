@@ -133,3 +133,11 @@ Radii map to element scale: small controls take the small step, cards the middle
 - `{rounded.sm}` for chips, inputs, and small buttons. `{rounded.md}` for cards and list containers.
 - `{rounded.lg}` for sheets and dialogs, `{rounded.xl}` for full-bleed hero or sticker blocks.
 - `{rounded.full}` for pills, the floating action button, and avatar masks. Do not mix a pill radius into a card.
+
+## v0.6.0 展示层要点（联结装置）
+
+- 角色色：主人端强调蓝、小狗端强调玫红；同一套 `SoftCard` / `ColorField` / `GlassSurface` 组件，靠角色色与文案区分身份。
+- hero 是唯一「身份 + 在线状态」承载块：在线绿点、同伴名大字、子行显示「主人端/小狗端 · 校验已完成 · 最近同步 HH:mm」，小狗端另有问候语一行。
+- 空状态一律给「下一步动作」而不是空白：共享空间「写下第一句」、任务「下达第一件小事」、券「去找主人要一张」。
+- 拒绝理由必须留在主界面（管控中心数据卡常驻红字），不弹一次性 toast。
+- 装扮只影响本机观感（光环色/问候语/小组件文案），明确标注「对方看不到，也不会同步」，避免误解为社交展示。

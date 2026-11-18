@@ -25,10 +25,44 @@ import {LicensesScreen} from './src/screens/LicensesScreen';
 import {AmbientBackground} from './src/components/Surfaces';
 import {APP_NAME} from './src/config';
 import {setDebugEnabled} from './src/debug/logger';
+import {QiProvider, useQi} from './src/features/qi/QiProvider';
+import {ConsentGate} from './src/features/onboarding/ConsentGate';
+import {AuthScreen} from './src/features/auth/AuthScreen';
+import {PairingScreen} from './src/features/pair/PairingScreen';
+import {SharedEntryScreen} from './src/screens/SharedEntryScreen';
+import {isPartnerEntry} from './src/sync/partnerStore';
+import {PermissionCenter} from './src/features/device/PermissionCenter';
+import {ControlCenter} from './src/features/control/ControlCenter';
+import CouponDetail from './src/features/coupons/CouponDetail';
+import CouponRedeem from './src/features/coupons/CouponRedeem';
+import {ResponseConfig} from './src/features/settings/ResponseConfig';
+import {AutoRules} from './src/features/settings/AutoRules';
+import {AppearanceScreen} from './src/features/settings/AppearanceScreen';
+import {SharedSpace} from './src/features/shared/SharedSpace';
+import {PairManage} from './src/features/pair/PairManage';
+import {TasksScreen} from './src/features/tasks/TasksScreen';
+import {RemindersScreen} from './src/features/reminders/RemindersScreen';
+import {AlbumScreen} from './src/features/album/AlbumScreen';
+import {NotificationsScreen} from './src/features/notifications/NotificationsScreen';
+import type {Coupon} from './src/data/pairTypes';
 
 type Route =
   | {name: 'category'; category: Category}
   | {name: 'editor'; entryId: string}
+  | {name: 'partner'; entryId: string}
+  | {name: 'permissionCenter'}
+  | {name: 'controlCenter'}
+  | {name: 'couponDetail'; coupon: Coupon}
+  | {name: 'couponRedeem'; coupon?: Coupon}
+  | {name: 'responseConfig'}
+  | {name: 'autoRules'}
+  | {name: 'appearance'}
+  | {name: 'sharedSpace'}
+  | {name: 'pairManage'}
+  | {name: 'tasks'}
+  | {name: 'reminders'}
+  | {name: 'album'}
+  | {name: 'notifications'}
   | {name: 'settings'}
   | {name: 'about'}
   | {name: 'licenses'};
@@ -71,12 +105,14 @@ export default function App() {
         colorStyle={settings.colorStyle}
         themeMode={settings.themeMode}>
         <JournalDataProvider>
-          <ThemedStatusBar />
-          {settingsReady ? (
-            <AppShell settings={settings} onSettingsChange={updateSettings} />
-          ) : (
-            <Splash />
-          )}
+          <QiProvider>
+            <ThemedStatusBar />
+            {settingsReady ? (
+              <QiRoot settings={settings} onSettingsChange={updateSettings} />
+            ) : (
+              <Splash />
+            )}
+          </QiProvider>
         </JournalDataProvider>
       </AppThemeProvider>
     </SafeAreaProvider>
@@ -103,6 +139,46 @@ function Splash() {
   );
 }
 
+function QiRoot({
+  settings,
+  onSettingsChange,
+}: {
+  settings: AppSettings;
+  onSettingsChange: (next: AppSettings) => void;
+}) {
+  const {stage} = useQi();
+  if (stage === 'loading') {
+    return <Splash />;
+  }
+  if (stage === 'consent') {
+    return (
+      <View style={styles.gate}>
+        <AmbientBackground />
+        <ConsentGate />
+      </View>
+    );
+  }
+  if (stage === 'auth') {
+    return (
+      <View style={styles.gate}>
+        <AmbientBackground />
+        <AuthScreen />
+      </View>
+    );
+  }
+  if (stage === 'pairing') {
+    return (
+      <View style={styles.gate}>
+        <AmbientBackground />
+        <PairingScreen />
+      </View>
+    );
+  }
+  return (
+    <AppShell settings={settings} onSettingsChange={onSettingsChange} />
+  );
+}
+
 function AppShell({
   settings,
   onSettingsChange,
@@ -111,6 +187,7 @@ function AppShell({
   onSettingsChange: (next: AppSettings) => void;
 }) {
   const insets = useSafeAreaInsets();
+  const {syncNow, lastSyncAt} = useQi();
   const {refresh} = useJournalData();
   const [tab, setTab] = useState<MainTabKey>('home');
   const [stack, setStack] = useState<Route[]>([]);
@@ -124,6 +201,16 @@ function AppShell({
     setStack(previous => [...previous, route]);
   }, []);
 
+  const openEntry = useCallback(
+    async (id: string) => {
+      const partner = await isPartnerEntry(id).catch(() => false);
+      push(
+        partner ? {name: 'partner', entryId: id} : {name: 'editor', entryId: id},
+      );
+    },
+    [push],
+  );
+
   const finishPop = useCallback(() => {
     setStack(previous => previous.slice(0, -1));
     setClosing(false);
@@ -133,6 +220,16 @@ function AppShell({
   const pop = useCallback(() => {
     setClosing(true);
   }, []);
+
+  useEffect(() => {
+    syncNow().catch(() => undefined);
+  }, [syncNow]);
+
+  useEffect(() => {
+    if (lastSyncAt) {
+      refresh();
+    }
+  }, [lastSyncAt, refresh]);
 
   useEffect(() => {
     Animated.timing(mainProgress, {
@@ -195,11 +292,24 @@ function AppShell({
         <MainTabs
           activeTab={tab}
           onTabChange={setTab}
-          onOpenEntry={id => push({name: 'editor', entryId: id})}
+          onOpenEntry={openEntry}
           onNewEntry={() => push({name: 'editor', entryId: 'new'})}
           onOpenCategory={category => push({name: 'category', category})}
           onOpenSettings={() => push({name: 'settings'})}
           onOpenAbout={() => push({name: 'about'})}
+          onOpenQi={() => push({name: 'pairManage'})}
+          onOpenPermissionCenter={() => push({name: 'permissionCenter'})}
+          onOpenControlCenter={() => push({name: 'controlCenter'})}
+          onOpenCoupon={coupon => push({name: 'couponDetail', coupon})}
+          onRedeemCoupon={coupon => push({name: 'couponRedeem', coupon})}
+          onOpenResponseConfig={() => push({name: 'responseConfig'})}
+          onOpenAutoRules={() => push({name: 'autoRules'})}
+          onOpenAppearance={() => push({name: 'appearance'})}
+          onOpenSharedSpace={() => push({name: 'sharedSpace'})}
+          onOpenTasks={() => push({name: 'tasks'})}
+          onOpenReminders={() => push({name: 'reminders'})}
+          onOpenAlbum={() => push({name: 'album'})}
+          onOpenNotifications={() => push({name: 'notifications'})}
         />
       </Animated.View>
 
@@ -217,7 +327,7 @@ function AppShell({
               <CategoryEntriesScreen
                 category={top.category}
                 onBack={pop}
-                onOpenEntry={id => push({name: 'editor', entryId: id})}
+                onOpenEntry={openEntry}
                 onNewEntry={() => push({name: 'editor', entryId: 'new'})}
               />
             ) : null}
@@ -228,6 +338,52 @@ function AppShell({
                 settings={settings}
                 onBack={pop}
               />
+            ) : null}
+            {top.name === 'partner' ? (
+              <SharedEntryScreen entryId={top.entryId} onBack={pop} />
+            ) : null}
+            {top.name === 'permissionCenter' ? (
+              <PermissionCenter onBack={pop} />
+            ) : null}
+            {top.name === 'controlCenter' ? (
+              <ControlCenter onBack={pop} />
+            ) : null}
+            {top.name === 'couponDetail' ? (
+              <CouponDetail
+                coupon={top.coupon}
+                onBack={pop}
+                onRedeem={coupon => push({name: 'couponRedeem', coupon})}
+              />
+            ) : null}
+            {top.name === 'couponRedeem' ? (
+              <CouponRedeem
+                initialCoupon={top.coupon}
+                onBack={pop}
+                onRedeemed={() => pop()}
+              />
+            ) : null}
+            {top.name === 'responseConfig' ? (
+              <ResponseConfig onBack={pop} />
+            ) : null}
+            {top.name === 'autoRules' ? <AutoRules onBack={pop} /> : null}
+            {top.name === 'appearance' ? <AppearanceScreen onBack={pop} /> : null}
+            {top.name === 'sharedSpace' ? (
+              <SharedSpace onBack={pop} />
+            ) : null}
+            {top.name === 'pairManage' ? (
+              <PairManage onBack={pop} />
+            ) : null}
+            {top.name === 'tasks' ? (
+              <TasksScreen onBack={pop} />
+            ) : null}
+            {top.name === 'reminders' ? (
+              <RemindersScreen onBack={pop} />
+            ) : null}
+            {top.name === 'album' ? (
+              <AlbumScreen onBack={pop} />
+            ) : null}
+            {top.name === 'notifications' ? (
+              <NotificationsScreen onBack={pop} />
             ) : null}
             {top.name === 'settings' ? (
               <SettingsScreen
@@ -304,6 +460,7 @@ function RouteLayer({
 
 const styles = StyleSheet.create({
   root: {flex: 1},
+  gate: {flex: 1},
   splash: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   splashBrand: {fontSize: 44, fontWeight: '700'},
 });

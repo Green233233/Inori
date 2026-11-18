@@ -1,4 +1,4 @@
-﻿// ==================== editor core ====================
+// ==================== editor core ====================
 
 const Atrament = window.Atrament;
 const MODE_DISABLED = window.ATRAMENT_MODE_DISABLED || 'disabled';
@@ -49,9 +49,18 @@ const doodle = {
 
 document.addEventListener('DOMContentLoaded', () => {
     paper = document.getElementById('paper');
+    const readOnly = /(?:^|[?&])view=1(?:&|$)/.test(window.location.search);
+    if (readOnly) {
+        enableViewMode();
+    }
     initialiseDoodle();
     bindEditorEvents();
-    bindStickerHandlers();
+    if (readOnly) {
+        // The reader may still tap a picture, but stickers must never start a drag.
+        bindImageClickHandlers();
+    } else {
+        bindStickerHandlers();
+    }
     updateVisibleViewport();
 });
 
@@ -301,13 +310,20 @@ function createAtrament() {
 }
 
 function resizeDoodleCanvas() {
+    // Skip entirely in read-only view: the canvas is hidden there, and a
+    // full-height backing store can allocate tens of MB on dense screens.
+    if (document.body.classList.contains('view-mode')) {
+        return;
+    }
     const ratio = window.devicePixelRatio || 1;
-    const width = Math.max(1, Math.floor(window.innerWidth * ratio));
     const contentHeight = Math.max(
         window.innerHeight,
         paper ? paper.scrollHeight : window.innerHeight
     );
-    const height = Math.max(1, Math.ceil(contentHeight * ratio));
+    // Cap the backing store so a long page cannot allocate an enormous bitmap.
+    const maxSide = 4096;
+    const width = Math.max(1, Math.min(maxSide, Math.floor(window.innerWidth * ratio)));
+    const height = Math.max(1, Math.min(maxSide, Math.ceil(contentHeight * ratio)));
     doodle.canvas.width = width;
     doodle.canvas.height = height;
     doodle.canvas.style.width = `${window.innerWidth}px`;
@@ -1351,15 +1367,51 @@ function setContent(html) {
     deselectSticker();
     paper.innerHTML = sanitizeEditorHtml(html || '');
     bindImageClickHandlers();
-    bindStickerHandlers();
+    if (!document.body.classList.contains('view-mode')) {
+        bindStickerHandlers();
+    }
     extractDoodleDataNode();
     savedSelectionRange = null;
     requestAnimationFrame(() => {
-        resizeDoodleCanvas();
-        syncDoodleCanvasScroll();
+        if (!document.body.classList.contains('view-mode')) {
+            resizeDoodleCanvas();
+            syncDoodleCanvasScroll();
+        }
+        // Tell native the first paint is done so the loading veil can go away
+        // immediately instead of waiting for a fixed timeout.
+        postToNative({type: 'painted'});
     });
     // Do not notify Android here: native setContent already updates its content StateFlow.
     // Notifying would re-trigger autosave and re-migrate inline images into duplicate files.
+}
+
+function postToNative(payload) {
+    try {
+        if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+            window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+        }
+    } catch (error) {
+        // Bridge is optional (for example when the page is opened in a browser).
+    }
+}
+
+/**
+ * Read-only presentation mode (`editor.html?view=1`):
+ * the very same document/CSS renders the journal, so images, stickers and
+ * doodles look identical to the editor, but nothing is editable.
+ */
+function enableViewMode() {
+    document.body.classList.add('view-mode');
+    paper.setAttribute('contenteditable', 'false');
+    paper.removeAttribute('contenteditable');
+    const doodle = document.getElementById('doodle-canvas');
+    if (doodle) {
+        doodle.style.display = 'none';
+    }
+    const deleteButton = document.getElementById('sticker-delete-btn');
+    if (deleteButton) {
+        deleteButton.style.display = 'none';
+    }
 }
 
 function sanitizeEditorHtml(html) {

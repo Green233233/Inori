@@ -15,18 +15,22 @@ import {type} from '../theme/typography';
 import {GlassIcon} from '../components/GlassIcon';
 import {GlassIconName} from '../components/glass-icons.generated';
 import {GlassSurface} from '../components/Surfaces';
-import {HomeScreen} from './HomeScreen';
-import {CategoryScreen} from './CategoryScreen';
-import {FavoritesScreen} from './FavoritesScreen';
+import {showToast} from '../components/toast';
+import {QiHomeScreen} from '../features/home/QiHomeScreen';
+import {JournalTab} from '../features/journal/JournalTab';
+import CouponManagement from '../features/coupons/CouponManagement';
+import CouponWallet from '../features/coupons/CouponWallet';
+import type {Coupon} from '../data/pairTypes';
+import {useQi} from '../features/qi/QiProvider';
 import {ProfileScreen} from './ProfileScreen';
 import {Category} from '../data/types';
 
-export type MainTabKey = 'home' | 'category' | 'favorites' | 'profile';
+export type MainTabKey = 'home' | 'coupons' | 'journal' | 'profile';
 
 const TABS: {key: MainTabKey; label: string; icon: GlassIconName}[] = [
-  {key: 'home', label: '首页', icon: 'home'},
-  {key: 'category', label: '分类', icon: 'category'},
-  {key: 'favorites', label: '收藏', icon: 'favorite'},
+  {key: 'home', label: '主页', icon: 'home'},
+  {key: 'coupons', label: '和好券', icon: 'star'},
+  {key: 'journal', label: '日记', icon: 'book'},
   {key: 'profile', label: '我的', icon: 'profile'},
 ];
 
@@ -38,6 +42,19 @@ export function MainTabs({
   onOpenCategory,
   onOpenSettings,
   onOpenAbout,
+  onOpenQi,
+  onOpenPermissionCenter,
+  onOpenControlCenter,
+  onOpenCoupon,
+  onRedeemCoupon,
+  onOpenResponseConfig,
+  onOpenAutoRules,
+  onOpenAppearance,
+  onOpenSharedSpace,
+  onOpenTasks,
+  onOpenReminders,
+  onOpenAlbum,
+  onOpenNotifications,
 }: {
   activeTab: MainTabKey;
   onTabChange: (tab: MainTabKey) => void;
@@ -46,10 +63,24 @@ export function MainTabs({
   onOpenCategory: (category: Category) => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
+  onOpenQi: () => void;
+  onOpenPermissionCenter: () => void;
+  onOpenControlCenter: () => void;
+  onOpenCoupon: (coupon: Coupon) => void;
+  onRedeemCoupon: (coupon: Coupon) => void;
+  onOpenResponseConfig: () => void;
+  onOpenAutoRules: () => void;
+  onOpenAppearance: () => void;
+  onOpenSharedSpace: () => void;
+  onOpenTasks: () => void;
+  onOpenReminders: () => void;
+  onOpenAlbum: () => void;
+  onOpenNotifications: () => void;
 }) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
   const {width} = useWindowDimensions();
+  const {role} = useQi();
   const dockWidth = width - 24;
   const tabWidth = dockWidth / TABS.length;
   const activeIndex = Math.max(
@@ -73,25 +104,52 @@ export function MainTabs({
     <View style={styles.root}>
       <View style={[styles.content, {paddingBottom: 72 + insets.bottom}]}>
         {activeTab === 'home' ? (
-          <HomeScreen
+          <QiHomeScreen
+            onOpenJournal={() => onTabChange('journal')}
+            onOpenCoupons={() => onTabChange('coupons')}
+            onOpenProfile={() => onTabChange('profile')}
+            onOpenControlCenter={onOpenControlCenter}
+            onOpenSharedSpace={onOpenSharedSpace}
+            onOpenTasks={onOpenTasks}
+            onOpenReminders={onOpenReminders}
+            onOpenAlbum={onOpenAlbum}
+            onOpenNotifications={onOpenNotifications}
+          />
+        ) : null}
+        {activeTab === 'coupons' ? (
+          <View
+            style={{
+              flex: 1,
+              paddingTop: 6,
+            }}>
+            {role === 'MASTER' ? (
+              <CouponManagement onRedeem={onRedeemCoupon} />
+            ) : (
+              <CouponWallet
+                onAskMaster={() => showToast('去跟主人说一声吧')}
+                onOpenCoupon={onOpenCoupon}
+              />
+            )}
+          </View>
+        ) : null}
+        {activeTab === 'journal' ? (
+          <JournalTab
             onOpenEntry={onOpenEntry}
             onNewEntry={onNewEntry}
             onOpenCategory={onOpenCategory}
-          />
-        ) : null}
-        {activeTab === 'category' ? (
-          <CategoryScreen onOpenCategory={onOpenCategory} />
-        ) : null}
-        {activeTab === 'favorites' ? (
-          <FavoritesScreen
-            onOpenEntry={onOpenEntry}
-            onNewEntry={onNewEntry}
           />
         ) : null}
         {activeTab === 'profile' ? (
           <ProfileScreen
             onOpenSettings={onOpenSettings}
             onOpenAbout={onOpenAbout}
+            onOpenQi={onOpenQi}
+            onOpenPermissionCenter={onOpenPermissionCenter}
+            onOpenResponseConfig={
+              role === 'PUPPY' ? onOpenResponseConfig : undefined
+            }
+            onOpenAutoRules={role === 'PUPPY' ? onOpenAutoRules : undefined}
+            onOpenAppearance={role === 'PUPPY' ? onOpenAppearance : undefined}
           />
         ) : null}
       </View>
@@ -155,30 +213,9 @@ export function MainTabs({
 const styles = StyleSheet.create({
   root: {flex: 1},
   content: {flex: 1},
-  dockWrap: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-  },
-  dock: {
-    height: 62,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-  },
-  indicator: {
-    position: 'absolute',
-    left: 0,
-    top: 6,
-    bottom: 6,
-    borderRadius: 22,
-  },
-  tab: {
-    flex: 1,
-    height: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-  },
+  dockWrap: {position: 'absolute', left: 12, right: 12},
+  dock: {height: 62, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4},
+  indicator: {position: 'absolute', left: 0, top: 6, bottom: 6, borderRadius: 22},
+  tab: {flex: 1, height: 50, alignItems: 'center', justifyContent: 'center', gap: 2},
   label: {...type.label},
 });

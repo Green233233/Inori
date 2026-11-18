@@ -1,8 +1,9 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   Animated,
   FlatList,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -25,6 +26,7 @@ import {HomeSkeleton} from '../components/Skeleton';
 import {StaggerReveal} from '../motion/StaggerReveal';
 import {useJournalData} from '../data/JournalDataProvider';
 import {filterByQuery, deleteEntry, setFavorite} from '../data/storage';
+import {useQi} from '../features/qi/QiProvider';
 import {
   CATEGORY_ICON,
   CATEGORY_LABEL,
@@ -45,6 +47,8 @@ export function HomeScreen({
 }) {
   const {colors, tokens} = useAppTheme();
   const {entries, loading, refresh} = useJournalData();
+  const {pair, syncNow} = useQi();
+  const [refreshing, setRefreshing] = useState(false);
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<EntrySummary | null>(null);
@@ -61,6 +65,23 @@ export function HomeScreen({
   const dateText = `${now.getMonth() + 1}月${now.getDate()}日 · 周${
     '日一二三四五六'[now.getDay()]
   }`;
+
+  /**
+   * Pull-to-refresh must do two things: pull the partner's newest entries from
+   * the server, then re-read the merged local index so the list actually shows
+   * them without switching tabs.
+   */
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      if (pair) {
+        await syncNow().catch(() => undefined);
+      }
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [pair, syncNow, refresh]);
 
   const closeSearch = () => {
     setSearching(false);
@@ -227,6 +248,15 @@ export function HomeScreen({
         <FlatList
           data={visible}
           keyExtractor={item => item.id}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={colors.onSurfaceVariant}
+              colors={[colors.primary]}
+              progressBackgroundColor={colors.surface}
+            />
+          }
           ListHeaderComponent={header}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>

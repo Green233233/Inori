@@ -5,14 +5,18 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import {useAppTheme} from '../theme/AppThemeProvider';
 import {withAlpha} from '../theme/palette';
+import {type} from '../theme/typography';
 import {GlassIcon} from '../components/GlassIcon';
 import {TopBar} from '../components/TopBar';
 import {AppDialog, AppSheet, Divider, TextButton} from '../components/Ui';
 import {SoftCard} from '../components/Surfaces';
+import {RoleAvatar} from '../components/RoleAvatar';
+import {useQi} from '../features/qi/QiProvider';
 import {showToast} from '../components/toast';
 import {native, joinPath, paths} from '../native/InorinalNative';
 import {
@@ -44,6 +48,9 @@ export function SettingsScreen({
   onBack: () => void;
 }) {
   const {colors, tokens} = useAppTheme();
+  const {state, role, updateProfile} = useQi();
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [nickDraft, setNickDraft] = useState('');
   const [styleSheetOpen, setStyleSheetOpen] = useState(false);
   const [themeSheetOpen, setThemeSheetOpen] = useState(false);
   const [fontDialogOpen, setFontDialogOpen] = useState(false);
@@ -60,12 +67,143 @@ export function SettingsScreen({
   return (
     <View style={styles.root}>
       <TopBar title="设置" onBack={onBack} titleSize={28} />
+
+      <AppSheet
+        visible={profileOpen}
+        title="昵称与头像"
+        onClose={() => setProfileOpen(false)}
+        footer={
+          <TextButton
+            label="保存昵称"
+            onPress={() => {
+              updateProfile({displayName: nickDraft.trim() || null}).catch(
+                () => undefined,
+              );
+              setProfileOpen(false);
+            }}
+          />
+        }>
+        <View style={{alignItems: 'center', marginBottom: 16}}>
+          <RoleAvatar
+            role={role}
+            name={state.displayName || state.username || undefined}
+            size={88}
+            avatarStyle={state.avatarStyle}
+            imageUri={
+              state.avatarImagePath ? `file://${state.avatarImagePath}` : null
+            }
+            ringColor={colors.primary}
+            onColor={colors.onSurface}
+          />
+        </View>
+        <Text style={[type.label, {color: colors.onSurfaceVariant}]}>昵称</Text>
+        <TextInput
+          value={nickDraft}
+          onChangeText={setNickDraft}
+          placeholder={state.username ?? '主人 / 小狗'}
+          placeholderTextColor={colors.onSurfaceVariant}
+          accessibilityLabel="昵称"
+          maxLength={24}
+          style={[
+            styles.profileInput,
+            {
+              color: colors.onSurface,
+              borderColor: colors.outline,
+              backgroundColor: colors.surface,
+            },
+          ]}
+        />
+        <Text
+          style={[
+            type.label,
+            {color: colors.onSurfaceVariant, marginTop: 16},
+          ]}>
+          头像
+        </Text>
+        {(['role', 'initial', 'photo'] as const).map(option => {
+          const label =
+            option === 'role'
+              ? '角色剪影（主人 / 小狗）'
+              : option === 'initial'
+                ? '名字首字'
+                : '相册照片';
+          const active = state.avatarStyle === option;
+          return (
+            <Pressable
+              key={option}
+              accessibilityRole="radio"
+              accessibilityState={{selected: active}}
+              accessibilityLabel={label}
+              onPress={() => {
+                if (option === 'photo') {
+                  native
+                    .pickImage(200000, false)
+                    .then(async picked => {
+                      if (!picked?.base64) {
+                        return;
+                      }
+                      await native
+                        .makeDir(joinPath(paths.files, 'qi'))
+                        .catch(() => false);
+                      const path = joinPath(paths.files, 'qi', 'avatar.png');
+                      await native.writeBase64(path, picked.base64);
+                      await updateProfile({
+                        avatarStyle: 'photo',
+                        avatarImagePath: path,
+                      });
+                    })
+                    .catch((error: any) =>
+                      showToast(error?.message ?? '选择照片失败'),
+                    );
+                  return;
+                }
+                updateProfile({avatarStyle: option}).catch(() => undefined);
+              }}
+              style={styles.profileOption}>
+              <Text style={[type.body, {color: colors.onSurface}]}>{label}</Text>
+              <View
+                style={[
+                  styles.radio,
+                  {
+                    borderColor: active ? colors.primary : colors.outline,
+                    backgroundColor: active ? colors.primary : 'transparent',
+                  },
+                ]}
+              />
+            </Pressable>
+          );
+        })}
+      </AppSheet>
+
       <ScrollView
         contentContainerStyle={{
           padding: tokens.contentPadding,
           paddingTop: 8,
           paddingBottom: 40,
         }}>
+        <Group title="个人资料">
+          <Row
+            label="昵称"
+            value={state.displayName || state.username || '未设置'}
+            onPress={() => {
+              setNickDraft(state.displayName ?? '');
+              setProfileOpen(true);
+            }}
+          />
+          <Divider color={withAlpha(colors.outline, 0.3)} />
+          <Row
+            label="头像"
+            value={
+              state.avatarStyle === 'photo'
+                ? '相册照片'
+                : state.avatarStyle === 'initial'
+                  ? '名字首字'
+                  : '角色剪影'
+            }
+            onPress={() => setProfileOpen(true)}
+          />
+        </Group>
+
         <Group title="界面设置">
           <Row
             label="颜色风格"
@@ -410,5 +548,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 6,
+  },
+  profileInput: {
+    marginTop: 6,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+  },
+  profileOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 48,
+  },
+  radio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
   },
 });

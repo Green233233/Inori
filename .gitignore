@@ -23,3 +23,8 @@ local.properties
 
 # local build artifacts
 /dist/
+
+# local scratch / dev data
+.tmp-dev/
+.tmp-*.log
+react-native/node_modules/

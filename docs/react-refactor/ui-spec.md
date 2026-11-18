@@ -320,3 +320,24 @@ Everything in scope is a Material vector icon — no bitmaps or custom-drawn gly
 8. **Empty-state flash** on cold start affects 3 screens; gate on a `loaded` flag rather than porting the bug.
 9. **Outlined-vs-filled tab icons**: `Dashboard` has no exact outlined Material counterpart, and `FavoriteBorder` is the outlined heart — verify silhouettes at 24 dp.
 10. **Editor is out of scope here** (web-based rich editor: stickers, doodle, fonts), but its category/weather/mood pickers, font chips and empty-save guard are surfaces the RN shell must still own.
+
+## v0.6.0 新增页面与交互契约
+
+| 页面 | 入口 | 关键交互 |
+|---|---|---|
+| 绑定 / 配对 | 登录后 | 角色二选一 → 生成/输入 8 位码 → 双端核对 6 位 SAS → 确认绑定；等待对方时 2.5s 轮询（仅前台） |
+| 主页（双端） | Tab 1 | 角色态 hero（在线点 + 同伴名 + 校验状态 + 最近同步）；主人端「和好券 / 日记」双按钮 + 管控与查看 5 行；小狗端「我的权限」4 行 + 装扮问候语 |
+| 设备管控中心 | 主人端主页 | hero（在线/电量/档位）+ 6 动作块（查看屏幕/使用时长/定位/通知/全屏消息/守护状态）+ 数据查看卡（常驻拒绝理由） |
+| 权限管控中心 | 小狗端主页·我的 | 10 行权限（设备管理器/无障碍/使用情况/悬浮窗/电池优化/通知使用权/精确闹钟/定位/照片/随时查看屏幕）+ 审计日志 |
+| 响应配置 | 我的·隐私与权限 | 三档功耗分段、使用时长/全屏消息开关、通知转发白名单（包名增删）；关闭后主人端收到明确拒绝理由 |
+| 自动规则 | 我的·隐私与权限 | 名称 + 起止时间 + 档位；跨夜窗口；开关/删除；顶部「正在生效」横幅；由守护服务心跳内评估，无额外定时器 |
+| 装扮 | 我的·联结 | 头像光环四色、主页问候语、桌面小组件标题/副标题 + 实时预览；仅本机可见不同步 |
+| 共享空间 | 双端主页 | 便签/里程碑二选一发布、下拉刷新、作者 pill（我/TA）、仅可删自己的 |
+| 任务与指令 | 主人端主页 / 小狗端主页 | 主人下达任务（标题+说明）；小狗报备（文字）；主人验收/打回；状态三态统计 |
+| 定时规则 | 双端主页 | 时间 + 重复星期 + 内容；同步到双方，不唤醒屏幕 |
+| 相册分享 | 双端主页 | 系统选择器挑图 → 加密分块上传 → 双方可看；仅本人可删 |
+| 通知转发 | 主人端主页 / 小狗端响应配置 | 小狗端通知（脱敏数字与长串）经加密中继到主人端；黑名单在配置页维护 |
+| 和好券 | Tab 2 | 主人签发（和好券/考试免罚券）、小狗派发奖励券；小狗核销；奖励券由主人填奖励内容；券码 7 字母 + · + 7 数字，核销不可撤销 |
+| TA 的日记（只读） | 日记列表 TA 条目 | 原生块渲染（文字/图片/列表/贴纸），点图进全局查看器；不使用 WebView |
+
+统一约束：单主操作、单强调色，无新增渐变/模糊；动画只走合成器属性且 ≤200ms；图标按钮必带 `accessibilityLabel`；长列表用 FlatList 虚拟化；所有失败路径给中文可读理由（不静默）。

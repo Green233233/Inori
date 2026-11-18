@@ -16,11 +16,11 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="GPLv3" /></a>
   <a href="https://developer.android.com/"><img src="https://img.shields.io/badge/Platform-Android%2029%2B-3DDC84.svg" alt="Android 29+" /></a>
-  <a href="#版本更新日志"><img src="https://img.shields.io/badge/Version-Alpha%20v0.5.3--react-orange.svg" alt="Alpha v0.5.3-react" /></a>
+  <a href="#版本更新日志"><img src="https://img.shields.io/badge/Version-v0.6.0-orange.svg" alt="v0.6.0" /></a>
 </p>
 
 > **分支说明**：本 `react` 分支使用 **React Native 0.88** 重构了应用界面，采用 **Apple Music「新发现」式黑底亮色、轻量玻璃与鲜明撞色** 设计，尽可能保持精简，并保留原有全部功能与布局结构；Jetpack Compose 版本保留在 `main` 分支。
-> 版本：**Alpha v0.5.3-react**（versionCode 8）。React Native 应用位于 [`react-native/`](react-native/)。
+> 版本：**v0.6.0**（versionCode 9）。React Native 应用位于 [`react-native/`](react-native/)，自建服务器位于 [`server/`](server/)。
 
 ---
 
@@ -47,7 +47,7 @@
 
 项目英文名 **Inorinal** 来自 inori（祈）与 journal 的结合。应用内品牌名称为「祈」。关于页里有一句很私人的献词——那是作者写给最亲爱的人的。我们把这份温柔保留在开源仓库里，也希望使用者在自己的日常中，找到同样安静的角落。
 
-当前版本为 **Alpha v0.5.3-react**（React Native 重构版）。功能与 Compose 版本对齐，界面改为黑底编辑感、轻量玻璃与鲜明撞色风格，仍属于 Alpha 迭代：交互会继续打磨，稳定性会继续加强，欢迎 Issue 与 Pull Request。
+当前版本为 **v0.6.0**：在原有日记能力之上，增加了一对一「主人 / 小狗」联结、授权式设备管控、共享日记、和好券与共享空间，并配套可自托管的服务器。仍属于 Alpha 迭代：交互会继续打磨，稳定性会继续加强，欢迎 Issue 与 Pull Request。
 
 ---
 
@@ -56,11 +56,23 @@
 | 维度 | 说明 |
 |------|------|
 | 平台 | Android 10（API 29）及以上 |
-| 数据 | 本地 JSON 条目库 + 本地媒体目录（`filesDir`），默认不上云 |
+| 形态 | 同一 APK 内置主人端与小狗端，角色由配对关系决定 |
+| 联结 | 邀请码注册 + 8 位绑定码 + 六位 SAS 校验；服务器可自托管 |
+| 数据 | 本地 JSON 条目库 + 本地媒体目录（`filesDir`）；联结后的共享数据端到端加密 |
 | 编辑 | WebView 富文本编辑器（文字 / 涂鸦 / 照片 / 贴纸） |
 | 界面 | React Native 0.88，Apple Music 式鲜明撞色 + 轻量玻璃，浅色 / 深色 / 跟随系统 |
 | 备份 | ZIP 导出 / 导入，含条目媒体与用户贴纸库，兼容 Compose 版备份格式 |
 | 许可 | GNU General Public License v3.0 |
+
+### 三个层次
+
+1. **日记**（默认可用）：本地优先，不登录也能写；分享与否逐篇可控。
+2. **联结**（需要自建服务器）：主人端 / 小狗端一对一绑定，共享日记与共享空间。
+3. **授权式管控**（逐项由小狗端授予）：屏幕共享、使用时长、定位、通知转发、全屏消息；
+   任何一项都能在小狗端随时撤回，主人端无法远程恢复。
+
+加密方式：ECDH P-256 → HKDF-SHA256 → AES-256-GCM，私钥由 Android Keystore 包裹；
+服务器只保存密文。和好券卡密由服务器 Ed25519 签名，是唯一的签名例外。
 
 「祈」适合这样的人：
 
@@ -100,6 +112,19 @@
 - 在「我的」中导出全部条目为 ZIP；
 - 备份包含 `manifest.json`、条目媒体 `media/...`，以及用户贴纸库 `stickers/...`；
 - 导入时可跳过已存在条目，尽量安全合并。
+
+### 联结与装置（v0.6.0）
+
+- **双端联结**：邀请码注册、8 位绑定码、六位 SAS 双端核对；随时解绑，解绑后服务器会删除该配对的密文。
+- **共享日记**：逐篇选择私密或共享；对方条目在本机只读呈现（原生块渲染，图片整幅显示、可点开全局查看器），并带 `TA` 徽标。
+- **设备权限中心**（小狗端）：设备管理器、使用情况、无障碍（当前不使用）、悬浮窗、电池优化、通知使用权、精确闹钟、定位、照片、屏幕共享，逐项授予与撤回，撤回即时同步给主人。
+- **设备管控中心**（主人端）：守护状态与在线电量、使用时长、定位、通知摘要、全屏消息、屏幕截图，命令全部经端到端加密通道下发。
+- **响应配置**（小狗端）：功耗三档（省电 / 智能 / 实时）、使用时长与全屏消息开关、通知转发黑名单；关掉后主人会收到明确的拒绝理由。
+- **自动规则**（小狗端）：按时间段自动切档，例如 22:30–07:00 省电；规则镜像进守护服务、在心跳里顺手判断，不加定时器、不额外唤醒。
+- **装扮**（小狗端）：头像光环、主页问候语、桌面小组件文案，只存本机、不同步。
+- **和好券 / 奖励券**：主人签发和好券、小狗派发奖励券；Ed25519 签名、一次性核销、加密备注、CSV 导出与审计。
+- **共享空间 / 任务报备 / 定时规则 / 相册分享**：便签与里程碑、下任务到报备验收、到点提醒、加密相册，内容全部端到端加密。
+- **桌面小组件**：显示联结状态与自定义文案，由 App 推动更新，不独立联网。
 
 ### 体验细节
 
@@ -237,6 +262,27 @@ APK 输出（构建目录重定向到 `C:/rn-build`，避免 OneDrive 锁文件�
 adb install -r app-debug.apk
 ```
 
+### 自建服务器（`server/`）
+
+要求 Python 3.11+ 与 `cryptography`：
+
+```bash
+pip install cryptography
+
+# 签发注册邀请码（每个账号一个，8 位）
+python server/tools/issue_invite.py --data-dir data/dev --count 3
+
+# 启动（默认 8095；数据为 SQLite + 密钥文件）
+python server/run.py --host 0.0.0.0 --port 8095 --data-dir data/dev
+
+# 自测
+python server/tests/test_api.py
+```
+
+客户端首次进入「联结 → 服务器设置」填写地址（模拟器访问本机用 `http://10.0.2.2:8095`）。
+发行包默认只允许 HTTPS，请在生产环境用反向代理（Caddy / Nginx）提供 TLS；调试包放开了
+`10.0.2.2` / `localhost` 的明文访问，仅供本地联调。
+
 ### Jetpack Compose 旧版（`main` 分支）
 
 ```bash
@@ -364,5 +410,5 @@ Alpha 阶段可能探索的方向包括：更细的排版样式、贴纸与文�
 ---
 
 **仓库：** [github.com/Green233233/Inorinal](https://github.com/Green233233/Inorinal)  
-**当前版本：** Alpha v0.5.3-react（React Native 重构版）  
+**当前版本：** v0.6.0  
 **许可证：** GPL-3.0

@@ -8,6 +8,7 @@
     "lint": "eslint .",
     "start": "react-native start",
     "test": "jest",
+    "typecheck": "tsc --noEmit",
     "icons:generate": "node scripts/generate-glass-icons.mjs",
     "icons:check": "node scripts/check-glass-icons.mjs"
   },

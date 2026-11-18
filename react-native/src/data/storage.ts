@@ -56,6 +56,9 @@ function normalizeSummary(raw: any): EntrySummary | null {
     updatedAt: Number(raw.updatedAt) || Date.now(),
     preview: String(raw.preview ?? ''),
     searchText: String(raw.searchText ?? ''),
+    visibility: raw.visibility === 'private' ? 'private' : 'pair',
+    authorDeviceId: raw.authorDeviceId ? String(raw.authorDeviceId) : undefined,
+    readOnly: raw.readOnly === true,
   };
 }
 
@@ -112,6 +115,10 @@ export async function getEntry(id: string): Promise<JournalEntry | null> {
       imageUrl: raw.imageUrl ? String(raw.imageUrl) : null,
       createdAt: Number(raw.createdAt) || Date.now(),
       updatedAt: Number(raw.updatedAt) || Date.now(),
+      visibility: raw.visibility === 'private' ? 'private' : 'pair',
+      authorDeviceId: raw.authorDeviceId ? String(raw.authorDeviceId) : undefined,
+      revision: Number(raw.revision) || 1,
+      deletedAt: Number(raw.deletedAt) || null,
     };
   } catch {
     return null;
@@ -146,6 +153,9 @@ export async function saveEntry(
       updatedAt: entry.updatedAt,
       preview: previewOf(content),
       searchText: htmlToPlainText(content).slice(0, 200000),
+      visibility: entry.visibility === 'private' ? 'private' : 'pair',
+      authorDeviceId: entry.authorDeviceId,
+      readOnly: false,
     };
     const json = JSON.stringify({
       id: entry.id,
@@ -159,6 +169,10 @@ export async function saveEntry(
       imageUrl: entry.imageUrl ?? null,
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
+      visibility: entry.visibility === 'private' ? 'private' : 'pair',
+      authorDeviceId: entry.authorDeviceId,
+      revision: entry.revision ?? 1,
+      deletedAt: entry.deletedAt ?? null,
     });
     await native.writeText(
       joinPath(paths.entries(), `${entry.id}.json`),

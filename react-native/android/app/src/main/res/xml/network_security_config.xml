@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Release trust model: system CAs plus user-installed CAs (the self-hosted
+  server may use an internal CA). Cleartext is disabled; the app can also pin a
+  server certificate fingerprint at runtime.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

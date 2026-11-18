@@ -1,10 +1,14 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   Animated,
   Modal,
+  PanResponder,
   Pressable,
+  ScrollView,
   StyleSheet,
+  StyleProp,
   Text,
+  useWindowDimensions,
   View,
   ViewStyle,
 } from 'react-native';
@@ -119,10 +123,12 @@ export function TextButton({
   label,
   onPress,
   color,
+  style,
 }: {
   label: string;
   onPress: () => void;
   color?: string;
+  style?: StyleProp<ViewStyle>;
 }) {
   const {colors} = useAppTheme();
   return (
@@ -131,7 +137,10 @@ export function TextButton({
       accessibilityLabel={label}
       onPress={onPress}
       hitSlop={8}
-      style={({pressed}) => ({opacity: pressed ? 0.6 : 1})}>
+      style={({pressed}) => [
+        {opacity: pressed ? 0.6 : 1, alignSelf: 'flex-start'},
+        style,
+      ]}>
       <Text style={[styles.textButtonLabel, {color: color ?? colors.primary}]}>
         {label}
       </Text>
@@ -317,7 +326,82 @@ export function AppSheet({
 }) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
+  const {height: windowHeight} = useWindowDimensions();
   const {mounted, progress} = useModalPresence(visible);
+
+  /**
+   * The sheet keeps two heights: the height its content actually needs, and the
+   * expanded height (80% of the window) the user can drag the handle up to.
+   * Height is measured instead of guessed so the last line is never clipped.
+   */
+  const expandedHeight = Math.round(windowHeight * 0.8);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [footerHeight, setFooterHeight] = useState(0);
+  const [expanded, setExpanded] = useState(false);
+  const heightAnim = useRef(new Animated.Value(0)).current;
+  const dragStartRef = useRef(0);
+
+  const chromeHeight = 30 + (title ? 34 : 0) + insets.bottom + 4;
+  const naturalHeight = useMemo(() => {
+    const raw = contentHeight + footerHeight + chromeHeight;
+    return Math.max(180, Math.min(expandedHeight, raw));
+  }, [contentHeight, footerHeight, chromeHeight, expandedHeight]);
+
+  useEffect(() => {
+    if (!mounted) {
+      setExpanded(false);
+      return;
+    }
+    heightAnim.setValue(naturalHeight);
+  }, [mounted, naturalHeight, heightAnim]);
+
+  useEffect(() => {
+    if (mounted) {
+      Animated.timing(heightAnim, {
+        toValue: expanded ? expandedHeight : naturalHeight,
+        duration: DURATION.fast,
+        useNativeDriver: false,
+      }).start();
+    }
+  }, [expanded, expandedHeight, naturalHeight, mounted, heightAnim]);
+
+  const pan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_evt, gesture) =>
+          Math.abs(gesture.dy) > 2,
+        onPanResponderGrant: () => {
+          dragStartRef.current = expanded ? expandedHeight : naturalHeight;
+        },
+        onPanResponderMove: (_evt, gesture) => {
+          const next = Math.min(
+            expandedHeight,
+            Math.max(naturalHeight, dragStartRef.current - gesture.dy),
+          );
+          heightAnim.setValue(next);
+        },
+        onPanResponderRelease: (_evt, gesture) => {
+          if (gesture.dy < -40) {
+            setExpanded(true);
+          } else if (gesture.dy > 60) {
+            if (expanded) {
+              setExpanded(false);
+            } else {
+              onClose();
+            }
+          } else {
+            Animated.timing(heightAnim, {
+              toValue: expanded ? expandedHeight : naturalHeight,
+              duration: DURATION.fast,
+              useNativeDriver: false,
+            }).start();
+          }
+        },
+      }),
+    [expanded, expandedHeight, naturalHeight, heightAnim, onClose],
+  );
+
   if (!mounted) {
     return null;
   }
@@ -339,21 +423,53 @@ export function AppSheet({
               },
             ],
           }}>
-          <GlassSurface strong radius={26} elevation={18} style={[styles.sheetCard, {paddingBottom: insets.bottom + 4}]}>
-            <View style={[styles.sheetHandle, {backgroundColor: colors.outline}]} />
-            {title ? (
-              <Text style={[styles.sheetTitle, {color: colors.onSurface}]}>
-                {title}
-              </Text>
-            ) : null}
-            <View
-              style={{paddingHorizontal: tokens.sheetPadding, paddingBottom: 12}}>
-              {children}
-            </View>
-            {footer ? (
-              <View style={{padding: tokens.sheetPadding}}>{footer}</View>
-            ) : null}
-          </GlassSurface>
+          <Animated.View style={{height: heightAnim}}>
+            <GlassSurface
+              strong
+              radius={26}
+              elevation={18}
+              style={[styles.sheetCard, {maxHeight: expandedHeight, paddingBottom: insets.bottom + 4}]}>
+              <View {...pan.panHandlers} style={styles.sheetHandleHit}>
+                <View style={[styles.sheetHandle, {backgroundColor: colors.outline}]} />
+              </View>
+              {title ? (
+                <Text style={[styles.sheetTitle, {color: colors.onSurface}]}>
+                  {title}
+                </Text>
+              ) : null}
+              <ScrollView
+                style={styles.sheetScroll}
+                contentContainerStyle={{
+                  paddingHorizontal: tokens.sheetPadding,
+                  paddingBottom: 12,
+                }}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}>
+                <View
+                  onLayout={event => {
+                    const next = event.nativeEvent.layout.height;
+                    setContentHeight(previous =>
+                      Math.abs(previous - next) > 1 ? next : previous,
+                    );
+                  }}>
+                  {children}
+                </View>
+              </ScrollView>
+              {footer ? (
+                <View
+                  onLayout={event => {
+                    const next = event.nativeEvent.layout.height;
+                    setFooterHeight(previous =>
+                      Math.abs(previous - next) > 1 ? next : previous,
+                    );
+                  }}
+                  style={{paddingHorizontal: tokens.sheetPadding, paddingTop: 8}}>
+                  {footer}
+                </View>
+              ) : null}
+            </GlassSurface>
+          </Animated.View>
         </Animated.View>
       </View>
     </Modal>
@@ -463,6 +579,12 @@ export const styles = StyleSheet.create({
     paddingTop: 10,
     maxHeight: '85%',
   },
+  sheetHandleHit: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    paddingTop: 6,
+    paddingBottom: 10,
+  },
   sheetHandle: {
     width: 36,
     height: 4,
@@ -470,6 +592,7 @@ export const styles = StyleSheet.create({
     alignSelf: 'center',
     opacity: 0.6,
   },
+  sheetScroll: {flexShrink: 1},
   sheetTitle: {...type.section, padding: 18, paddingBottom: 10},
   pill: {
     flexDirection: 'row',

@@ -2,11 +2,15 @@ package com.inorinal.nativebridge
 
 import android.app.Activity
 import android.content.ContentResolver
+import android.content.ContentValues
 import android.content.Intent
 import android.database.sqlite.SQLiteDatabase
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.Base64
 import com.facebook.react.bridge.ActivityEventListener
@@ -320,6 +324,64 @@ class InorinalModule(
       } catch (t: Throwable) {
         pendingDocumentSaves.remove(requestCode)
         promise.reject("SAVE_DOCUMENT_FAILED", t.message ?: "Unable to open document saver", t)
+      }
+    }
+  }
+
+  /**
+   * Writes an in-memory image into the device gallery (Pictures/Qi).
+   *
+   * Uses MediaStore scoped storage, so no runtime permission is needed on API 29+; the file shows up
+   * in the system gallery right away and stays owned by the user.
+   */
+  @ReactMethod
+  fun saveImageToGallery(base64: String, fileName: String, promise: Promise) {
+    runAsync(promise) {
+      val bytes = decodeBase64(base64)
+      if (bytes.isEmpty()) {
+        throw InorinalException("EMPTY_IMAGE", "Empty image payload")
+      }
+      val mime =
+          when {
+            bytes.size > 3 &&
+                bytes[0].toInt() and 0xFF == 0xFF &&
+                bytes[1].toInt() and 0xFF == 0xD8 -> "image/jpeg"
+            bytes.size > 8 &&
+                bytes[0].toInt() and 0xFF == 0x89 &&
+                bytes[1].toInt() and 0xFF == 0x50 -> "image/png"
+            bytes.size > 12 &&
+                String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF" -> "image/webp"
+            else -> "image/jpeg"
+          }
+      val extension = if (mime == "image/png") "png" else "jpg"
+      val safeName =
+          sanitizeFileName(fileName).ifBlank { "qi-${System.currentTimeMillis()}.$extension" }
+      val resolver = reactAppContext.contentResolver
+      val values =
+          ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, safeName)
+            put(MediaStore.Images.Media.MIME_TYPE, mime)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+              put(
+                  MediaStore.Images.Media.RELATIVE_PATH,
+                  Environment.DIRECTORY_PICTURES + "/Qi")
+              put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+          }
+      val uri =
+          resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+              ?: throw InorinalException("GALLERY_INSERT_FAILED", "MediaStore refused the insert")
+      try {
+        resolver.openOutputStream(uri)?.use { it.write(bytes) }
+            ?: throw InorinalException("GALLERY_WRITE_FAILED", "No output stream for the new image")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          resolver.update(
+              uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+        }
+        uri.toString()
+      } catch (t: Throwable) {
+        runCatching { resolver.delete(uri, null, null) }
+        throw t
       }
     }
   }

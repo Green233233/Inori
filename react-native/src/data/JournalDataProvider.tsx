@@ -9,9 +9,12 @@ import React, {
 import {EntrySummary} from './types';
 import {computeStats, loadIndex, Stats} from './storage';
 import {migrateLegacyEntries} from './migration';
+import {partnerSummaries} from '../sync/partnerStore';
 
 interface JournalDataValue {
   entries: EntrySummary[];
+  ownEntries: EntrySummary[];
+  partnerEntries: EntrySummary[];
   favorites: EntrySummary[];
   stats: Stats;
   loading: boolean;
@@ -21,16 +24,22 @@ interface JournalDataValue {
 const JournalDataContext = createContext<JournalDataValue | null>(null);
 
 export function JournalDataProvider({children}: {children: React.ReactNode}) {
-  const [entries, setEntries] = useState<EntrySummary[]>([]);
+  const [ownEntries, setOwnEntries] = useState<EntrySummary[]>([]);
+  const [partnerEntries, setPartnerEntries] = useState<EntrySummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
       const list = await loadIndex();
-      setEntries(list);
+      setOwnEntries(list);
     } catch (error) {
       console.warn('Failed to load journal index', error);
-      setEntries([]);
+      setOwnEntries([]);
+    }
+    try {
+      setPartnerEntries(await partnerSummaries());
+    } catch {
+      setPartnerEntries([]);
     } finally {
       setLoading(false);
     }
@@ -48,15 +57,20 @@ export function JournalDataProvider({children}: {children: React.ReactNode}) {
   }, [refresh]);
 
   const value = useMemo<JournalDataValue>(() => {
-    const favorites = entries.filter(item => item.isFavorite);
+    const entries = [...ownEntries, ...partnerEntries].sort(
+      (a, b) => b.createdAt - a.createdAt,
+    );
+    const favorites = ownEntries.filter(item => item.isFavorite);
     return {
       entries,
+      ownEntries,
+      partnerEntries,
       favorites,
-      stats: computeStats(entries),
+      stats: computeStats(ownEntries),
       loading,
       refresh,
     };
-  }, [entries, loading, refresh]);
+  }, [ownEntries, partnerEntries, loading, refresh]);
 
   return (
     <JournalDataContext.Provider value={value}>

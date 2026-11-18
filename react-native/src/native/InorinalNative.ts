@@ -66,6 +66,7 @@ type InorinalNativeModule = {
   deleteSticker(fileName: string): Promise<boolean>;
   pickDocument(): Promise<PickedDocument>;
   saveDocument(base64: string, fileName: string, mime: string): Promise<string>;
+  saveImageToGallery(base64: string, fileName: string): Promise<string>;
   toDisplayableHtml(entryId: string, html: string): Promise<string>;
   toStoredHtml(entryId: string, html: string): Promise<StoredHtmlResult>;
   deleteEntryMedia(entryId: string): Promise<boolean>;
@@ -122,6 +123,8 @@ export const native = {
     fileName: string,
     mime: string,
   ) => requireNative().saveDocument(base64, fileName, mime),
+  saveImageToGallery: (base64: string, fileName: string) =>
+    requireNative().saveImageToGallery(base64, fileName),
   toDisplayableHtml: (entryId: string, html: string) =>
     requireNative().toDisplayableHtml(entryId, html),
   toStoredHtml: (entryId: string, html: string) =>
