@@ -47,6 +47,7 @@ import {
   getAudit,
   getKeyInfo,
   listCoupons,
+  redeemCoupon,
   type CouponAuditEntry,
   type CouponKeyInfo,
   type CouponStatusFilter,
@@ -896,6 +897,31 @@ export default function CouponManagement({
                 备注使用端到端加密，只有你们两台设备能解开。
               </Text>
             </View>
+
+            {detail.coupon.type !== 'reward' &&
+            detail.coupon.status === 'unused' ? (
+              <View style={styles.sheetBlock}>
+                <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
+                  当面已经兑现过这张券？标记后它会立刻变成「已用」，对方那边的核销入口也会关闭。
+                </Text>
+                <OutlinedButton
+                  label="已经在线下核销"
+                  icon="check"
+                  onPress={async () => {
+                    try {
+                      await redeemCoupon(detail.coupon.code, undefined, {
+                        offline: true,
+                      });
+                      showToast('已标记为线下核销');
+                      setDetail(null);
+                      await onRefresh();
+                    } catch (failure) {
+                      showToast(errorMessage(failure, '标记失败'));
+                    }
+                  }}
+                />
+              </View>
+            ) : null}
 
             {detail.coupon.type === 'reward' &&
             detail.coupon.status === 'unused' &&

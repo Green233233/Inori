@@ -46,6 +46,9 @@ import {showToast} from '../../components/toast';
 import {qiApi} from '../../native/QiNative';
 import {qiDeviceAvailable, qiGuard, qiWidget} from '../../native/QiDevice';
 import {syncJournal, SyncResult} from '../../sync/partnerStore';
+import {configureReminders} from '../../sync/reminders';
+import {scanAlerts} from '../../sync/alerts';
+import {refreshTasks} from '../../sync/tasks';
 import {
   CommandKind,
   CommandReply,
@@ -89,6 +92,8 @@ interface QiContextValue {
   refreshPair: () => Promise<PairSummary | null>;
   unpair: () => Promise<void>;
   setPowerTier: (tier: PowerTier) => Promise<void>;
+  /** 改自己的名字：绑定名与昵称合并成同一个可改的值。 */
+  renameSelf: (name: string) => Promise<void>;
   updateProfile: (patch: {
     displayName?: string | null;
     avatarStyle?: 'role' | 'initial' | 'photo';
@@ -389,6 +394,8 @@ export function QiProvider({children}: {children: React.ReactNode}) {
     }
     const result = await syncJournal(current.pair, current.deviceId);
     setLastSyncAt(Date.now());
+    // 通知只在拿到新数据后弹一次：谁刷新到，谁负责提醒。
+    await scanAlerts(current.pair.myRole).catch(() => undefined);
     return result;
   }, []);
 
@@ -402,6 +409,32 @@ export function QiProvider({children}: {children: React.ReactNode}) {
         await patch(next);
       }),
     [patch, run],
+  );
+
+  /**
+   * 改名字：服务端只存两份名字（owner_name / puppy_name），「昵称」就是它。
+   * 按自己的角色只改自己那一份，再拉一次配对信息让两端一致。
+   */
+  const renameSelf = useCallback(
+    (name: string) =>
+      run(async () => {
+        const trimmed = name.trim().slice(0, 24);
+        if (!trimmed) {
+          throw new Error('名字不能为空');
+        }
+        const role = state.pair?.myRole;
+        if (!role) {
+          await patch({displayName: trimmed});
+          return;
+        }
+        await api('/api/v1/pairs', {
+          method: 'PATCH',
+          body: role === 'MASTER' ? {ownerName: trimmed} : {puppyName: trimmed},
+        });
+        await refreshPair();
+        await patch({displayName: trimmed});
+      }),
+    [patch, refreshPair, run, state.pair?.myRole],
   );
 
   const stage: QiStage = useMemo(() => {
@@ -483,6 +516,11 @@ export function QiProvider({children}: {children: React.ReactNode}) {
       .catch(() => undefined);
   }, [stage]);
 
+  // 定时规则要按「只在本机响」过滤，角色必须传给排程器。
+  useEffect(() => {
+    configureReminders(state.pair?.myRole ?? 'MASTER');
+  }, [state.pair?.myRole]);
+
   const cursorRef = useRef(state.relayCursor);
   useEffect(() => {
     cursorRef.current = state.relayCursor;
@@ -516,6 +554,12 @@ export function QiProvider({children}: {children: React.ReactNode}) {
           }
           if (page.items.length > 0) {
             await refreshPair().catch(() => undefined);
+            // 对方有新动作：顺手拉一次任务并弹通知（长轮询本身就是心跳，不额外起定时器）。
+            const latest = await loadQiState();
+            if (latest.pair) {
+              await refreshTasks(latest.pair).catch(() => undefined);
+              await scanAlerts(latest.pair.myRole).catch(() => undefined);
+            }
           }
           if (page.cursor !== cursorRef.current) {
             cursorRef.current = page.cursor;
@@ -586,6 +630,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
       unpair,
       setPowerTier,
       updateProfile,
+      renameSelf,
       setPolicy,
       setAutoRules,
       setAppearance,

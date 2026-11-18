@@ -313,7 +313,16 @@ def redeem(db: Database, ctx: dict, keyring: Keyring, body: dict) -> dict:
             raise conflict("signature_invalid", "卡密签名校验失败，疑似伪造",
                            coupon=_item(row))
         is_master = pairing.is_master(pair, ctx["deviceId"])
-        if row["type"] == REWARD_TYPE:
+        # 线下核销：签发方在现实里已经兑现（当面给过 / 已履行），可自行标记为已用。
+        # 只有签发设备本身能这样做，且必须显式声明 offline，避免被当成普通核销绕过角色限制。
+        offline = bool(body.get("offline"))
+        if offline:
+            # 表里不记签发设备，签发方由券种反推：奖励券由小狗签发、其余由主人签发。
+            issuer_is_master = row["type"] != REWARD_TYPE
+            if issuer_is_master != is_master:
+                db.conn.execute("ROLLBACK")
+                raise forbidden("issuer_only", "只有签发这张券的一方可以标记线下已核销")
+        elif row["type"] == REWARD_TYPE:
             if not is_master:
                 db.conn.execute("ROLLBACK")
                 raise forbidden("master_only", "奖励券由主人核销领取")

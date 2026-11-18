@@ -31,13 +31,6 @@ import {
 import {clearLogs, setDebugEnabled} from '../debug/logger';
 import {logEvent} from '../debug/logger';
 
-const FONT_OPTIONS = [
-  {label: '小', value: 14},
-  {label: '中', value: 16},
-  {label: '大', value: 18},
-  {label: '特大', value: 20},
-];
-
 export function SettingsScreen({
   settings,
   onChange,
@@ -48,15 +41,13 @@ export function SettingsScreen({
   onBack: () => void;
 }) {
   const {colors, tokens} = useAppTheme();
-  const {state, role, updateProfile} = useQi();
+  const {state, role, updateProfile, renameSelf} = useQi();
   const [profileOpen, setProfileOpen] = useState(false);
   const [nickDraft, setNickDraft] = useState('');
   const [styleSheetOpen, setStyleSheetOpen] = useState(false);
   const [themeSheetOpen, setThemeSheetOpen] = useState(false);
-  const [fontDialogOpen, setFontDialogOpen] = useState(false);
   const [debugDialogOpen, setDebugDialogOpen] = useState(false);
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false);
-  const [pendingFont, setPendingFont] = useState(settings.fontSize);
 
   const update = (patch: Partial<AppSettings>) => {
     onChange({...settings, ...patch});
@@ -76,9 +67,17 @@ export function SettingsScreen({
           <TextButton
             label="保存昵称"
             onPress={() => {
-              updateProfile({displayName: nickDraft.trim() || null}).catch(
-                () => undefined,
-              );
+              const nextName = nickDraft.trim();
+              // 昵称与绑定名是同一个值：有配对就按自己角色改名，没配对只改本地。
+              const task = nextName
+                ? renameSelf(nextName)
+                : Promise.resolve();
+              task
+                .then(() => updateProfile({displayName: nextName || null}))
+                .then(() => showToast('昵称已保存'))
+                .catch((error: any) =>
+                  showToast(error?.message ?? '昵称保存失败'),
+                );
               setProfileOpen(false);
             }}
           />
@@ -184,9 +183,19 @@ export function SettingsScreen({
         <Group title="个人资料">
           <Row
             label="昵称"
-            value={state.displayName || state.username || '未设置'}
+            value={
+              state.displayName ||
+              (role === 'MASTER' ? state.pair?.ownerName : state.pair?.puppyName) ||
+              state.username ||
+              '未设置'
+            }
             onPress={() => {
-              setNickDraft(state.displayName ?? '');
+              setNickDraft(
+                state.displayName ??
+                  (role === 'MASTER'
+                    ? state.pair?.ownerName ?? ''
+                    : state.pair?.puppyName ?? ''),
+              );
               setProfileOpen(true);
             }}
           />
@@ -218,29 +227,16 @@ export function SettingsScreen({
           />
           <Divider color={withAlpha(colors.outline, 0.3)} />
           <Row
-            label="字体大小"
-            value={String(settings.fontSize)}
-            onPress={() => {
-              setPendingFont(settings.fontSize);
-              setFontDialogOpen(true);
-            }}
-          />
-          <Divider color={withAlpha(colors.outline, 0.3)} />
-          <Row
             label="卡片样式"
             onPress={comingSoon('卡片样式功能即将上线')}
           />
         </Group>
 
-        <Group title="编辑设置">
+        <Group title="日记">
           <Row
-            label="默认字体"
-            onPress={comingSoon('默认字体功能即将上线')}
-          />
-          <Divider color={withAlpha(colors.outline, 0.3)} />
-          <Row
-            label="默认笔刷"
-            onPress={comingSoon('默认笔刷功能即将上线')}
+            label="日记设置"
+            value="在日记页修改"
+            onPress={() => showToast('到「日记」页右上角的齿轮里修改')}
           />
         </Group>
 
@@ -342,55 +338,6 @@ export function SettingsScreen({
                 setThemeSheetOpen(false);
               }}
             />
-          ))}
-        </View>
-      </AppSheet>
-
-      <AppSheet
-        visible={fontDialogOpen}
-        title="字体大小"
-        onClose={() => setFontDialogOpen(false)}
-        footer={
-          <View style={styles.sheetFooter}>
-            <TextButton
-              label="取消"
-              color={colors.onSurfaceVariant}
-              onPress={() => setFontDialogOpen(false)}
-            />
-            <TextButton
-              label="确定"
-              onPress={() => {
-                update({fontSize: pendingFont});
-                setFontDialogOpen(false);
-                showToast(`字体大小已设置为${pendingFont}sp`);
-              }}
-            />
-          </View>
-        }>
-        <View style={{gap: 4}}>
-          {FONT_OPTIONS.map(option => (
-            <Pressable
-              key={option.value}
-              onPress={() => setPendingFont(option.value)}
-              style={({pressed}) => [
-                styles.optionRow,
-                pressed && {
-                  backgroundColor: withAlpha(colors.primary, 0.06),
-                },
-              ]}>
-              <Text
-                style={{
-                  fontSize: option.value,
-                  color: colors.onSurface,
-                  flex: 1,
-                }}>
-                {option.label}
-              </Text>
-              <GlassIcon
-                name={pendingFont === option.value ? 'check' : 'circle'}
-                size={22}
-              />
-            </Pressable>
           ))}
         </View>
       </AppSheet>

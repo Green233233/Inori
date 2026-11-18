@@ -267,10 +267,20 @@ export async function loadSettings(): Promise<AppSettings> {
       : DEFAULT_SETTINGS.themeMode;
     const fontSize =
       typeof raw.fontSize === 'number' ? raw.fontSize : DEFAULT_SETTINGS.fontSize;
+    const defaultFont =
+      raw.defaultFont === 'sans' || raw.defaultFont === 'round'
+        ? raw.defaultFont
+        : DEFAULT_SETTINGS.defaultFont;
+    const defaultBrush =
+      raw.defaultBrush === 'marker' || raw.defaultBrush === 'pencil'
+        ? raw.defaultBrush
+        : DEFAULT_SETTINGS.defaultBrush;
     return {
       colorStyle,
       themeMode,
       fontSize,
+      defaultFont,
+      defaultBrush,
       debugMode: raw.debugMode === true,
     };
   } catch {

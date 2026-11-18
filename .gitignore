@@ -28,3 +28,5 @@ local.properties
 .tmp-dev/
 .tmp-*.log
 react-native/node_modules/
+__pycache__/
+*.pyc

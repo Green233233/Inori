@@ -105,6 +105,27 @@ class PermissionCenterModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * Opens the system "App info → Permissions" screen for this app: the one
+   * place that lists every runtime permission we ask for. Used by the puppy
+   * home card so a single tap lands next to the real switches instead of a
+   * per-permission detour.
+   */
+  @ReactMethod
+  fun openAppSettings(promise: Promise) {
+    try {
+      val intent =
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+          data = Uri.fromParts("package", reactApplicationContext.packageName, null)
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+      reactApplicationContext.startActivity(intent)
+      promise.resolve(true)
+    } catch (ignored: Exception) {
+      promise.resolve(false)
+    }
+  }
+
   /** Batch variant used when the onboarding page walks the list once. */
   @ReactMethod
   fun openSettingsFor(keys: ReadableArray, promise: Promise) {

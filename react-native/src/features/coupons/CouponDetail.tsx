@@ -12,11 +12,13 @@ import {SoftCard} from '../../components/Surfaces';
 import {FlatButton, OutlinedButton, TextButton} from '../../components/Ui';
 import {useAppTheme} from '../../theme/AppThemeProvider';
 import {type} from '../../theme/typography';
+import {showToast} from '../../components/toast';
 import {useQi} from '../qi/QiProvider';
 import type {Coupon} from '../../data/pairTypes';
 import {errorMessage} from '../../net/ApiClient';
 import {
   describeVerifyResult,
+  redeemCoupon,
   verifyCoupon,
   type CouponBanner,
   type CouponVerifyResult,
@@ -45,6 +47,7 @@ export default function CouponDetail({
   const {pair} = useQi();
 
   const [verifying, setVerifying] = useState(false);
+  const [markingOffline, setMarkingOffline] = useState(false);
   const [banner, setBanner] = useState<CouponBanner | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesLoading, setNotesLoading] = useState(false);
@@ -206,6 +209,33 @@ export default function CouponDetail({
             }}
           />
         </View>
+
+        {coupon.status === 'unused' && coupon.type === 'reward' ? (
+          <View style={styles.block}>
+            <OutlinedButton
+              label={markingOffline ? '标记中…' : '已经在线下核销'}
+              icon="check"
+              onPress={() => {
+                if (markingOffline) {
+                  return;
+                }
+                setMarkingOffline(true);
+                redeemCoupon(coupon.code, undefined, {offline: true})
+                  .then(() => {
+                    showToast('已标记为线下核销');
+                    onBack?.();
+                  })
+                  .catch((failure) => {
+                    showToast(errorMessage(failure, '标记失败'));
+                  })
+                  .finally(() => setMarkingOffline(false));
+              }}
+            />
+            <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
+              奖励已经当面给过了？标记后两边都视为已兑现。
+            </Text>
+          </View>
+        ) : null}
 
         {coupon.status === 'unused' && onRedeem ? (
           <FlatButton label="去核销" onPress={() => onRedeem(coupon)} />

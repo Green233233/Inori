@@ -305,6 +305,24 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(redeemed["coupon"]["status"], "used")
         self.assertEqual(redeemed["coupon"]["usedNoteCipher"], "reward-note")
 
+    def test_issuer_can_mark_coupon_used_offline(self) -> None:
+        """签发方可以声明「已经在线下核销」，非签发方不行。"""
+        master, puppy, _, _ = self._paired()
+        coupon = master.call("POST", "/api/v1/coupons",
+                             {"type": "hehao", "count": 1})["coupons"][0]
+        # 小狗端不是签发方，不能替主人把券标成线下已用。
+        denied = puppy.call(
+            "POST", "/api/v1/coupons/redeem",
+            {"code": coupon["code"], "offline": True}, expect=403,
+        )
+        self.assertEqual(denied["error"]["code"], "issuer_only")
+        used = master.call("POST", "/api/v1/coupons/redeem",
+                           {"code": coupon["code"], "offline": True})
+        self.assertEqual(used["coupon"]["status"], "used")
+        again = master.call("POST", "/api/v1/coupons/redeem",
+                            {"code": coupon["code"], "offline": True}, expect=409)
+        self.assertEqual(again["error"]["code"], "already_used")
+
     def test_coupon_single_use_under_concurrency(self) -> None:
         master, puppy, _, _ = self._paired()
         coupon = master.call("POST", "/api/v1/coupons",

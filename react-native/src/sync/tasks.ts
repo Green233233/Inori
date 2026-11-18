@@ -23,6 +23,8 @@ export interface QiTask {
   createdAt: number;
   updatedAt: number;
   submittedText?: string;
+  /** 报备附图：相册媒体 id（走分块媒体，不进 <96KB 的同步记录）。 */
+  submittedPhotoId?: string;
   submittedAt?: number;
   verdictText?: string;
   verdictAt?: number;
@@ -154,11 +156,13 @@ export async function submitTask(
   pair: PairSummary,
   task: QiTask,
   text: string,
+  photoId?: string,
 ): Promise<QiTask> {
   const next: QiTask = {
     ...task,
     status: 'submitted',
     submittedText: text.trim().slice(0, 300),
+    submittedPhotoId: photoId ?? task.submittedPhotoId,
     submittedAt: Date.now(),
     updatedAt: Date.now(),
   };

@@ -10,6 +10,8 @@ import {native, joinPath, paths} from '../native/InorinalNative';
 import {qiDeviceAvailable, qiReminder} from '../native/QiDevice';
 import type {PairSummary} from '../data/pairTypes';
 
+export type ReminderScope = 'both' | 'master' | 'puppy';
+
 export interface Reminder {
   id: string;
   time: string; // HH:MM
@@ -17,6 +19,22 @@ export interface Reminder {
   message: string;
   enabled: boolean;
   updatedAt: number;
+  /** 谁接收：双方 / 仅主人 / 仅小狗。 */
+  scope: ReminderScope;
+}
+
+let myRole: 'MASTER' | 'PUPPY' = 'MASTER';
+
+/** 由 QiProvider 在就绪时告知本机角色，用于按 scope 过滤是否本机弹。 */
+export function configureReminders(role: 'MASTER' | 'PUPPY'): void {
+  myRole = role;
+}
+
+function shouldRing(reminder: Reminder): boolean {
+  if (reminder.scope === 'both') {
+    return true;
+  }
+  return reminder.scope === 'master' ? myRole === 'MASTER' : myRole === 'PUPPY';
 }
 
 interface ReminderRecord {
@@ -63,6 +81,8 @@ function normalize(raw: any): ReminderState {
       message: String(value.message ?? ''),
       enabled: value.enabled !== false,
       updatedAt: Number(value.updatedAt) || 0,
+      scope:
+        value.scope === 'master' || value.scope === 'puppy' ? value.scope : 'both',
     };
   }
   return {cursor: Number(raw.cursor) || 0, items};
@@ -91,7 +111,7 @@ async function armNext(reminder: Reminder): Promise<void> {
     return;
   }
   const [hour, minute] = reminder.time.split(':').map(Number);
-  if (reminder.enabled) {
+  if (reminder.enabled && shouldRing(reminder)) {
     await qiReminder
       .schedule(
         reminder.id,
@@ -99,6 +119,7 @@ async function armNext(reminder: Reminder): Promise<void> {
         minute,
         reminder.days.join(','),
         reminder.message || '到时间啦',
+        true,
       )
       .catch(() => undefined);
   } else {
@@ -146,6 +167,7 @@ export async function createReminder(
   time: string,
   days: number[],
   message: string,
+  scope: ReminderScope = 'both',
 ): Promise<Reminder> {
   if (!/^\d{2}:\d{2}$/.test(time)) {
     throw new Error('时间格式应为 HH:MM');
@@ -157,6 +179,7 @@ export async function createReminder(
     message: message.trim().slice(0, 80),
     enabled: true,
     updatedAt: Date.now(),
+    scope,
   });
 }
 

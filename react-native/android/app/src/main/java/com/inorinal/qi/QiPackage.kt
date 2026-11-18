@@ -23,7 +23,8 @@ class QiPackage : ReactPackage {
       OverlayMessageModule(reactContext),
       AuditLogModule(reactContext),
       WidgetModule(reactContext),
-      ReminderModule(reactContext)
+      ReminderModule(reactContext),
+      NoticeModule(reactContext)
     )
 
   override fun createViewManagers(

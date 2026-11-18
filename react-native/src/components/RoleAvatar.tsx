@@ -9,6 +9,15 @@ import {Image, StyleSheet, Text, View} from 'react-native';
 
 export type AvatarStyle = 'role' | 'initial' | 'photo';
 
+/**
+ * 角色默认头像（内置图片）：`role` 档优先用这两张，缺图时才退回 View 剪影。
+ * 用户可在「头像与昵称」里换成本机照片。
+ */
+const ROLE_ART = {
+  MASTER: require('../assets/avatar_master.png'),
+  PUPPY: require('../assets/avatar_puppy.png'),
+} as const;
+
 export function RoleAvatar({
   role,
   name,
@@ -72,6 +81,28 @@ export function RoleAvatar({
           }}>
           {letter}
         </Text>
+      </View>
+    );
+  }
+
+  if (role && (avatarStyle === 'role' || !avatarStyle)) {
+    return (
+      <View
+        style={[
+          styles.shell,
+          {
+            width: size,
+            height: size,
+            borderRadius: radius,
+            borderColor: ringColor ?? 'rgba(255,255,255,0.5)',
+            overflow: 'hidden',
+          },
+        ]}>
+        <Image
+          source={ROLE_ART[role]}
+          style={{width: inner, height: inner, borderRadius: inner / 2}}
+          resizeMode="cover"
+        />
       </View>
     );
   }

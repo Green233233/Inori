@@ -11,6 +11,7 @@ import {useAppTheme} from '../../theme/AppThemeProvider';
 import {onAccentFor, withAlpha} from '../../theme/palette';
 import {type} from '../../theme/typography';
 import {GlassIcon} from '../../components/GlassIcon';
+import {MapPreview} from '../../components/MapPreview';
 import {ColorField, SoftCard} from '../../components/Surfaces';
 import {FlatButton, AppSheet, Pill} from '../../components/Ui';
 import {TopBar} from '../../components/TopBar';
@@ -281,7 +282,13 @@ export function ControlCenter({onBack}: {onBack: () => void}) {
       <AppSheet visible={sheet === 'location'} title="最近位置" onClose={() => setSheet(null)}>
         {location?.ok ? (
           <>
-            <Text style={[type.body, {color: colors.onSurface}]}>
+            <MapPreview
+              lat={Number(location.lat)}
+              lng={Number(location.lng)}
+              height={200}
+              caption={location.address || undefined}
+            />
+            <Text style={[type.body, {color: colors.onSurface, marginTop: 10}]}>
               {location.address || `${location.lat?.toFixed(5)}, ${location.lng?.toFixed(5)}`}
             </Text>
             <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 6}]}>

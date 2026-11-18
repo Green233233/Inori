@@ -12,13 +12,15 @@ import {type} from '../../theme/typography';
 import {GlassIcon} from '../../components/GlassIcon';
 import {ColorField, SoftCard} from '../../components/Surfaces';
 import {FlatButton, Pill} from '../../components/Ui';
+import {showToast} from '../../components/toast';
+import {PERMISSION_KEYS, qiDevicePermissions} from '../../native/QiDevice';
 import {useQi} from '../qi/QiProvider';
 
 export function QiHomeScreen({
   onOpenJournal,
   onOpenCoupons,
-  onOpenProfile,
   onOpenControlCenter,
+  onOpenAuthorizationStatus,
   onOpenSharedSpace,
   onOpenTasks,
   onOpenReminders,
@@ -27,8 +29,10 @@ export function QiHomeScreen({
 }: {
   onOpenJournal: () => void;
   onOpenCoupons: () => void;
-  onOpenProfile: () => void;
+  onOpenProfile?: () => void;
   onOpenControlCenter: () => void;
+  onOpenAuthorizationStatus: () => void;
+  onOpenPermissionCenter?: () => void;
   onOpenSharedSpace: () => void;
   onOpenTasks: () => void;
   onOpenReminders: () => void;
@@ -44,6 +48,24 @@ export function QiHomeScreen({
   const myName = isMaster ? pair?.ownerName : pair?.puppyName;
   const accent = isMaster ? colors.primary : colors.secondary;
   const onAccent = onAccentFor(accent);
+
+  /**
+   * 小狗端「打开权限中心」直接跳系统设置里本应用的权限页：
+   * 用户说的是「去系统里开权限」，在应用内再点十次「去设置」反而绕。
+   * 应用内的权限清单仍在「我的 → 权限管控中心」。
+   */
+  const openSystemPermissions = React.useCallback(() => {
+    qiDevicePermissions
+      .openAppSettings()
+      .then((opened) =>
+        opened
+          ? true
+          : qiDevicePermissions.openSettingsFor([...PERMISSION_KEYS]),
+      )
+      .catch((error: any) => {
+        showToast(error?.message ?? '打不开系统设置，请到「我的 → 权限管控中心」逐项开启');
+      });
+  }, []);
 
   const lastSync = lastSyncAt
     ? new Date(lastSyncAt).toLocaleTimeString('zh-CN', {
@@ -144,7 +166,7 @@ export function QiHomeScreen({
 
       <SoftCard
         radius={18}
-        onPress={onOpenProfile}
+        onPress={isMaster ? onOpenAuthorizationStatus : openSystemPermissions}
         accessibilityLabel={isMaster ? '打开授权状态' : '打开权限中心'}
         style={styles.card}>
         <View style={styles.cardRow}>

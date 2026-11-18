@@ -241,6 +241,8 @@ type PermissionsApi = {
   getStatus(key: string): Promise<PermissionStatus>;
   openSettings(key: string): Promise<boolean>;
   openSettingsFor(keys: string[]): Promise<boolean>;
+  /** 直达系统「应用信息 → 权限」页，小狗端首页卡片一次点到位。 */
+  openAppSettings(): Promise<boolean>;
   revoke(key: string): Promise<PermissionRevokeResult>;
 };
 
@@ -275,6 +277,8 @@ type ScreenshotApi = {
 
 type LocationApi = {
   getLastKnown(): Promise<LocationFix>;
+  /** 主动取一次定位（用户点「定位」时用），内部会短暂请求一次网络/GPS。 */
+  locate(): Promise<LocationFix>;
   reportOnce(allowNetwork: boolean): Promise<LocationFix>;
   reverseGeocode(latitude: number, longitude: number): Promise<GeocodeResult>;
   setNetworkFixEnabled(enabled: boolean): Promise<boolean>;
@@ -312,6 +316,7 @@ type ReminderApi = {
     minute: number,
     daysCsv: string,
     message: string,
+    fullscreen: boolean,
   ): Promise<boolean>;
   cancel(id: string): Promise<boolean>;
   rescheduleAll(): Promise<boolean>;
@@ -401,6 +406,9 @@ export const qiDevicePermissions = {
     requirePermissions().openSettings(key),
   openSettingsFor: (keys: PermissionKey[]): Promise<boolean> =>
     requirePermissions().openSettingsFor(keys),
+  /** 直达系统「应用信息 → 权限」页。 */
+  openAppSettings: (): Promise<boolean> =>
+    requirePermissions().openAppSettings(),
   /** Only device admin can actually be removed (with user confirmation). */
   revoke: (key: PermissionKey): Promise<PermissionRevokeResult> =>
     requirePermissions().revoke(key),
@@ -472,6 +480,8 @@ export const qiScreenshot = {
 export const qiLocation = {
   /** Passive/last-known only: costs no battery. */
   getLastKnown: (): Promise<LocationFix> => requireLocation().getLastKnown(),
+  /** 用户点了「定位」：先复用 5 分钟内的旧点，否则只请求一次网络/GPS。 */
+  locate: (): Promise<LocationFix> => requireLocation().locate(),
   /** One fix now; network is gated to once per 30 minutes. */
   reportOnce: (allowNetwork = false): Promise<LocationFix> =>
     requireLocation().reportOnce(allowNetwork),
@@ -524,10 +534,30 @@ export const qiReminder = {
     minute: number,
     daysCsv: string,
     message: string,
+    fullscreen: boolean,
   ): Promise<boolean> =>
-    requireReminder().schedule(id, hour, minute, daysCsv, message),
+    requireReminder().schedule(id, hour, minute, daysCsv, message, fullscreen),
   cancel: (id: string): Promise<boolean> => requireReminder().cancel(id),
   rescheduleAll: (): Promise<boolean> => requireReminder().rescheduleAll(),
+};
+
+function requireNotice(): any {
+  const mod = NativeModules.QiNotice;
+  if (!mod) {
+    throw new Error('当前设备不支持通知');
+  }
+  return mod;
+}
+
+export const qiNotice = {
+  /** 双向事件通知：任务、和好券、定时规则。`fullscreen` 由系统决定是否全屏。 */
+  post: (
+    id: string,
+    title: string,
+    body: string,
+    fullscreen = false,
+  ): Promise<boolean> => requireNotice().post(id, title, body, fullscreen),
+  cancel: (id: string): Promise<boolean> => requireNotice().cancel(id),
 };
 
 export const qiDevice = {
@@ -541,4 +571,5 @@ export const qiDevice = {
   audit: qiAudit,
   widget: qiWidget,
   reminders: qiReminder,
+  notice: qiNotice,
 };

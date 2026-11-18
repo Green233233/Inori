@@ -95,6 +95,43 @@ class LocationModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * One deliberate fix, used when the user taps 定位 in the control center.
+   *
+   * Order matters for power: a fix newer than [FRESH_ENOUGH_MS] is returned as
+   * is (no radio at all); otherwise we ask for exactly one network fix, then
+   * one GPS fix. Both listeners are removed immediately, and the network gate
+   * is bypassed only because this is an explicit user action (once per tap).
+   */
+  @ReactMethod
+  fun locate(promise: Promise) {
+    if (!hasLocationPermission()) {
+      promise.reject("location_permission_missing", "还没有定位权限")
+      return
+    }
+    io.execute {
+      try {
+        val manager =
+          reactApplicationContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val recent = freshestKnown(manager)
+        if (recent != null && System.currentTimeMillis() - recent.time <= FRESH_ENOUGH_MS) {
+          promise.resolve(toMap(recent, fresh = true, networkAttempted = false))
+          return@execute
+        }
+        val network = requestSingle(manager, LocationManager.NETWORK_PROVIDER)
+        val fixed = network ?: requestSingle(manager, LocationManager.GPS_PROVIDER)
+        if (fixed != null) {
+          prefs.edit().putLong(PREF_LAST_NETWORK_AT, System.currentTimeMillis()).apply()
+          promise.resolve(toMap(fixed, fresh = true, networkAttempted = true))
+        } else {
+          promise.resolve(toMap(recent, fresh = false, networkAttempted = true))
+        }
+      } catch (error: Exception) {
+        promise.reject("location_failed", error.message, error)
+      }
+    }
+  }
+
   @ReactMethod
   fun reverseGeocode(latitude: Double, longitude: Double, promise: Promise) {
     io.execute {
@@ -228,7 +265,7 @@ class LocationModule(reactContext: ReactApplicationContext) :
     val map = Arguments.createMap()
     if (location == null) {
       map.putBoolean("ok", false)
-      map.putString("reason", "暂时没有可用的位置（被动定位需要其他应用先请求过）")
+      map.putString("reason", "还没拿到坐标：请确认系统定位开关已打开，然后再点一次")
       map.putBoolean("fresh", false)
       map.putBoolean("networkAttempted", networkAttempted)
       return map
@@ -265,6 +302,9 @@ class LocationModule(reactContext: ReactApplicationContext) :
 
     /** 30-minute gate: an explicit user-facing promise, not a timer. */
     private const val NETWORK_GATE_MS = 30L * 60L * 1000L
+
+    /** A fix younger than this needs no radio at all. */
+    private const val FRESH_ENOUGH_MS = 5L * 60L * 1000L
 
     /** A single fix that takes longer than this is abandoned. */
     private const val FIX_TIMEOUT_MS = 20_000L

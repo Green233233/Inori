@@ -4,6 +4,7 @@
  */
 import React, {useState} from 'react';
 import {Pressable, StyleSheet, Text, View} from 'react-native';
+import {GlassIcon} from '../../components/GlassIcon';
 import {useAppTheme} from '../../theme/AppThemeProvider';
 import {type} from '../../theme/typography';
 import {HomeScreen} from '../../screens/HomeScreen';
@@ -24,10 +25,12 @@ export function JournalTab({
   onOpenEntry,
   onNewEntry,
   onOpenCategory,
+  onOpenSettings,
 }: {
   onOpenEntry: (id: string) => void;
   onNewEntry: () => void;
   onOpenCategory: (category: Category) => void;
+  onOpenSettings: () => void;
 }) {
   const {colors} = useAppTheme();
   const {pair} = useQi();
@@ -64,6 +67,13 @@ export function JournalTab({
             );
           })}
         </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="日记设置"
+          onPress={onOpenSettings}
+          style={[styles.gear, {backgroundColor: colors.surface}]}>
+          <GlassIcon name="settings" size={18} />
+        </Pressable>
         {pair ? (
           <Text
             style={[
@@ -98,6 +108,16 @@ export function JournalTab({
 const styles = StyleSheet.create({
   root: {flex: 1},
   segmentWrap: {paddingHorizontal: 12, paddingTop: 6},
+  gear: {
+    position: 'absolute',
+    right: 12,
+    top: 6,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   segmentTrack: {flexDirection: 'row', borderRadius: 999, padding: 3},
   segment: {
     flex: 1,

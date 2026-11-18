@@ -35,6 +35,7 @@ object ReminderScheduler {
     minute: Int,
     daysCsv: String,
     message: String,
+    fullscreen: Boolean = true,
   ) {
     val days = daysCsv.split(",").mapNotNull { it.trim().toIntOrNull() }.toSet()
     val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -43,9 +44,10 @@ object ReminderScheduler {
       .putString("$id.minute", minute.toString())
       .putString("$id.days", daysCsv)
       .putString("$id.message", message)
+      .putBoolean("$id.fullscreen", fullscreen)
       .apply()
     val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    val pending = pendingIntent(context, id, message, PendingIntent.FLAG_UPDATE_CURRENT)
+    val pending = pendingIntent(context, id, message, fullscreen, PendingIntent.FLAG_UPDATE_CURRENT)
       ?: return
     val next = nextTrigger(hour, minute, days)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && manager.canScheduleExactAlarms()) {
@@ -57,13 +59,14 @@ object ReminderScheduler {
 
   fun cancel(context: Context, id: String) {
     val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    val pending = pendingIntent(context, id, null, PendingIntent.FLAG_NO_CREATE)
+    val pending = pendingIntent(context, id, null, true, PendingIntent.FLAG_NO_CREATE)
     if (pending != null) {
       manager.cancel(pending)
       pending.cancel()
     }
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-      .remove("$id.hour").remove("$id.minute").remove("$id.days").remove("$id.message")
+      .remove("$id.hour").remove("$id.minute").remove("$id.days")
+      .remove("$id.message").remove("$id.fullscreen")
       .apply()
   }
 
@@ -78,7 +81,8 @@ object ReminderScheduler {
       val minute = prefs.getString("$id.minute", null)?.toIntOrNull() ?: return@forEach
       val days = prefs.getString("$id.days", "") ?: ""
       val message = prefs.getString("$id.message", "") ?: ""
-      schedule(context, id, hour, minute, days, message)
+      val fullscreen = prefs.getBoolean("$id.fullscreen", true)
+      schedule(context, id, hour, minute, days, message, fullscreen)
     }
   }
 
@@ -107,11 +111,13 @@ object ReminderScheduler {
     context: Context,
     id: String,
     message: String?,
+    fullscreen: Boolean,
     flags: Int,
   ): PendingIntent? {
     val intent = Intent(context, ReminderReceiver::class.java).apply {
       action = "com.inorinal.REMINDER"
       putExtra("id", id)
+      putExtra("fullscreen", fullscreen)
       if (message != null) {
         putExtra("message", message)
       }
@@ -133,36 +139,19 @@ object ReminderScheduler {
   }
 }
 
-/** Fires one notification and re-arms itself for the next matching day. */
+/** Fires one notification (fullscreen for rules) and re-arms itself. */
 class ReminderReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     val id = intent.getStringExtra("id") ?: return
     val message = intent.getStringExtra("message") ?: "到时间啦"
-    val channel = ReminderScheduler.channel(context)
-    val open = Intent(context, Class.forName("com.inorinal.MainActivity")).apply {
-      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-    val content = PendingIntent.getActivity(
-      context,
-      id.hashCode(),
-      open,
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
-    val notification = NotificationCompat.Builder(context, channel)
-      .setSmallIcon(R.mipmap.ic_launcher)
-      .setContentTitle("祈 · 提醒")
-      .setContentText(message)
-      .setAutoCancel(true)
-      .setContentIntent(content)
-      .build()
-    (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-      .notify(id.hashCode(), notification)
+    val fullscreen = intent.getBooleanExtra("fullscreen", true)
+    NoticeCenter.post(context, "reminder:$id", "祈 · 提醒", message, fullscreen)
     // Re-arm for the next occurrence using the stored rule.
     val prefs = context.getSharedPreferences("qi.reminders", Context.MODE_PRIVATE)
     val hour = prefs.getString("$id.hour", null)?.toIntOrNull() ?: return
     val minute = prefs.getString("$id.minute", null)?.toIntOrNull() ?: return
     val days = prefs.getString("$id.days", "") ?: ""
-    ReminderScheduler.schedule(context, id, hour, minute, days, message)
+    ReminderScheduler.schedule(context, id, hour, minute, days, message, fullscreen)
   }
 }
 
@@ -178,10 +167,13 @@ class ReminderModule(reactContext: ReactApplicationContext) :
     minute: Int,
     daysCsv: String,
     message: String,
+    fullscreen: Boolean,
     promise: Promise,
   ) {
     try {
-      ReminderScheduler.schedule(reactApplicationContext, id, hour, minute, daysCsv, message)
+      ReminderScheduler.schedule(
+        reactApplicationContext, id, hour, minute, daysCsv, message, fullscreen,
+      )
       promise.resolve(true)
     } catch (error: Exception) {
       promise.reject("reminder_schedule_failed", error.message, error)

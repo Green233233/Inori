@@ -25,12 +25,19 @@ import {showToast} from '../../components/toast';
 import {useQi} from '../qi/QiProvider';
 import {
   createReminder,
+  ReminderScope,
   deleteReminder,
   loadReminders,
   refreshReminders,
   Reminder,
   upsertReminder,
 } from '../../sync/reminders';
+
+const SCOPE_OPTIONS: Array<{value: ReminderScope; label: string}> = [
+  {value: 'both', label: '两边都响'},
+  {value: 'master', label: '只响主人'},
+  {value: 'puppy', label: '只响小狗'},
+];
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 
@@ -45,6 +52,7 @@ export function RemindersScreen({onBack}: {onBack: () => void}) {
   const [message, setMessage] = useState('');
   const [days, setDays] = useState<number[]>([]);
   const [pendingDelete, setPendingDelete] = useState<Reminder | null>(null);
+  const [scope, setScope] = useState<ReminderScope>('both');
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -64,12 +72,13 @@ export function RemindersScreen({onBack}: {onBack: () => void}) {
 
   const create = async () => {
     try {
-      const reminder = await createReminder(pair, time, days, message);
+      const reminder = await createReminder(pair, time, days, message, scope);
       setItems(previous =>
         [...previous, reminder].sort((a, b) => a.time.localeCompare(b.time)),
       );
       setMessage('');
       setDays([]);
+      setScope('both');
       setCreateOpen(false);
     } catch (error: any) {
       showToast(error?.message ?? '创建失败');
@@ -235,6 +244,35 @@ export function RemindersScreen({onBack}: {onBack: () => void}) {
         </View>
         <Text
           style={[type.label, {color: colors.onSurfaceVariant, marginTop: 14}]}>
+          谁来响（到点弹全屏通知）
+        </Text>
+        <View style={styles.daysRow}>
+          {SCOPE_OPTIONS.map(option => {
+            const active = scope === option.value;
+            return (
+              <Pressable
+                key={option.value}
+                accessibilityRole="button"
+                accessibilityState={{selected: active}}
+                accessibilityLabel={`提醒范围 ${option.label}`}
+                onPress={() => setScope(option.value)}
+                style={[
+                  styles.scopeChip,
+                  {backgroundColor: active ? colors.primary : colors.surfaceVariant},
+                ]}>
+                <Text
+                  style={[
+                    type.caption,
+                    {color: active ? colors.onPrimary : colors.onSurfaceVariant},
+                  ]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text
+          style={[type.label, {color: colors.onSurfaceVariant, marginTop: 14}]}>
           内容
         </Text>
         <TextInput
@@ -298,6 +336,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   daysRow: {flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap'},
+  scopeChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   dayChip: {
     width: 38,
     height: 38,

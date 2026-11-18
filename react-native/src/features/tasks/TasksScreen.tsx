@@ -3,7 +3,16 @@
  * 主人下达任务、验收报备；小狗查看任务、提交报备。
  */
 import React, {useCallback, useEffect, useState} from 'react';
-import {RefreshControl, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
+import {
+  Image,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useAppTheme} from '../../theme/AppThemeProvider';
 import {withAlpha} from '../../theme/palette';
@@ -14,6 +23,8 @@ import {AppSheet, FlatButton, Pill, TextButton} from '../../components/Ui';
 import {TopBar} from '../../components/TopBar';
 import {showToast} from '../../components/toast';
 import {useQi} from '../qi/QiProvider';
+import {AlbumItem, loadAlbum, loadPhotoImage, sharePhoto} from '../../sync/album';
+import {ImageViewer} from '../../components/ImageViewer';
 import {
   createTask,
   loadTasks,
@@ -30,6 +41,75 @@ const STATUS_LABEL: Record<QiTask['status'], string> = {
   cancelled: '已撤回',
 };
 
+/**
+ * 报备附图缩略图：按 mediaId 从相册分块媒体里取回原图（data URI），
+ * 点开走全局 ImageViewer。图片不进同步记录，所以这里按需拉取并缓存。
+ */
+function SubmittedPhoto({
+  pair,
+  id,
+  onOpen,
+}: {
+  pair: any;
+  id: string;
+  onOpen: (uri: string) => void;
+}) {
+  const {colors, tokens} = useAppTheme();
+  const [uri, setUri] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const items = await loadAlbum();
+        const item = items.find(entry => entry.id === id);
+        if (!item) {
+          if (alive) {
+            setFailed(true);
+          }
+          return;
+        }
+        const data = await loadPhotoImage(pair, item);
+        if (alive) {
+          setUri(data);
+        }
+      } catch {
+        if (alive) {
+          setFailed(true);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [id, pair]);
+
+  if (failed) {
+    return (
+      <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 6}]}>
+        附图已失效
+      </Text>
+    );
+  }
+  return (
+    <Pressable
+      onPress={() => (uri ? onOpen(uri) : undefined)}
+      accessibilityLabel="查看报备附图"
+      style={[
+        styles.photo,
+        {backgroundColor: colors.surfaceVariant, borderColor: colors.outline},
+      ]}>
+      {uri ? (
+        <Image source={{uri}} style={styles.photoImage} resizeMode="cover" />
+      ) : (
+        <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
+          {tokens ? '加载附图…' : '加载中'}
+        </Text>
+      )}
+    </Pressable>
+  );
+}
+
 export function TasksScreen({onBack}: {onBack: () => void}) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -42,6 +122,10 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
   const [detail, setDetail] = useState('');
   const [active, setActive] = useState<QiTask | null>(null);
   const [reply, setReply] = useState('');
+  const [attach, setAttach] = useState<AlbumItem | null>(null);
+  const [attachUri, setAttachUri] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState(false);
+  const [viewer, setViewer] = useState<{uri: string; name?: string} | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -85,12 +169,34 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
       return;
     }
     try {
-      const task = await submitTask(pair, active, reply);
+      const task = await submitTask(pair, active, reply, attach?.id);
       setTasks(previous => previous.map(item => (item.id === task.id ? task : item)));
       setActive(null);
       setReply('');
+      setAttach(null);
+      setAttachUri(null);
     } catch (error: any) {
       showToast(error?.message ?? '报备失败');
+    }
+  };
+
+  const attachPhoto = async () => {
+    if (!pair) {
+      return;
+    }
+    setAttaching(true);
+    try {
+      const item = await sharePhoto(pair, state.deviceId);
+      const uri = await loadPhotoImage(pair, item);
+      setAttach(item);
+      setAttachUri(uri);
+    } catch (error: any) {
+      const message = String(error?.message ?? '');
+      if (message && !message.includes('没有选择照片')) {
+        showToast(message);
+      }
+    } finally {
+      setAttaching(false);
     }
   };
 
@@ -203,6 +309,13 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
                     {task.submittedText}
                   </Text>
                 </View>
+              ) : null}
+              {task.submittedPhotoId ? (
+                <SubmittedPhoto
+                  pair={pair}
+                  id={task.submittedPhotoId}
+                  onOpen={uri => setViewer({uri, name: '报备附图'})}
+                />
               ) : null}
               {task.verdictText ? (
                 <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 6}]}>
@@ -321,12 +434,61 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
             },
           ]}
         />
+        <View style={styles.attachRow}>
+          <TextButton
+            label={attaching ? '处理中…' : attachUri ? '更换照片' : '附一张照片'}
+            color={colors.primary}
+            onPress={() => {
+              if (!attaching) {
+                attachPhoto().catch(() => undefined);
+              }
+            }}
+          />
+          {attachUri ? (
+            <TextButton
+              label="移除"
+              color={colors.onSurfaceVariant}
+              onPress={() => {
+                setAttach(null);
+                setAttachUri(null);
+              }}
+            />
+          ) : null}
+        </View>
+        {attachUri ? (
+          <Pressable
+            onPress={() => setViewer({uri: attachUri, name: attach?.name})}
+            accessibilityLabel="预览报备照片"
+            style={[
+              styles.photo,
+              {backgroundColor: colors.surfaceVariant, borderColor: colors.outline},
+            ]}>
+            <Image source={{uri: attachUri}} style={styles.photoImage} resizeMode="cover" />
+          </Pressable>
+        ) : null}
       </AppSheet>
+      <ImageViewer
+        visible={!!viewer}
+        uri={viewer?.uri ?? null}
+        fileName={viewer?.name}
+        onClose={() => setViewer(null)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  photo: {
+    marginTop: 10,
+    height: 132,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  photoImage: {width: '100%', height: '100%'},
+  attachRow: {flexDirection: 'row', justifyContent: 'space-between', marginTop: 8},
   root: {flex: 1},
   stats: {flexDirection: 'row', gap: 10, marginTop: 4},
   statCard: {flex: 1, padding: 14, alignItems: 'center'},

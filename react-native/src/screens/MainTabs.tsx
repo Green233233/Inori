@@ -45,6 +45,7 @@ export function MainTabs({
   onOpenQi,
   onOpenPermissionCenter,
   onOpenControlCenter,
+  onOpenAuthorizationStatus,
   onOpenCoupon,
   onRedeemCoupon,
   onOpenResponseConfig,
@@ -55,6 +56,7 @@ export function MainTabs({
   onOpenReminders,
   onOpenAlbum,
   onOpenNotifications,
+  onOpenJournalSettings,
 }: {
   activeTab: MainTabKey;
   onTabChange: (tab: MainTabKey) => void;
@@ -66,6 +68,7 @@ export function MainTabs({
   onOpenQi: () => void;
   onOpenPermissionCenter: () => void;
   onOpenControlCenter: () => void;
+  onOpenAuthorizationStatus: () => void;
   onOpenCoupon: (coupon: Coupon) => void;
   onRedeemCoupon: (coupon: Coupon) => void;
   onOpenResponseConfig: () => void;
@@ -76,6 +79,7 @@ export function MainTabs({
   onOpenReminders: () => void;
   onOpenAlbum: () => void;
   onOpenNotifications: () => void;
+  onOpenJournalSettings: () => void;
 }) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -109,6 +113,8 @@ export function MainTabs({
             onOpenCoupons={() => onTabChange('coupons')}
             onOpenProfile={() => onTabChange('profile')}
             onOpenControlCenter={onOpenControlCenter}
+            onOpenAuthorizationStatus={onOpenAuthorizationStatus}
+            onOpenPermissionCenter={onOpenPermissionCenter}
             onOpenSharedSpace={onOpenSharedSpace}
             onOpenTasks={onOpenTasks}
             onOpenReminders={onOpenReminders}
@@ -137,6 +143,7 @@ export function MainTabs({
             onOpenEntry={onOpenEntry}
             onNewEntry={onNewEntry}
             onOpenCategory={onOpenCategory}
+            onOpenSettings={onOpenJournalSettings}
           />
         ) : null}
         {activeTab === 'profile' ? (

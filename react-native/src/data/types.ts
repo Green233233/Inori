@@ -182,10 +182,15 @@ export const COLOR_STYLE_ORDER: ColorStyle[] = [
 ];
 export const THEME_MODE_ORDER: ThemeMode[] = ['LIGHT', 'DARK', 'SYSTEM'];
 
+export type DefaultFont = 'serif' | 'sans' | 'round';
+export type DefaultBrush = 'pen' | 'marker' | 'pencil';
+
 export interface AppSettings {
   colorStyle: ColorStyle;
   themeMode: ThemeMode;
   fontSize: number;
+  defaultFont: DefaultFont;
+  defaultBrush: DefaultBrush;
   debugMode: boolean;
 }
 
@@ -193,6 +198,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   colorStyle: 'SAKURA',
   themeMode: 'SYSTEM',
   fontSize: 16,
+  defaultFont: 'serif',
+  defaultBrush: 'pen',
   debugMode: false,
 };
 

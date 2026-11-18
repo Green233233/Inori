@@ -33,6 +33,7 @@ import {SharedEntryScreen} from './src/screens/SharedEntryScreen';
 import {isPartnerEntry} from './src/sync/partnerStore';
 import {PermissionCenter} from './src/features/device/PermissionCenter';
 import {ControlCenter} from './src/features/control/ControlCenter';
+import {AuthorizationStatus} from './src/features/device/AuthorizationStatus';
 import CouponDetail from './src/features/coupons/CouponDetail';
 import CouponRedeem from './src/features/coupons/CouponRedeem';
 import {ResponseConfig} from './src/features/settings/ResponseConfig';
@@ -44,6 +45,7 @@ import {TasksScreen} from './src/features/tasks/TasksScreen';
 import {RemindersScreen} from './src/features/reminders/RemindersScreen';
 import {AlbumScreen} from './src/features/album/AlbumScreen';
 import {NotificationsScreen} from './src/features/notifications/NotificationsScreen';
+import {JournalSettingsScreen} from './src/screens/JournalSettingsScreen';
 import type {Coupon} from './src/data/pairTypes';
 
 type Route =
@@ -52,6 +54,7 @@ type Route =
   | {name: 'partner'; entryId: string}
   | {name: 'permissionCenter'}
   | {name: 'controlCenter'}
+  | {name: 'authorizationStatus'}
   | {name: 'couponDetail'; coupon: Coupon}
   | {name: 'couponRedeem'; coupon?: Coupon}
   | {name: 'responseConfig'}
@@ -63,6 +66,7 @@ type Route =
   | {name: 'reminders'}
   | {name: 'album'}
   | {name: 'notifications'}
+  | {name: 'journalSettings'}
   | {name: 'settings'}
   | {name: 'about'}
   | {name: 'licenses'};
@@ -300,6 +304,7 @@ function AppShell({
           onOpenQi={() => push({name: 'pairManage'})}
           onOpenPermissionCenter={() => push({name: 'permissionCenter'})}
           onOpenControlCenter={() => push({name: 'controlCenter'})}
+          onOpenAuthorizationStatus={() => push({name: 'authorizationStatus'})}
           onOpenCoupon={coupon => push({name: 'couponDetail', coupon})}
           onRedeemCoupon={coupon => push({name: 'couponRedeem', coupon})}
           onOpenResponseConfig={() => push({name: 'responseConfig'})}
@@ -310,6 +315,7 @@ function AppShell({
           onOpenReminders={() => push({name: 'reminders'})}
           onOpenAlbum={() => push({name: 'album'})}
           onOpenNotifications={() => push({name: 'notifications'})}
+          onOpenJournalSettings={() => push({name: 'journalSettings'})}
         />
       </Animated.View>
 
@@ -348,6 +354,9 @@ function AppShell({
             {top.name === 'controlCenter' ? (
               <ControlCenter onBack={pop} />
             ) : null}
+            {top.name === 'authorizationStatus' ? (
+              <AuthorizationStatus onBack={pop} />
+            ) : null}
             {top.name === 'couponDetail' ? (
               <CouponDetail
                 coupon={top.coupon}
@@ -381,6 +390,13 @@ function AppShell({
             ) : null}
             {top.name === 'album' ? (
               <AlbumScreen onBack={pop} />
+            ) : null}
+            {top.name === 'journalSettings' ? (
+              <JournalSettingsScreen
+                settings={settings}
+                onChange={onSettingsChange}
+                onBack={pop}
+              />
             ) : null}
             {top.name === 'notifications' ? (
               <NotificationsScreen onBack={pop} />

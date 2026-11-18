@@ -19,6 +19,7 @@ export type CommandKind =
   | 'location.get'
   | 'notifications.drain'
   | 'overlay.show'
+  | 'permissions.snapshot'
   | 'audit.recent';
 
 export interface CommandRequest {
@@ -170,9 +171,11 @@ async function runLocalCommand(
     case 'screenshot.status':
       return qiDevice.screenshot.status();
     case 'location.get':
-      return qiDevice.location.getLastKnown();
+      return qiDevice.location.locate();
     case 'notifications.drain':
       return qiDevice.notifications.drain(Number(args.limit) || 50);
+    case 'permissions.snapshot':
+      return qiDevice.permissions.snapshot();
     case 'audit.recent':
       return qiDevice.audit.read(Number(args.limit) || 20, 0);
     default:

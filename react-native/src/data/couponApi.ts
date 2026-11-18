@@ -270,11 +270,17 @@ export async function verifyCoupon(code: string): Promise<CouponVerifyResult> {
 export async function redeemCoupon(
   code: string,
   noteCipher?: string,
+  options?: {offline?: boolean},
 ): Promise<Coupon> {
   const {normalized} = normalizeCouponInput(code);
-  const body: {code: string; noteCipher?: string} = {code: normalized};
+  const body: {code: string; noteCipher?: string; offline?: boolean} = {
+    code: normalized,
+  };
   if (noteCipher) {
     body.noteCipher = noteCipher;
+  }
+  if (options?.offline) {
+    body.offline = true;
   }
   const response = await api<{ok: true; coupon: Coupon}>(
     '/api/v1/coupons/redeem',
