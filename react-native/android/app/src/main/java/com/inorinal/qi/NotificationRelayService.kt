@@ -41,6 +41,11 @@ class NotificationRelayService : NotificationListenerService() {
     val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     val blocklist = prefs.getStringSet(PREF_BLOCKLIST, emptySet()) ?: emptySet()
     val packageName = statusBar.packageName ?: return
+    // 自己的守护通知每几十秒重发一次，绝不能进队列：否则 300 行的上限会被噪音占满，
+    // 真正需要转发的通知反而被挤掉（这就是「通知转发常失效」的根因）。
+    if (packageName == context.packageName) return
+    // 系统界面的常驻提示同样与用户无关。
+    if (packageName == SYSTEM_UI_PACKAGE) return
     // 默认放行：只有明确拉黑的应用才不转发。
     if (blocklist.contains(packageName)) return
 
@@ -56,12 +61,27 @@ class NotificationRelayService : NotificationListenerService() {
         .orEmpty()
     if (title.isEmpty() && text.isEmpty()) return
 
+    val cleanTitle = Sanitizer.clean(title)
+    val cleanText = Sanitizer.clean(text)
+    val now = System.currentTimeMillis()
+    // 同一个应用在短时间重复弹同一条内容时只留一条，避免队列被刷屏。
+    if (prefs.getString(PREF_LAST_KEY, "") == "$packageName|$cleanTitle|$cleanText" &&
+      now - prefs.getLong(PREF_LAST_AT, 0L) < DEDUPE_WINDOW_MS
+    ) {
+      return
+    }
+    prefs
+      .edit()
+      .putString(PREF_LAST_KEY, "$packageName|$cleanTitle|$cleanText")
+      .putLong(PREF_LAST_AT, now)
+      .apply()
+
     val record =
       JSONObject()
-        .put("at", System.currentTimeMillis())
+        .put("at", now)
         .put("pkg", packageName)
-        .put("title", Sanitizer.clean(title))
-        .put("text", Sanitizer.clean(text))
+        .put("title", cleanTitle)
+        .put("text", cleanText)
     append(context, record)
   }
 
@@ -85,6 +105,10 @@ class NotificationRelayService : NotificationListenerService() {
   companion object {
     const val PREFS = "qi.notify"
     const val PREF_BLOCKLIST = "blocklist"
+    private const val PREF_LAST_KEY = "last.key"
+    private const val PREF_LAST_AT = "last.at"
+    private const val DEDUPE_WINDOW_MS = 10L * 60L * 1000L
+    private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
 
     private const val MAX_LINES = 300
     private const val MAX_BYTES = 512L * 1024L
