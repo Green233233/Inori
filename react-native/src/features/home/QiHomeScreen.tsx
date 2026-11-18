@@ -22,6 +22,7 @@ export function QiHomeScreen({
   onOpenControlCenter,
   onOpenAuthorizationStatus,
   onOpenSharedSpace,
+  onOpenPartnerLocation,
   onOpenTasks,
   onOpenReminders,
   onOpenAlbum,
@@ -34,6 +35,7 @@ export function QiHomeScreen({
   onOpenAuthorizationStatus: () => void;
   onOpenPermissionCenter?: () => void;
   onOpenSharedSpace: () => void;
+  onOpenPartnerLocation: () => void;
   onOpenTasks: () => void;
   onOpenReminders: () => void;
   onOpenAlbum: () => void;
@@ -211,6 +213,31 @@ export function QiHomeScreen({
           <GlassIcon name="chevronRight" size={20} />
         </View>
       </SoftCard>
+
+      {!isMaster ? (
+        <SoftCard
+          radius={18}
+          onPress={onOpenPartnerLocation}
+          accessibilityLabel="查看主人位置"
+          style={styles.card}>
+          <View style={styles.cardRow}>
+            <GlassIcon name="circle" size={26} />
+            <View style={{flex: 1}}>
+              <Text style={[type.bodyStrong, {color: colors.onSurface}]}>
+                查看主人位置
+              </Text>
+              <Text
+                style={[
+                  type.caption,
+                  {color: colors.onSurfaceVariant, marginTop: 4},
+                ]}>
+                点一次取一次，主人那边会收到提醒
+              </Text>
+            </View>
+            <GlassIcon name="chevronRight" size={20} />
+          </View>
+        </SoftCard>
+      ) : null}
 
       <SoftCard
         radius={18}

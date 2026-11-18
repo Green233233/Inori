@@ -394,6 +394,17 @@ export function QiProvider({children}: {children: React.ReactNode}) {
     }
     const result = await syncJournal(current.pair, current.deviceId);
     setLastSyncAt(Date.now());
+    /*
+     * 同步失败以前完全静默，用户只看到「怎么又没过去」。
+     * 这里把第一篇失败的原因说出来（多半是附件太大或网络断了）。
+     */
+    if (result.failed > 0) {
+      showToast(
+        `${result.failed} 篇日记没能同步过去${
+          result.lastError ? `：${result.lastError}` : '，稍后再试'
+        }`,
+      );
+    }
     // 通知只在拿到新数据后弹一次：谁刷新到，谁负责提醒。
     await scanAlerts(current.pair.myRole).catch(() => undefined);
     return result;

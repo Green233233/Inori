@@ -149,19 +149,22 @@ export interface SyncResult {
   pushed: number;
   pulled: number;
   failed: number;
+  /** 第一条失败原因，便于在界面上说清「为什么没同步过去」。 */
+  lastError?: string;
 }
 
 /** 推送本人可共享条目；私密条目跳过。 */
 export async function pushOwnEntries(
   pair: PairSummary,
   myDeviceId: string,
-): Promise<{pushed: number; failed: number}> {
+): Promise<{pushed: number; failed: number; lastError?: string}> {
   if (!pair.peerPubkey) {
     return {pushed: 0, failed: 0};
   }
   const summaries = await loadIndex();
   let pushed = 0;
   let failed = 0;
+  let lastError: string | undefined;
   for (const summary of summaries) {
     if (summary.visibility === 'private') {
       continue;
@@ -208,11 +211,12 @@ export async function pushOwnEntries(
         },
       });
       pushed += 1;
-    } catch {
+    } catch (error: any) {
       failed += 1;
+      lastError = error?.message ? String(error.message) : '同步失败';
     }
   }
-  return {pushed, failed};
+  return {pushed, failed, lastError};
 }
 
 /** 拉取对方条目并按 LWW 合并进本地镜像。 */
@@ -294,13 +298,19 @@ export async function syncJournal(
   pair: PairSummary,
   myDeviceId: string,
 ): Promise<SyncResult> {
-  const push = await pushOwnEntries(pair, myDeviceId).catch(() => ({
+  const push = await pushOwnEntries(pair, myDeviceId).catch((error: any) => ({
     pushed: 0,
     failed: 1,
+    lastError: error?.message ? String(error.message) : '同步失败',
   }));
   const pull = await pullPartnerEntries(pair, myDeviceId).catch(() => ({
     pulled: 0,
     failed: 1,
   }));
-  return {pushed: push.pushed, pulled: pull.pulled, failed: push.failed + pull.failed};
+  return {
+    pushed: push.pushed,
+    pulled: pull.pulled,
+    failed: push.failed + pull.failed,
+    lastError: push.lastError,
+  };
 }

@@ -5,6 +5,8 @@
  * 加密（服务器只见密文）。小狗端收到命令后用本机 qiDevice 执行并回传结果。
  * 不做后台轮询：只在 App 处于 ready 且前台时由 QiProvider 维持一条长轮询。
  */
+import {PermissionsAndroid, Platform} from 'react-native';
+
 import {api} from '../net/ApiClient';
 import {openJson, sealJson} from '../crypto/Crypto';
 import type {PairSummary} from '../data/pairTypes';
@@ -171,6 +173,7 @@ async function runLocalCommand(
     case 'screenshot.status':
       return qiDevice.screenshot.status();
     case 'location.get':
+      await ensureLocationPermission();
       return qiDevice.location.locate();
     case 'notifications.drain':
       return qiDevice.notifications.drain(Number(args.limit) || 50);
@@ -180,6 +183,30 @@ async function runLocalCommand(
       return qiDevice.audit.read(Number(args.limit) || 20, 0);
     default:
       throw new Error(`未知命令：${request.kind}`);
+  }
+}
+
+/**
+ * 取点前先确认定位权限：对方第一次点「定位」时，被查看的一端会弹一次系统授权，
+ * 同意后就再也不用弹了（拒绝时仍走 locate 的 no_permission 分支）。
+ */
+async function ensureLocationPermission(): Promise<void> {
+  if (Platform.OS !== 'android') {
+    return;
+  }
+  try {
+    const fine = await PermissionsAndroid.check(
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+    );
+    if (fine) {
+      return;
+    }
+    await PermissionsAndroid.requestMultiple([
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+    ]);
+  } catch {
+    // 权限请求本身失败就交给 locate 报 no_permission。
   }
 }
 

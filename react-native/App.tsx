@@ -34,6 +34,7 @@ import {isPartnerEntry} from './src/sync/partnerStore';
 import {PermissionCenter} from './src/features/device/PermissionCenter';
 import {ControlCenter} from './src/features/control/ControlCenter';
 import {AuthorizationStatus} from './src/features/device/AuthorizationStatus';
+import {PartnerLocation} from './src/features/device/PartnerLocation';
 import CouponDetail from './src/features/coupons/CouponDetail';
 import CouponRedeem from './src/features/coupons/CouponRedeem';
 import {ResponseConfig} from './src/features/settings/ResponseConfig';
@@ -55,6 +56,7 @@ type Route =
   | {name: 'permissionCenter'}
   | {name: 'controlCenter'}
   | {name: 'authorizationStatus'}
+  | {name: 'partnerLocation'}
   | {name: 'couponDetail'; coupon: Coupon}
   | {name: 'couponRedeem'; coupon?: Coupon}
   | {name: 'responseConfig'}
@@ -305,6 +307,7 @@ function AppShell({
           onOpenPermissionCenter={() => push({name: 'permissionCenter'})}
           onOpenControlCenter={() => push({name: 'controlCenter'})}
           onOpenAuthorizationStatus={() => push({name: 'authorizationStatus'})}
+          onOpenPartnerLocation={() => push({name: 'partnerLocation'})}
           onOpenCoupon={coupon => push({name: 'couponDetail', coupon})}
           onRedeemCoupon={coupon => push({name: 'couponRedeem', coupon})}
           onOpenResponseConfig={() => push({name: 'responseConfig'})}
@@ -356,6 +359,9 @@ function AppShell({
             ) : null}
             {top.name === 'authorizationStatus' ? (
               <AuthorizationStatus onBack={pop} />
+            ) : null}
+            {top.name === 'partnerLocation' ? (
+              <PartnerLocation onBack={pop} />
             ) : null}
             {top.name === 'couponDetail' ? (
               <CouponDetail

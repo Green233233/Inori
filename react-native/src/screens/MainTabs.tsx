@@ -52,6 +52,7 @@ export function MainTabs({
   onOpenAutoRules,
   onOpenAppearance,
   onOpenSharedSpace,
+  onOpenPartnerLocation,
   onOpenTasks,
   onOpenReminders,
   onOpenAlbum,
@@ -75,6 +76,7 @@ export function MainTabs({
   onOpenAutoRules: () => void;
   onOpenAppearance: () => void;
   onOpenSharedSpace: () => void;
+  onOpenPartnerLocation: () => void;
   onOpenTasks: () => void;
   onOpenReminders: () => void;
   onOpenAlbum: () => void;
@@ -116,6 +118,7 @@ export function MainTabs({
             onOpenAuthorizationStatus={onOpenAuthorizationStatus}
             onOpenPermissionCenter={onOpenPermissionCenter}
             onOpenSharedSpace={onOpenSharedSpace}
+            onOpenPartnerLocation={onOpenPartnerLocation}
             onOpenTasks={onOpenTasks}
             onOpenReminders={onOpenReminders}
             onOpenAlbum={onOpenAlbum}

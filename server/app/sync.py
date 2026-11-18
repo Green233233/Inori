@@ -9,7 +9,9 @@ from .errors import bad_request
 from .store import Database
 
 RECORD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
-MAX_RECORD_BYTES = 96 * 1024
+# 单条密文上限：带涂鸦/贴纸/照片的日记会把附件内联成 data URI，
+# 96KB 会让这类日记整篇同步失败（用户反馈「涂鸦贴纸同步不过去」）。
+MAX_RECORD_BYTES = 512 * 1024
 MAX_PAGE = 200
 MAX_MEDIA_BYTES = 8 * 1024 * 1024
 MAX_MEDIA_CHUNKS = 4096
