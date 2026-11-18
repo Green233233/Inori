@@ -5,6 +5,7 @@
 import React, {useCallback, useEffect, useState} from 'react';
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -32,6 +33,8 @@ import {
   sharePhoto,
 } from '../../sync/album';
 
+const THUMB_COUNT = 10;
+
 export function AlbumScreen({onBack}: {onBack: () => void}) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -42,6 +45,7 @@ export function AlbumScreen({onBack}: {onBack: () => void}) {
   const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AlbumItem | null>(null);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -58,6 +62,41 @@ export function AlbumScreen({onBack}: {onBack: () => void}) {
   useEffect(() => {
     refresh().catch(() => undefined);
   }, [refresh]);
+
+  // 最新 10 张预取缩略图：只解密一次，之后 <Image> 复用同一份 data URI。
+  useEffect(() => {
+    if (!pair || items.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    const newest = items.slice(0, THUMB_COUNT);
+    (async () => {
+      for (const item of newest) {
+        if (cancelled) {
+          return;
+        }
+        if (thumbs[item.id]) {
+          continue;
+        }
+        try {
+          const uri = await loadPhotoImage(pair, item);
+          if (cancelled) {
+            return;
+          }
+          setThumbs(previous =>
+            previous[item.id] ? previous : {...previous, [item.id]: uri},
+          );
+        } catch {
+          // 单张失败不影响其它缩略图，点开时仍会重试。
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // thumbs 故意不入依赖：避免每加载一张就重启预取循环。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, pair]);
 
   const share = async () => {
     if (!pair || sharing) {
@@ -145,7 +184,13 @@ export function AlbumScreen({onBack}: {onBack: () => void}) {
                   }}
                   style={styles.row}>
                   <View style={[styles.thumb, {backgroundColor: colors.surfaceVariant}]}>
-                    {loadingId === item.id ? (
+                    {thumbs[item.id] ? (
+                      <Image
+                        source={{uri: thumbs[item.id]}}
+                        style={styles.thumbImage}
+                        resizeMode="cover"
+                      />
+                    ) : loadingId === item.id ? (
                       <ActivityIndicator color={colors.primary} />
                     ) : (
                       <GlassIcon name="photo" size={24} />
@@ -231,6 +276,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
+  thumbImage: {width: '100%', height: '100%'},
   deleteRow: {alignSelf: 'flex-end', paddingVertical: 6, paddingHorizontal: 4},
 });
