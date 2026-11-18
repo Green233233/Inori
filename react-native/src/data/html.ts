@@ -97,7 +97,23 @@ export function previewOf(content: string): string {
     return '';
   }
   // DAO list queries feed substr(content, 1, 500) into htmlToPlainText.
-  return htmlToPlainText(content.slice(0, 500)).trim();
+  const text = htmlToPlainText(content.slice(0, 500)).trim();
+  if (text) {
+    return text;
+  }
+  // 只有照片或涂鸦的日记没有正文，列表里用标记代替空白，避免显示成「暂无正文」。
+  // 标记要看完整内容：涂鸦数据在正文末尾，超出 500 字符会被截断掉。
+  const marks: string[] = [];
+  if (/<img\b/i.test(content)) {
+    marks.push('[照片]');
+  }
+  if (/doodle-data/i.test(content)) {
+    marks.push('[涂鸦]');
+  }
+  if (/journal-sticker/i.test(content)) {
+    marks.push('[贴纸]');
+  }
+  return marks.join(' ');
 }
 
 /** Content is "blank" only when it truly carries no text/media markers. */

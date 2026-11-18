@@ -17,7 +17,7 @@ import {
   loadSettings as loadSettingsFromDisk,
   saveSettings as saveSettingsToDisk,
 } from './src/data/storage';
-import {isSimpleTextHtml} from './src/journal/simpleHtml';
+import {needsWebEditor} from './src/journal/richDoc';
 import {MainTabs, MainTabKey} from './src/screens/MainTabs';
 import {CategoryEntriesScreen} from './src/screens/CategoryEntriesScreen';
 import {EditorScreen} from './src/screens/EditorScreen';
@@ -228,7 +228,7 @@ function AppShell({
       }
       // 纯文字日记走原生编辑器；含图片/贴纸/涂鸦的仍交给完整编辑器。
       const entry = id === 'new' ? null : await getEntry(id).catch(() => null);
-      const simple = !entry || isSimpleTextHtml(entry.content);
+      const simple = !entry || !needsWebEditor(entry.content);
       push({
         name: simple ? 'nativeEditor' : 'editor',
         entryId: id,
