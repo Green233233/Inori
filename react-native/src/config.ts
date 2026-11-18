@@ -1,8 +1,8 @@
 /** Global product identity. Single source of truth for the version string. */
 export const APP_NAME = '祈';
 export const APP_EN_NAME = 'Inorinal';
-export const VERSION_NAME = 'v0.6.0';
-export const VERSION_CODE = 9;
+export const VERSION_NAME = 'v0.6.1';
+export const VERSION_CODE = 10;
 export const DEDICATION = '以本软件献给我最亲爱的小不点儿～';
 
 /** Default self-hosted server (written to the settings screen on first run). */

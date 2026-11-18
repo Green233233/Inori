@@ -16,11 +16,11 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="GPLv3" /></a>
   <a href="https://developer.android.com/"><img src="https://img.shields.io/badge/Platform-Android%2029%2B-3DDC84.svg" alt="Android 29+" /></a>
-  <a href="#版本更新日志"><img src="https://img.shields.io/badge/Version-v0.6.0-orange.svg" alt="v0.6.0" /></a>
+  <a href="#版本更新日志"><img src="https://img.shields.io/badge/Version-v0.6.1-orange.svg" alt="v0.6.1" /></a>
 </p>
 
 > **分支说明**：本 `react` 分支使用 **React Native 0.88** 重构了应用界面，采用 **Apple Music「新发现」式黑底亮色、轻量玻璃与鲜明撞色** 设计，尽可能保持精简，并保留原有全部功能与布局结构；Jetpack Compose 版本保留在 `main` 分支。
-> 版本：**v0.6.0**（versionCode 9）。React Native 应用位于 [`react-native/`](react-native/)，自建服务器位于 [`server/`](server/)。
+> 版本：**v0.6.1**（versionCode 10）。React Native 应用位于 [`react-native/`](react-native/)，自建服务器位于 [`server/`](server/)。
 
 ---
 
@@ -47,7 +47,7 @@
 
 项目英文名 **Inorinal** 来自 inori（祈）与 journal 的结合。应用内品牌名称为「祈」。关于页里有一句很私人的献词——那是作者写给最亲爱的人的。我们把这份温柔保留在开源仓库里，也希望使用者在自己的日常中，找到同样安静的角落。
 
-当前版本为 **v0.6.0**：在原有日记能力之上，增加了一对一「主人 / 小狗」联结、授权式设备管控、共享日记、和好券与共享空间，并配套可自托管的服务器。仍属于 Alpha 迭代：交互会继续打磨，稳定性会继续加强，欢迎 Issue 与 Pull Request。
+当前版本为 **v0.6.1**：在 v0.6.0 的「主人 / 小狗」联结、授权式设备管控、共享日记、和好券与共享空间之上，补齐任务与指令、到达通知、全屏定时规则、小狗轨迹、授权状态页、分时段使用时长、相册缩略图、私密日记、显示大小与日记设置等 23 项体验改进。仍属于 Alpha 迭代：交互会继续打磨，稳定性会继续加强，欢迎 Issue 与 Pull Request。
 
 ---
 
@@ -410,5 +410,5 @@ Alpha 阶段可能探索的方向包括：更细的排版样式、贴纸与文�
 ---
 
 **仓库：** [github.com/Green233233/Inorinal](https://github.com/Green233233/Inorinal)  
-**当前版本：** v0.6.0  
+**当前版本：** v0.6.1  
 **许可证：** GPL-3.0

@@ -47,7 +47,7 @@ export function JournalSettingsScreen({
   onChange: (next: AppSettings) => void;
   onBack: () => void;
 }) {
-  const {colors, tokens} = useAppTheme();
+  const {colors} = useAppTheme();
   const [sheet, setSheet] = useState<'size' | 'font' | 'brush' | null>(null);
 
   const update = (patch: Partial<AppSettings>) => {

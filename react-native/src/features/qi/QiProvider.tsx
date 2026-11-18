@@ -669,6 +669,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
       unpair,
       setPowerTier,
       updateProfile,
+      renameSelf,
       setPolicy,
       setAutoRules,
       setAppearance,
