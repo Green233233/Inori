@@ -24,6 +24,7 @@ export function QiHomeScreen({
   onOpenSharedSpace,
   onOpenPartnerLocation,
   onOpenTasks,
+  onOpenTrail,
   onOpenReminders,
   onOpenAlbum,
   onOpenNotifications,
@@ -37,6 +38,7 @@ export function QiHomeScreen({
   onOpenSharedSpace: () => void;
   onOpenPartnerLocation: () => void;
   onOpenTasks: () => void;
+  onOpenTrail: () => void;
   onOpenReminders: () => void;
   onOpenAlbum: () => void;
   onOpenNotifications: () => void;
@@ -232,6 +234,29 @@ export function QiHomeScreen({
                   {color: colors.onSurfaceVariant, marginTop: 4},
                 ]}>
                 点一次取一次，主人那边会收到提醒
+              </Text>
+            </View>
+            <GlassIcon name="chevronRight" size={20} />
+          </View>
+        </SoftCard>
+      ) : null}
+
+      {isMaster ? (
+        <SoftCard
+          radius={18}
+          onPress={onOpenTrail}
+          accessibilityLabel="打开小狗轨迹"
+          style={styles.card}>
+          <View style={styles.cardRow}>
+            <GlassIcon name="circle" size={26} />
+            <View style={{flex: 1}}>
+              <Text style={[type.bodyStrong, {color: colors.onSurface}]}>小狗轨迹</Text>
+              <Text
+                style={[
+                  type.caption,
+                  {color: colors.onSurfaceVariant, marginTop: 4},
+                ]}>
+                今天的使用时段与去过的地方
               </Text>
             </View>
             <GlassIcon name="chevronRight" size={20} />

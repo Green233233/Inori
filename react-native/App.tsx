@@ -33,6 +33,7 @@ import {SharedEntryScreen} from './src/screens/SharedEntryScreen';
 import {isPartnerEntry} from './src/sync/partnerStore';
 import {PermissionCenter} from './src/features/device/PermissionCenter';
 import {ControlCenter} from './src/features/control/ControlCenter';
+import {TrailScreen} from './src/features/control/Trail';
 import {AuthorizationStatus} from './src/features/device/AuthorizationStatus';
 import {PartnerLocation} from './src/features/device/PartnerLocation';
 import CouponDetail from './src/features/coupons/CouponDetail';
@@ -65,6 +66,7 @@ type Route =
   | {name: 'sharedSpace'}
   | {name: 'pairManage'}
   | {name: 'tasks'}
+  | {name: 'trail'}
   | {name: 'reminders'}
   | {name: 'album'}
   | {name: 'notifications'}
@@ -315,6 +317,7 @@ function AppShell({
           onOpenAppearance={() => push({name: 'appearance'})}
           onOpenSharedSpace={() => push({name: 'sharedSpace'})}
           onOpenTasks={() => push({name: 'tasks'})}
+          onOpenTrail={() => push({name: 'trail'})}
           onOpenReminders={() => push({name: 'reminders'})}
           onOpenAlbum={() => push({name: 'album'})}
           onOpenNotifications={() => push({name: 'notifications'})}
@@ -388,6 +391,7 @@ function AppShell({
             {top.name === 'pairManage' ? (
               <PairManage onBack={pop} />
             ) : null}
+            {top.name === 'trail' ? <TrailScreen onBack={pop} /> : null}
             {top.name === 'tasks' ? (
               <TasksScreen onBack={pop} />
             ) : null}

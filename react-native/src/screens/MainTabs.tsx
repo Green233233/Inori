@@ -54,6 +54,7 @@ export function MainTabs({
   onOpenSharedSpace,
   onOpenPartnerLocation,
   onOpenTasks,
+  onOpenTrail,
   onOpenReminders,
   onOpenAlbum,
   onOpenNotifications,
@@ -78,6 +79,7 @@ export function MainTabs({
   onOpenSharedSpace: () => void;
   onOpenPartnerLocation: () => void;
   onOpenTasks: () => void;
+  onOpenTrail: () => void;
   onOpenReminders: () => void;
   onOpenAlbum: () => void;
   onOpenNotifications: () => void;
@@ -120,6 +122,7 @@ export function MainTabs({
             onOpenSharedSpace={onOpenSharedSpace}
             onOpenPartnerLocation={onOpenPartnerLocation}
             onOpenTasks={onOpenTasks}
+            onOpenTrail={onOpenTrail}
             onOpenReminders={onOpenReminders}
             onOpenAlbum={onOpenAlbum}
             onOpenNotifications={onOpenNotifications}

@@ -17,6 +17,7 @@ import {FlatButton, AppSheet, Pill} from '../../components/Ui';
 import {TopBar} from '../../components/TopBar';
 import {showToast} from '../../components/toast';
 import {useQi} from '../qi/QiProvider';
+import {recordTrailPoint} from '../../data/trailStore';
 
 type SheetKind = 'capture' | 'usage' | 'location' | 'notifications' | 'guard' | null;
 
@@ -150,6 +151,16 @@ export function ControlCenter({onBack}: {onBack: () => void}) {
         if (data) {
           setLocation(data);
           setSheet('location');
+          const point = data as {ok?: boolean; lat?: number; lng?: number; address?: string | null};
+          if (point.ok && typeof point.lat === 'number' && typeof point.lng === 'number') {
+            // 顺手记一笔轨迹：只在主人主动取位置时采样，不额外唤醒小狗端。
+            void recordTrailPoint({
+              at: Date.now(),
+              lat: point.lat,
+              lng: point.lng,
+              address: point.address ?? null,
+            }).catch(() => undefined);
+          }
         }
       },
     },
