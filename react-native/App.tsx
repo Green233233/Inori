@@ -48,6 +48,7 @@ import {RemindersScreen} from './src/features/reminders/RemindersScreen';
 import {AlbumScreen} from './src/features/album/AlbumScreen';
 import {NotificationsScreen} from './src/features/notifications/NotificationsScreen';
 import {JournalSettingsScreen} from './src/screens/JournalSettingsScreen';
+import {applyUiScale} from './src/theme/uiScale';
 import type {Coupon} from './src/data/pairTypes';
 
 type Route =
@@ -86,6 +87,7 @@ export default function App() {
         if (cancelled) {
           return;
         }
+        applyUiScale(loaded.uiScale);
         setSettings(loaded);
         setDebugEnabled(loaded.debugMode);
         setSettingsReady(true);
@@ -116,7 +118,11 @@ export default function App() {
           <QiProvider>
             <ThemedStatusBar />
             {settingsReady ? (
-              <QiRoot settings={settings} onSettingsChange={updateSettings} />
+              <QiRoot
+                key={settings.uiScale}
+                settings={settings}
+                onSettingsChange={updateSettings}
+              />
             ) : (
               <Splash />
             )}

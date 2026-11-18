@@ -275,12 +275,19 @@ export async function loadSettings(): Promise<AppSettings> {
       raw.defaultBrush === 'marker' || raw.defaultBrush === 'pencil'
         ? raw.defaultBrush
         : DEFAULT_SETTINGS.defaultBrush;
+    const uiScale =
+      raw.uiScale === 'small' ||
+      raw.uiScale === 'large' ||
+      raw.uiScale === 'xlarge'
+        ? raw.uiScale
+        : DEFAULT_SETTINGS.uiScale;
     return {
       colorStyle,
       themeMode,
       fontSize,
       defaultFont,
       defaultBrush,
+      uiScale,
       debugMode: raw.debugMode === true,
     };
   } catch {

@@ -184,6 +184,7 @@ export const THEME_MODE_ORDER: ThemeMode[] = ['LIGHT', 'DARK', 'SYSTEM'];
 
 export type DefaultFont = 'serif' | 'sans' | 'round';
 export type DefaultBrush = 'pen' | 'marker' | 'pencil';
+export type UiScale = 'small' | 'medium' | 'large' | 'xlarge';
 
 export interface AppSettings {
   colorStyle: ColorStyle;
@@ -191,6 +192,7 @@ export interface AppSettings {
   fontSize: number;
   defaultFont: DefaultFont;
   defaultBrush: DefaultBrush;
+  uiScale: UiScale;
   debugMode: boolean;
 }
 
@@ -200,6 +202,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 16,
   defaultFont: 'serif',
   defaultBrush: 'pen',
+  uiScale: 'medium',
   debugMode: false,
 };
 

@@ -14,6 +14,12 @@ import {type} from '../theme/typography';
 import {GlassIcon} from '../components/GlassIcon';
 import {TopBar} from '../components/TopBar';
 import {AppDialog, AppSheet, Divider, TextButton} from '../components/Ui';
+import {
+  UI_SCALE_LABEL,
+  UI_SCALE_ORDER,
+  applyUiScale,
+  type UiScale,
+} from '../theme/uiScale';
 import {SoftCard} from '../components/Surfaces';
 import {RoleAvatar} from '../components/RoleAvatar';
 import {useQi} from '../features/qi/QiProvider';
@@ -46,6 +52,7 @@ export function SettingsScreen({
   const [nickDraft, setNickDraft] = useState('');
   const [styleSheetOpen, setStyleSheetOpen] = useState(false);
   const [themeSheetOpen, setThemeSheetOpen] = useState(false);
+  const [scaleSheetOpen, setScaleSheetOpen] = useState(false);
   const [debugDialogOpen, setDebugDialogOpen] = useState(false);
   const [cacheDialogOpen, setCacheDialogOpen] = useState(false);
 
@@ -227,6 +234,12 @@ export function SettingsScreen({
           />
           <Divider color={withAlpha(colors.outline, 0.3)} />
           <Row
+            label="显示大小"
+            value={UI_SCALE_LABEL[settings.uiScale]}
+            onPress={() => setScaleSheetOpen(true)}
+          />
+          <Divider color={withAlpha(colors.outline, 0.3)} />
+          <Row
             label="卡片样式"
             onPress={comingSoon('卡片样式功能即将上线')}
           />
@@ -336,6 +349,27 @@ export function SettingsScreen({
               onPress={() => {
                 update({themeMode: option as ThemeMode});
                 setThemeSheetOpen(false);
+              }}
+            />
+          ))}
+        </View>
+      </AppSheet>
+
+      <AppSheet
+        visible={scaleSheetOpen}
+        title="显示大小"
+        onClose={() => setScaleSheetOpen(false)}>
+        <View style={{gap: 6}}>
+          {UI_SCALE_ORDER.map(option => (
+            <OptionRow
+              key={option}
+              label={UI_SCALE_LABEL[option]}
+              selected={settings.uiScale === option}
+              onPress={() => {
+                applyUiScale(option as UiScale);
+                update({uiScale: option as UiScale});
+                setScaleSheetOpen(false);
+                showToast('显示大小已更新');
               }}
             />
           ))}
