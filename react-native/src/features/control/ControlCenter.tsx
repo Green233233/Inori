@@ -20,6 +20,47 @@ import {useQi} from '../qi/QiProvider';
 
 type SheetKind = 'capture' | 'usage' | 'location' | 'notifications' | 'guard' | null;
 
+
+/** 24 根细柱展示「今天每小时的屏幕时间」，没有第三方图表库也能读。 */
+function HourlyBars({hours}: {hours?: {hour: number; minutes: number}[]}) {
+  const {colors} = useAppTheme();
+  const list = hours && hours.length === 24 ? hours : [];
+  if (list.length === 0) {
+    return null;
+  }
+  const peak = Math.max(1, ...list.map(item => item.minutes));
+  const busiest = list.reduce((best, item) => (item.minutes > best.minutes ? item : best), list[0]);
+  return (
+    <View style={{marginTop: 12, marginBottom: 4}}>
+      <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
+        分时分布 · 最忙是 {busiest.hour} 点（{busiest.minutes} 分钟）
+      </Text>
+      <View style={{flexDirection: 'row', alignItems: 'flex-end', height: 78, marginTop: 8, gap: 2}}>
+        {list.map(item => (
+          <View key={item.hour} style={{flex: 1, alignItems: 'center'}}>
+            <View
+              style={{
+                width: '100%',
+                height: Math.max(2, (item.minutes / peak) * 64),
+                borderRadius: 3,
+                backgroundColor: item.minutes > 0 ? colors.primary : colors.surfaceVariant,
+                opacity: item.minutes > 0 ? 0.35 + 0.65 * (item.minutes / peak) : 0.5,
+              }}
+            />
+          </View>
+        ))}
+      </View>
+      <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 2}}>
+        {[0, 6, 12, 18, 23].map(hour => (
+          <Text key={hour} style={[type.caption, {color: colors.onSurfaceVariant}]}>
+            {hour}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 export function ControlCenter({onBack}: {onBack: () => void}) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -262,6 +303,7 @@ export function ControlCenter({onBack}: {onBack: () => void}) {
           今日共 {(usage?.today?.totalMinutes ?? 0)} 分钟 · 近 7 天{' '}
           {(usage?.week?.totalMinutes ?? 0)} 分钟
         </Text>
+        <HourlyBars hours={usage?.hours} />
         {(usage?.top ?? []).map((item: any) => (
           <View key={item.package ?? item.pkg} style={styles.usageRow}>
             <Text style={[type.body, {color: colors.onSurface, flex: 1}]} numberOfLines={1}>

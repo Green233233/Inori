@@ -11,6 +11,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
 import java.util.Calendar
 import java.util.concurrent.Executors
@@ -84,12 +85,14 @@ class UsageStatsModule(reactContext: ReactApplicationContext) :
         val events = eventsBlock(7)
         // Read the array before putMap: WritableMap.putMap consumes the child map,
         // and reading it afterwards throws "Map already consumed".
+        val hours = hourlyMinutes()
         val top = today.getArray("top")
         val result = Arguments.createMap()
         result.putMap("today", today)
         result.putMap("week", week)
         result.putMap("events", events)
         result.putArray("top", top ?: Arguments.createArray())
+        result.putArray("hours", hours)
         result.putDouble("generatedAt", System.currentTimeMillis().toDouble())
         promise.resolve(result)
       } catch (error: Exception) {
@@ -121,6 +124,65 @@ class UsageStatsModule(reactContext: ReactApplicationContext) :
       totals[entry.packageName] = previous + entry.totalTimeInForeground
     }
     return buildBlock(range, totals, sessions = null)
+  }
+
+  /**
+   * 今天 0-23 点每小时的屏幕时长（分钟）。用使用事件把会话按小时切段累加，
+   * 只读一次事件流，不额外唤醒任何东西。
+   */
+  private fun hourlyMinutes(): WritableArray {
+    val out = Arguments.createArray()
+    val buckets = LongArray(24)
+    val manager =
+      reactApplicationContext.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+    val startOfDay = Calendar.getInstance().apply {
+      set(Calendar.HOUR_OF_DAY, 0)
+      set(Calendar.MINUTE, 0)
+      set(Calendar.SECOND, 0)
+      set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+    val now = System.currentTimeMillis()
+    val events = manager.queryEvents(startOfDay, now)
+    if (events != null) {
+      val event = UsageEvents.Event()
+      val open = HashMap<String, Long>()
+      while (events.hasNextEvent()) {
+        events.getNextEvent(event)
+        val pkg = event.packageName ?: continue
+        if (pkg == reactApplicationContext.packageName) continue
+        when (event.eventType) {
+          UsageEvents.Event.ACTIVITY_RESUMED -> open[pkg] = event.timeStamp
+          UsageEvents.Event.ACTIVITY_PAUSED -> {
+            val started = open.remove(pkg) ?: continue
+            val duration = (event.timeStamp - started).coerceIn(0L, MAX_SESSION_MS)
+            addToBuckets(buckets, started, duration, startOfDay)
+          }
+        }
+      }
+      // 仍在使用的会话记到当前时刻
+      open.values.forEach { started ->
+        addToBuckets(buckets, started, (now - started).coerceIn(0L, MAX_SESSION_MS), startOfDay)
+      }
+    }
+    for (i in 0 until 24) {
+      val map = Arguments.createMap()
+      map.putInt("hour", i)
+      map.putInt("minutes", (buckets[i] / 60_000L).toInt())
+      out.pushMap(map)
+    }
+    return out
+  }
+
+  private fun addToBuckets(buckets: LongArray, started: Long, duration: Long, startOfDay: Long) {
+    var cursor = started
+    val end = started + duration
+    while (cursor < end) {
+      val hourIndex = (((cursor - startOfDay) / HOUR_MS).toInt()).coerceIn(0, 23)
+      val hourEnd = startOfDay + (hourIndex + 1) * HOUR_MS
+      val sliceEnd = minOf(end, hourEnd)
+      buckets[hourIndex] += (sliceEnd - cursor)
+      cursor = sliceEnd
+    }
   }
 
   private fun eventsBlock(days: Int): WritableMap {
@@ -237,6 +299,7 @@ class UsageStatsModule(reactContext: ReactApplicationContext) :
   companion object {
     private const val TOP_COUNT = 8
     private const val DAY_MS = 24L * 60L * 60L * 1000L
+    private const val HOUR_MS = 60L * 60L * 1000L
 
     /** A single "session" longer than 6 h is a device-left-on artefact. */
     private const val MAX_SESSION_MS = 6L * 60L * 60L * 1000L
