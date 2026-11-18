@@ -18,7 +18,7 @@ import {type} from '../theme/typography';
 import {TopBar} from '../components/TopBar';
 import {SkeletonBlock} from '../components/Skeleton';
 import {ImageViewer} from '../components/ImageViewer';
-import {toSharedBlocks} from '../journal/sharedBlocks';
+import {parseDoodle, toSharedBlocks, Doodle} from '../journal/sharedBlocks';
 import {getPartnerEntry} from '../sync/partnerStore';
 import {JournalEntry} from '../data/types';
 
@@ -52,6 +52,64 @@ function SharedImage({uri, onPress}: {uri: string; onPress: () => void}) {
   );
 }
 
+export 
+/** 把涂鸦笔迹按容器宽度缩放后逐段画成细长 View（不依赖 WebView/画布）。 */
+function DoodleLayer({doodle}: {doodle: Doodle}) {
+  const [width, setWidth] = useState(0);
+  const scale = width > 0 ? width / doodle.width : 0;
+  const segments = useMemo(() => {
+    if (scale <= 0) {
+      return [];
+    }
+    const out: {key: string; style: object}[] = [];
+    doodle.strokes.forEach((stroke, si) => {
+      const thickness = Math.max(1, stroke.width * scale);
+      for (let i = 1; i < stroke.points.length; i += 1) {
+        const a = stroke.points[i - 1];
+        const b = stroke.points[i];
+        const dx = (b.x - a.x) * scale;
+        const dy = (b.y - a.y) * scale;
+        const length = Math.hypot(dx, dy);
+        if (length < 0.5) {
+          continue;
+        }
+        const midX = ((a.x + b.x) / 2) * scale;
+        const midY = ((a.y + b.y) / 2) * scale;
+        out.push({
+          key: `${si}-${i}`,
+          style: {
+            position: 'absolute',
+            left: midX - length / 2,
+            top: midY - thickness / 2,
+            width: length,
+            height: thickness,
+            borderRadius: thickness / 2,
+            backgroundColor: stroke.color,
+            transform: [{rotate: `${Math.atan2(dy, dx)}rad`}],
+          },
+        });
+      }
+    });
+    return out;
+  }, [doodle, scale]);
+
+  return (
+    <View
+      pointerEvents="none"
+      style={[styles.doodle, {height: scale > 0 ? doodle.height * scale : 1}]}
+      onLayout={event => {
+        const next = event.nativeEvent.layout.width;
+        if (next > 0 && Math.abs(next - width) > 1) {
+          setWidth(next);
+        }
+      }}>
+      {segments.map(segment => (
+        <View key={segment.key} style={segment.style} />
+      ))}
+    </View>
+  );
+}
+
 export function SharedEntryScreen({
   entryId,
   onBack,
@@ -79,6 +137,7 @@ export function SharedEntryScreen({
     };
   }, [entryId]);
 
+  const doodle = useMemo(() => parseDoodle(entry?.content ?? ''), [entry?.content]);
   const blocks = useMemo(
     () => toSharedBlocks(entry?.content ?? ''),
     [entry?.content],
@@ -143,6 +202,11 @@ export function SharedEntryScreen({
                 ),
               )
             )}
+            {doodle ? (
+              <View pointerEvents="none" style={styles.doodleWrap}>
+                <DoodleLayer doodle={doodle} />
+              </View>
+            ) : null}
           </ScrollView>
         </>
       )}
@@ -171,6 +235,8 @@ const styles = StyleSheet.create({
   },
   paperContent: {padding: 18, paddingBottom: 40, gap: 6},
   body: {fontSize: 16, lineHeight: 30, letterSpacing: 0.2},
+  doodleWrap: {position: 'absolute', left: 18, top: 18, right: 18},
+  doodle: {width: '100%'},
   image: {
     width: '100%',
     borderRadius: 10,

@@ -87,3 +87,60 @@ export function toSharedBlocks(html: string): SharedBlock[] {
   }
   return blocks;
 }
+
+export type DoodleStroke = {
+  color: string;
+  width: number;
+  points: {x: number; y: number}[];
+};
+
+export type Doodle = {
+  width: number;
+  height: number;
+  strokes: DoodleStroke[];
+};
+
+/**
+ * 涂鸦在编辑器里是隐藏的 data-doodle-json 节点（笔迹 JSON，不是位图）。
+ * 对方设备没有编辑器 WebView，只能自己把笔迹画出来，所以这里解析成折线。
+ */
+export function parseDoodle(html: string): Doodle | null {
+  if (!html) {
+    return null;
+  }
+  const node = /data-doodle-json\s*=\s*("([^"]*)"|'([^']*)')/i.exec(html);
+  const raw = node ? (node[2] ?? node[3] ?? '') : '';
+  if (!raw) {
+    return null;
+  }
+  let json: any;
+  try {
+    json = JSON.parse(decodeURIComponent(raw));
+  } catch {
+    return null;
+  }
+  const canvas = json?.canvas ?? {};
+  const width = Number(canvas.width) || 0;
+  const height = Number(canvas.height) || 0;
+  const strokes: DoodleStroke[] = [];
+  for (const item of Array.isArray(json?.strokes) ? json.strokes : []) {
+    const points = (Array.isArray(item?.points) ? item.points : [])
+      .map((point: any) => ({x: Number(point?.x), y: Number(point?.y)}))
+      .filter(
+        (point: {x: number; y: number}) =>
+          Number.isFinite(point.x) && Number.isFinite(point.y),
+      );
+    if (points.length < 2) {
+      continue;
+    }
+    strokes.push({
+      color: typeof item?.color === 'string' ? item.color : '#000000',
+      width: Number(item?.width) || 2,
+      points,
+    });
+  }
+  if (!width || !height || strokes.length === 0) {
+    return null;
+  }
+  return {width, height, strokes};
+}
