@@ -123,6 +123,7 @@ interface Snapshot {
   weather: Weather;
   mood: Mood;
   category: Category;
+  visibility: 'pair' | 'private';
 }
 
 interface StickerFile {
@@ -194,6 +195,9 @@ export function EditorScreen({
   const [category, setCategory] = useState<Category>('DAILY');
   const [toolbar, setToolbar] = useState<Toolbar>('none');
   const [metaMenuOpen, setMetaMenuOpen] = useState(false);
+  // 「仅自己可见」：私密条目永不出本机（同步层已按 visibility 过滤）。
+  const [visibility, setVisibility] = useState<'pair' | 'private'>('pair');
+  const visibilityRef = useRef<'pair' | 'private'>('pair');
   const [weatherSheet, setWeatherSheet] = useState(false);
   const [moodSheet, setMoodSheet] = useState(false);
   const [categorySheet, setCategorySheet] = useState(false);
@@ -329,6 +333,7 @@ export function EditorScreen({
           imageUrl: null,
           createdAt: Date.now(),
           updatedAt: Date.now(),
+          visibility: 'pair',
         };
         entryRef.current = draft;
         persistedRef.current = false;
@@ -370,6 +375,8 @@ export function EditorScreen({
       setWeather(normalizeWeather(entry.weather));
       setMood(normalizeMood(entry.mood));
       setCategory(normalizeCategory(entry.category));
+      setVisibility(entry.visibility === 'private' ? 'private' : 'pair');
+      visibilityRef.current = entry.visibility === 'private' ? 'private' : 'pair';
       const display = await native.toDisplayableHtml(entry.id, entry.content);
       if (cancelled) {
         return;
@@ -382,6 +389,7 @@ export function EditorScreen({
         weather: normalizeWeather(entry.weather),
         mood: normalizeMood(entry.mood),
         category: normalizeCategory(entry.category),
+        visibility: entry.visibility === 'private' ? 'private' : 'pair',
       };
       loadedRef.current = true;
       setLoaded(true);
@@ -473,6 +481,7 @@ export function EditorScreen({
         weather: weatherRef.current,
         mood: moodRef.current,
         category: categoryRef.current,
+        visibility: visibilityRef.current,
       };
       const previous = lastSavedRef.current;
       if (
@@ -481,7 +490,8 @@ export function EditorScreen({
         previous.content === snapshot.content &&
         previous.weather === snapshot.weather &&
         previous.mood === snapshot.mood &&
-        previous.category === snapshot.category
+        previous.category === snapshot.category &&
+        previous.visibility === snapshot.visibility
       ) {
         return true;
       }
@@ -500,6 +510,7 @@ export function EditorScreen({
           weather: snapshot.weather,
           mood: snapshot.mood,
           category: snapshot.category,
+          visibility: snapshot.visibility,
           updatedAt: now,
         };
         await saveEntry(saved);
@@ -1052,6 +1063,23 @@ export function EditorScreen({
               onPress={() => {
                 setMetaMenuOpen(false);
                 setCategorySheet(true);
+              }}
+            />
+            <MenuItem
+              icon={visibility === 'private' ? 'info' : 'text'}
+              label={visibility === 'private' ? '仅自己可见' : '共享给 TA'}
+              color={colors.onSurface}
+              iconColor={colors.primary}
+              onPress={() => {
+                const next = visibility === 'private' ? 'pair' : 'private';
+                setVisibility(next);
+                visibilityRef.current = next;
+                setMetaMenuOpen(false);
+                showToast(
+                  next === 'private'
+                    ? '这篇只留在本机，不会再同步给对方'
+                    : '这篇会同步给 TA',
+                );
               }}
             />
           </GlassSurface>
