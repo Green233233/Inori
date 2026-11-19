@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>祈 · 位置</title>
+  <link rel="stylesheet" href="leaflet.css" />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #101216; }
+    #map { position: absolute; inset: 0; background: #101216; }
+    .leaflet-container { background: #101216; font: inherit; }
+    .leaflet-control-attribution {
+      background: rgba(16, 18, 22, 0.72) !important;
+      color: rgba(255, 255, 255, 0.62) !important;
+      font-size: 9px !important;
+      line-height: 1.4 !important;
+      padding: 1px 5px !important;
+    }
+    .leaflet-control-attribution a { color: rgba(255, 255, 255, 0.72) !important; }
+    /* 自绘圆点，避免依赖 marker-icon.png 等图片资源。 */
+    .qi-pin { background: transparent; border: 0; }
+    .qi-pin-dot {
+      width: 18px; height: 18px; box-sizing: border-box;
+      border-radius: 50%;
+      background: #7cc4ff;
+      border: 3px solid #0b0d10;
+      box-shadow: 0 0 0 5px rgba(124, 196, 255, 0.28);
+    }
+    .qi-pin-halo {
+      position: absolute; left: -11px; top: -11px; width: 40px; height: 40px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(124, 196, 255, 0.22) 0%, rgba(124, 196, 255, 0) 68%);
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script src="leaflet.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      function post(payload) {
+        try {
+          if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+            window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+          }
+        } catch (e) { /* 桥不在时忽略 */ }
+      }
+
+      function num(value, fallback) {
+        var parsed = parseFloat(value);
+        return isFinite(parsed) ? parsed : fallback;
+      }
+
+      function escapeHtml(text) {
+        return String(text == null ? '' : text)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      var params = new URLSearchParams(window.location.search || '');
+      var initialLat = num(params.get('lat'), 39.908823);
+      var initialLng = num(params.get('lng'), 116.39747);
+      var initialLabel = params.get('label') || '';
+      var interactive = params.get('interactive') === '1';
+
+      if (typeof L === 'undefined') {
+        post({ type: 'fatal', reason: 'leaflet_missing' });
+        return;
+      }
+
+      var map = L.map('map', {
+        zoomControl: false,
+        attributionControl: true,
+        dragging: interactive,
+        touchZoom: interactive,
+        scrollWheelZoom: interactive,
+        doubleClickZoom: interactive,
+        boxZoom: interactive,
+        keyboard: interactive,
+        tap: interactive,
+        zoomSnap: 0.5,
+        fadeAnimation: false
+      }).setView([initialLat, initialLng], 16);
+
+      map.attributionControl.setPrefix(false);
+
+      var tilesLoaded = 0;
+      var tilesFailed = 0;
+      var tileLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        minZoom: 3,
+        attribution: '&copy; OpenStreetMap',
+        crossOrigin: false
+      });
+      tileLayer.on('tileload', function () {
+        tilesLoaded += 1;
+      });
+      tileLayer.on('tileerror', function () {
+        tilesFailed += 1;
+        // 一张瓦片偶发失败不算断网；连续失败且一张都没成功才降级。
+        if (tilesLoaded === 0 && tilesFailed >= 2) {
+          post({ type: 'tileerror', reason: 'tiles_unreachable' });
+        }
+      });
+      tileLayer.addTo(map);
+
+      var icon = L.divIcon({
+        className: 'qi-pin',
+        html: '<div class="qi-pin-halo"></div><div class="qi-pin-dot"></div>',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9]
+      });
+
+      var marker = L.marker([initialLat, initialLng], {
+        icon: icon,
+        interactive: false,
+        keyboard: false
+      }).addTo(map);
+
+      function setLabel(text) {
+        if (!text) return;
+        marker.bindTooltip(escapeHtml(text), {
+          direction: 'top',
+          offset: [0, -14],
+          opacity: 0.92,
+          className: 'qi-map-label'
+        });
+      }
+      setLabel(initialLabel);
+
+      // RN 侧通过 injectJavaScript 调这个函数；只有坐标真的变了才会 setView。
+      window.qiSet = function (payload) {
+        if (!payload) return;
+        var lat = num(payload.lat, null);
+        var lng = num(payload.lng, null);
+        if (lat === null || lng === null) return;
+        marker.setLatLng([lat, lng]);
+        var current = map.getCenter();
+        var moved = Math.abs(current.lat - lat) > 1e-5 || Math.abs(current.lng - lng) > 1e-5;
+        if (moved) {
+          map.setView([lat, lng], map.getZoom(), { animate: false });
+        }
+        if (typeof payload.label === 'string') {
+          if (payload.label) setLabel(payload.label);
+          else marker.unbindTooltip();
+        }
+      };
+
+      window.qiReady = true;
+      post({ type: 'ready' });
+
+      // 页面加载后 7 秒仍没有任何瓦片成功，说明瓦片被墙或没网：交给 RN 降级。
+      window.setTimeout(function () {
+        if (tilesLoaded === 0) {
+          post({ type: 'tileerror', reason: 'tiles_timeout' });
+        }
+      }, 7000);
+    })();
+  </script>
+</body>
+</html>

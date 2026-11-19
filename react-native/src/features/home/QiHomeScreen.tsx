@@ -13,14 +13,15 @@ import {GlassIcon} from '../../components/GlassIcon';
 import {ColorField, SoftCard} from '../../components/Surfaces';
 import {FlatButton, Pill} from '../../components/Ui';
 import {showToast} from '../../components/toast';
-import {PERMISSION_KEYS, qiDevicePermissions} from '../../native/QiDevice';
 import {useQi} from '../qi/QiProvider';
+import {qiDevicePermissions} from '../../native/QiDevice';
 
 export function QiHomeScreen({
   onOpenJournal,
   onOpenCoupons,
   onOpenControlCenter,
   onOpenAuthorizationStatus,
+  onOpenPermissionCenter,
   onOpenSharedSpace,
   onOpenPartnerLocation,
   onOpenTasks,
@@ -54,22 +55,18 @@ export function QiHomeScreen({
   const onAccent = onAccentFor(accent);
 
   /**
-   * 小狗端「打开权限中心」直接跳系统设置里本应用的权限页：
-   * 用户说的是「去系统里开权限」，在应用内再点十次「去设置」反而绕。
-   * 应用内的权限清单仍在「我的 → 权限管控中心」。
+   * 小狗端「打开权限中心」进应用内的权限管控中心：那里有十项权限的状态、
+   * 每一项的「去设置」入口，以及授权/撤回留痕，比直接跳系统页更清楚。
    */
-  const openSystemPermissions = React.useCallback(() => {
+  const openPermissionCenter = React.useCallback(() => {
+    if (onOpenPermissionCenter) {
+      onOpenPermissionCenter();
+      return;
+    }
     qiDevicePermissions
       .openAppSettings()
-      .then((opened) =>
-        opened
-          ? true
-          : qiDevicePermissions.openSettingsFor([...PERMISSION_KEYS]),
-      )
-      .catch((error: any) => {
-        showToast(error?.message ?? '打不开系统设置，请到「我的 → 权限管控中心」逐项开启');
-      });
-  }, []);
+      .catch(() => showToast('权限中心暂时打不开，请到「我的 → 权限管控中心」'));
+  }, [onOpenPermissionCenter]);
 
   const lastSync = lastSyncAt
     ? new Date(lastSyncAt).toLocaleTimeString('zh-CN', {
@@ -170,7 +167,7 @@ export function QiHomeScreen({
 
       <SoftCard
         radius={18}
-        onPress={isMaster ? onOpenAuthorizationStatus : openSystemPermissions}
+        onPress={isMaster ? onOpenAuthorizationStatus : openPermissionCenter}
         accessibilityLabel={isMaster ? '打开授权状态' : '打开权限中心'}
         style={styles.card}>
         <View style={styles.cardRow}>

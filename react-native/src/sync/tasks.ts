@@ -14,6 +14,17 @@ import type {PairSummary} from '../data/pairTypes';
 
 export type TaskStatus = 'open' | 'submitted' | 'done' | 'cancelled';
 
+/** 报备最多可附 10 张图（分块媒体逐张上传，服务端一条记录只存 id）。 */
+export const MAX_TASK_PHOTOS = 10;
+
+/** 新旧字段归一：优先新数组，回退旧的单张字段。 */
+export function taskPhotoIds(task: QiTask): string[] {
+  if (task.submittedPhotoIds?.length) {
+    return task.submittedPhotoIds.slice(0, MAX_TASK_PHOTOS);
+  }
+  return task.submittedPhotoId ? [task.submittedPhotoId] : [];
+}
+
 export interface QiTask {
   id: string;
   title: string;
@@ -23,7 +34,12 @@ export interface QiTask {
   createdAt: number;
   updatedAt: number;
   submittedText?: string;
-  /** 报备附图：相册媒体 id（走分块媒体，不进 <96KB 的同步记录）。 */
+  /**
+   * 报备附图：相册媒体 id 列表（走分块媒体，不进 96KB 的同步记录）。
+   * 上限 10 张；旧记录只有单张 `submittedPhotoId`，读取方需两者兼容。
+   */
+  submittedPhotoIds?: string[];
+  /** 旧版单张附图字段，保留读取兼容，写入时同步维护。 */
   submittedPhotoId?: string;
   submittedAt?: number;
   verdictText?: string;
@@ -156,13 +172,15 @@ export async function submitTask(
   pair: PairSummary,
   task: QiTask,
   text: string,
-  photoId?: string,
+  photoIds?: string[],
 ): Promise<QiTask> {
+  const merged = (photoIds ?? taskPhotoIds(task)).slice(0, MAX_TASK_PHOTOS);
   const next: QiTask = {
     ...task,
     status: 'submitted',
     submittedText: text.trim().slice(0, 300),
-    submittedPhotoId: photoId ?? task.submittedPhotoId,
+    submittedPhotoIds: merged,
+    submittedPhotoId: merged[0],
     submittedAt: Date.now(),
     updatedAt: Date.now(),
   };

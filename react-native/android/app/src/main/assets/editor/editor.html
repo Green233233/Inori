@@ -5,6 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <link rel="stylesheet" href="editor.css">
     <title>祈 - 编辑器</title>
+    <script>
+        /*
+         * 只读模式必须尽早生效：这段内联脚本在 <head> 执行，早于 #paper
+         * 解析以及 vendor/editor.js 加载，因此不会出现「先可编辑再变只读」
+         * 的闪烁；即使旧数据内联了 contenteditable，长按也不会弹键盘。
+         * 权威接口仍然是 editor.js 的 window.setReadOnly(true)（RN 注入兜底）。
+         */
+        (function () {
+            var search = window.location.search || '';
+            var hash = window.location.hash || '';
+            var readOnly = /(?:^|[?&])view=1(?:&|$)/.test(search) ||
+                /(?:^|[#&])view=1(?:&|$)/.test(hash);
+            if (!readOnly) return;
+            document.documentElement.classList.add('qi-view-pending');
+            document.addEventListener('DOMContentLoaded', function () {
+                if (document.body) document.body.classList.add('view-mode');
+                var paper = document.getElementById('paper');
+                if (paper) {
+                    // 显式 false（不是 removeAttribute）：需求要求只读时
+                    // contenteditable 全为 false；false 本身也不会弹键盘。
+                    paper.setAttribute('contenteditable', 'false');
+                }
+            });
+        })();
+    </script>
 </head>
 <body>
     <div id="paper" contenteditable="true" spellcheck="false">

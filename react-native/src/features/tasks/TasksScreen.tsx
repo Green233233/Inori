@@ -28,9 +28,11 @@ import {ImageViewer} from '../../components/ImageViewer';
 import {
   createTask,
   loadTasks,
+  MAX_TASK_PHOTOS,
   QiTask,
   refreshTasks,
   submitTask,
+  taskPhotoIds,
   verdictTask,
 } from '../../sync/tasks';
 
@@ -45,13 +47,15 @@ const STATUS_LABEL: Record<QiTask['status'], string> = {
  * 报备附图缩略图：按 mediaId 从相册分块媒体里取回原图（data URI），
  * 点开走全局 ImageViewer。图片不进同步记录，所以这里按需拉取并缓存。
  */
-function SubmittedPhoto({
+function SubmittedThumb({
   pair,
   id,
+  index,
   onOpen,
 }: {
   pair: any;
   id: string;
+  index: number;
   onOpen: (uri: string) => void;
 }) {
   const {colors, tokens} = useAppTheme();
@@ -86,27 +90,63 @@ function SubmittedPhoto({
 
   if (failed) {
     return (
-      <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 6}]}>
-        附图已失效
-      </Text>
+      <View
+        style={[
+          styles.thumb,
+          {backgroundColor: colors.surfaceVariant, borderColor: colors.outline},
+        ]}>
+        <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>已失效</Text>
+      </View>
     );
   }
   return (
     <Pressable
       onPress={() => (uri ? onOpen(uri) : undefined)}
-      accessibilityLabel="查看报备附图"
+      accessibilityLabel={`查看第 ${index + 1} 张报备附图`}
       style={[
-        styles.photo,
+        styles.thumb,
+        styles.thumbInTask,
         {backgroundColor: colors.surfaceVariant, borderColor: colors.outline},
       ]}>
       {uri ? (
         <Image source={{uri}} style={styles.photoImage} resizeMode="cover" />
       ) : (
         <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
-          {tokens ? '加载附图…' : '加载中'}
+          {tokens ? '加载…' : '…'}
         </Text>
       )}
     </Pressable>
+  );
+}
+
+function SubmittedPhotos({
+  pair,
+  ids,
+  onOpen,
+}: {
+  pair: any;
+  ids: string[];
+  onOpen: (uri: string) => void;
+}) {
+  if (!ids.length) {
+    return null;
+  }
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.submittedRow}
+      accessibilityLabel="报备附图">
+      {ids.map((id, index) => (
+        <SubmittedThumb
+          key={id}
+          pair={pair}
+          id={id}
+          index={index}
+          onOpen={onOpen}
+        />
+      ))}
+    </ScrollView>
   );
 }
 
@@ -122,8 +162,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
   const [detail, setDetail] = useState('');
   const [active, setActive] = useState<QiTask | null>(null);
   const [reply, setReply] = useState('');
-  const [attach, setAttach] = useState<AlbumItem | null>(null);
-  const [attachUri, setAttachUri] = useState<string | null>(null);
+  const [attachList, setAttachList] = useState<{item: AlbumItem; uri: string}[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [viewer, setViewer] = useState<{uri: string; name?: string} | null>(null);
 
@@ -169,27 +208,32 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
       return;
     }
     try {
-      const task = await submitTask(pair, active, reply, attach?.id);
+      const task = await submitTask(
+        pair,
+        active,
+        reply,
+        attachList.map(entry => entry.item.id),
+      );
       setTasks(previous => previous.map(item => (item.id === task.id ? task : item)));
       setActive(null);
       setReply('');
-      setAttach(null);
-      setAttachUri(null);
+      setAttachList([]);
     } catch (error: any) {
       showToast(error?.message ?? '报备失败');
     }
   };
 
   const attachPhoto = async () => {
-    if (!pair) {
+    if (!pair || attachList.length >= MAX_TASK_PHOTOS) {
       return;
     }
     setAttaching(true);
     try {
       const item = await sharePhoto(pair, state.deviceId);
       const uri = await loadPhotoImage(pair, item);
-      setAttach(item);
-      setAttachUri(uri);
+      setAttachList(previous =>
+        previous.length >= MAX_TASK_PHOTOS ? previous : [...previous, {item, uri}],
+      );
     } catch (error: any) {
       const message = String(error?.message ?? '');
       if (message && !message.includes('没有选择照片')) {
@@ -310,10 +354,10 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
                   </Text>
                 </View>
               ) : null}
-              {task.submittedPhotoId ? (
-                <SubmittedPhoto
+              {taskPhotoIds(task).length ? (
+                <SubmittedPhotos
                   pair={pair}
-                  id={task.submittedPhotoId}
+                  ids={taskPhotoIds(task)}
                   onOpen={uri => setViewer({uri, name: '报备附图'})}
                 />
               ) : null}
@@ -436,35 +480,67 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
         />
         <View style={styles.attachRow}>
           <TextButton
-            label={attaching ? '处理中…' : attachUri ? '更换照片' : '附一张照片'}
-            color={colors.primary}
+            label={
+              attaching
+                ? '处理中…'
+                : attachList.length >= MAX_TASK_PHOTOS
+                ? `已附满 ${MAX_TASK_PHOTOS} 张`
+                : attachList.length
+                ? `再附一张（${attachList.length}/${MAX_TASK_PHOTOS}）`
+                : '附照片（最多 10 张）'
+            }
+            color={
+              !attaching && attachList.length < MAX_TASK_PHOTOS
+                ? colors.primary
+                : colors.onSurfaceVariant
+            }
             onPress={() => {
-              if (!attaching) {
+              if (!attaching && attachList.length < MAX_TASK_PHOTOS) {
                 attachPhoto().catch(() => undefined);
               }
             }}
           />
-          {attachUri ? (
+          {attachList.length ? (
             <TextButton
-              label="移除"
+              label="清空"
               color={colors.onSurfaceVariant}
-              onPress={() => {
-                setAttach(null);
-                setAttachUri(null);
-              }}
+              onPress={() => setAttachList([])}
             />
           ) : null}
         </View>
-        {attachUri ? (
-          <Pressable
-            onPress={() => setViewer({uri: attachUri, name: attach?.name})}
-            accessibilityLabel="预览报备照片"
-            style={[
-              styles.photo,
-              {backgroundColor: colors.surfaceVariant, borderColor: colors.outline},
-            ]}>
-            <Image source={{uri: attachUri}} style={styles.photoImage} resizeMode="cover" />
-          </Pressable>
+        {attachList.length ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.thumbRow}
+            accessibilityLabel="报备附图">
+            {attachList.map((entry, index) => (
+              <View key={entry.item.id} style={styles.thumbItem}>
+                <Pressable
+                  onPress={() => setViewer({uri: entry.uri, name: entry.item.name})}
+                  accessibilityLabel={`预览第 ${index + 1} 张报备照片`}
+                  style={[
+                    styles.thumb,
+                    {backgroundColor: colors.surfaceVariant, borderColor: colors.outline},
+                  ]}>
+                  <Image
+                    source={{uri: entry.uri}}
+                    style={styles.photoImage}
+                    resizeMode="cover"
+                  />
+                </Pressable>
+                <Pressable
+                  onPress={() =>
+                    setAttachList(previous => previous.filter(pick => pick.item.id !== entry.item.id))
+                  }
+                  accessibilityLabel={`移除第 ${index + 1} 张报备照片`}
+                  hitSlop={8}
+                  style={[styles.thumbRemove, {backgroundColor: colors.error}]}>
+                  <Text style={styles.thumbRemoveLabel}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
         ) : null}
       </AppSheet>
       <ImageViewer
@@ -489,6 +565,28 @@ const styles = StyleSheet.create({
   },
   photoImage: {width: '100%', height: '100%'},
   attachRow: {flexDirection: 'row', justifyContent: 'space-between', marginTop: 8},
+  thumbRow: {marginTop: 10},
+  thumbItem: {marginRight: 10},
+  thumb: {
+    width: 96,
+    height: 96,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+  },
+  thumbRemove: {
+    position: 'absolute',
+    right: -6,
+    top: -6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbRemoveLabel: {fontSize: 12, fontWeight: '700', color: '#FFFFFF'},
+  submittedRow: {marginTop: 10},
+  thumbInTask: {marginRight: 10},
   root: {flex: 1},
   stats: {flexDirection: 'row', gap: 10, marginTop: 4},
   statCard: {flex: 1, padding: 14, alignItems: 'center'},

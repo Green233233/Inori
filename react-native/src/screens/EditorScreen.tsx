@@ -6,6 +6,7 @@ import React, {
 } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   AppState,
   BackHandler,
   Image,
@@ -57,7 +58,40 @@ import {
 import {isBlankEditorHtml, stripEditorState} from '../data/html';
 
 const EDITOR_URL = 'file:///android_asset/editor/editor.html';
+/** 只读页复用同一份 HTML/CSS/JS，只加一个 view=1 参数。 */
+const EDITOR_READONLY_URL = `${EDITOR_URL}?view=1`;
+/** WebView 淡入时长，需求要求 ≤150ms，且只动 opacity。 */
+const WEBVIEW_FADE_MS = 120;
 const AUTO_SAVE_DELAY = 350;
+
+/**
+ * 冷启动骨架用的纯文本首屏：从存储里的 HTML 粗略抽文字（不解析 DOM）。
+ * 只是为了在 WebView 冷启动的几百毫秒里先让用户看到标题/日期/正文开头，
+ * 真正的排版仍由 WebView 负责。
+ */
+function toPlainPreview(html: string): string {
+  if (!html) {
+    return '';
+  }
+  return html
+    .replace(/<div[^>]*doodle-data[\s\S]*?<\/div>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, 800);
+}
+
 const TEXT_COLORS = [
   '#333333', '#666666', '#FF6B6B', '#FFB6C1', '#FF8C42', '#FFD93D',
   '#6BCB77', '#4D96FF', '#9B59B6', '#1ABC9C', '#E91E63', '#795548',
@@ -178,10 +212,16 @@ export function EditorScreen({
   entryId,
   settings,
   onBack,
+  readOnly = false,
 }: {
   entryId: string;
   settings: AppSettings;
   onBack: () => void;
+  /**
+   * 只读模式（v0.6.2）：同一个 WebView，只加 `?view=1`，隐藏全部编辑入口。
+   * 默认 false，App.tsx 的旧调用点无需改动。
+   */
+  readOnly?: boolean;
 }) {
   const {colors, surfaces, isDark, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -189,6 +229,13 @@ export function EditorScreen({
   const [loaded, setLoaded] = useState(false);
   const [pageReady, setPageReady] = useState(false);
   const [contentDrawn, setContentDrawn] = useState(false);
+  /**
+   * 冷启动骨架：在 WebView 首帧之前先画出「标题 / 日期 / 正文纯文本首屏」，
+   * 数据一到就可见，不必等 WebView 解析完 4 个 JS 资源。
+   */
+  const [firstScreenText, setFirstScreenText] = useState('');
+  const [skeletonGone, setSkeletonGone] = useState(false);
+  const [firstScreenDate, setFirstScreenDate] = useState(todayIso());
   const [title, setTitle] = useState('');
   const [weather, setWeather] = useState<Weather>('SUNNY');
   const [mood, setMood] = useState<Mood>('HAPPY');
@@ -218,6 +265,10 @@ export function EditorScreen({
 
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+  const mountAtRef = useRef(Date.now());
+  const webOpacity = useRef(new Animated.Value(0)).current;
   const titleRef = useRef(title);
   titleRef.current = title;
   const weatherRef = useRef(weather);
@@ -230,6 +281,9 @@ export function EditorScreen({
   const entryRef = useRef<JournalEntry | null>(null);
   const persistedRef = useRef(false);
   const loadedRef = useRef(false);
+  // 正文（展示用 HTML）是否已就位：骨架阶段标题已经可见，但此时自动保存
+  // 不能跑，否则可能把还没转换好的正文当成空页写回。
+  const hydratedRef = useRef(false);
   const pageReadyRef = useRef(false);
   const contentRef = useRef('');
   const pendingContentRef = useRef<string | null>(null);
@@ -344,8 +398,11 @@ export function EditorScreen({
         setWeather(draft.weather);
         setMood(draft.mood);
         setCategory(draft.category);
+        setFirstScreenDate(draft.date);
+        setFirstScreenText('');
         contentRef.current = '';
         pendingContentRef.current = '';
+        hydratedRef.current = true;
         loadedRef.current = true;
         setLoaded(true);
         return;
@@ -365,10 +422,12 @@ export function EditorScreen({
       const cleanedContent = stripEditorState(entry.content);
       if (cleanedContent !== entry.content) {
         entry.content = cleanedContent;
-        try {
-          await saveEntry(entry);
-        } catch {
-          // Cleaning is best-effort; the editor still loads the content below.
+        if (!readOnlyRef.current) {
+          try {
+            await saveEntry(entry);
+          } catch {
+            // Cleaning is best-effort; the editor still loads the content below.
+          }
         }
       }
       setTitle(entry.title);
@@ -377,12 +436,18 @@ export function EditorScreen({
       setCategory(normalizeCategory(entry.category));
       setVisibility(entry.visibility === 'private' ? 'private' : 'pair');
       visibilityRef.current = entry.visibility === 'private' ? 'private' : 'pair';
+      // 先把本地数据骨架画出来（<50ms），WebView 的转换/冷启动在后台继续。
+      setFirstScreenDate(entry.date || todayIso());
+      setFirstScreenText(toPlainPreview(entry.content));
+      loadedRef.current = true;
+      setLoaded(true);
       const display = await native.toDisplayableHtml(entry.id, entry.content);
       if (cancelled) {
         return;
       }
       contentRef.current = display;
       pendingContentRef.current = display;
+      hydratedRef.current = true;
       lastSavedRef.current = {
         title: entry.title,
         content: display,
@@ -391,13 +456,15 @@ export function EditorScreen({
         category: normalizeCategory(entry.category),
         visibility: entry.visibility === 'private' ? 'private' : 'pair',
       };
-      loadedRef.current = true;
-      setLoaded(true);
+      // 页面可能早已 ready：这时上面的 effect 已经跑过，需要主动推一次。
+      if (pageReadyRef.current) {
+        flushPending();
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [entryId]);
+  }, [entryId, flushPending]);
 
   // Content loaded after the page became ready still needs an explicit push.
   useEffect(() => {
@@ -406,16 +473,41 @@ export function EditorScreen({
     }
   }, [loaded, flushPending]);
 
-  // Keep a calm veil over the blank WebView until its first paint is likely
-  // done. The editor usually posts `content`; this is the safety net for an
-  // empty/new page and slower devices.
+  // Keep a short safety net: the editor usually posts `content`/`painted`,
+  // this covers an empty/new page or a slow device. 250ms keeps the fade-in
+  // inside the 0.5s cold-start budget instead of the old 700ms blanket wait.
   useEffect(() => {
     if (!loaded || !pageReady) {
       return;
     }
-    const timer = setTimeout(() => setContentDrawn(true), 700);
+    const timer = setTimeout(() => setContentDrawn(true), 250);
     return () => clearTimeout(timer);
   }, [loaded, pageReady]);
+
+  // WebView 淡入：只动 opacity（≤150ms），骨架先垫在下面，避免白屏闪烁。
+  useEffect(() => {
+    if (!contentDrawn) {
+      return;
+    }
+    const animation = Animated.timing(webOpacity, {
+      toValue: 1,
+      duration: WEBVIEW_FADE_MS,
+      useNativeDriver: true,
+    });
+    animation.start(({finished}) => {
+      if (finished) {
+        setSkeletonGone(true);
+      }
+    });
+    // Hard fallback: some devices drop the completion callback when the
+    // animation is pre-empted (e.g. a second timing starts during a re-render),
+    // which would leave the skeleton spinner on screen forever.
+    const fallback = setTimeout(() => setSkeletonGone(true), WEBVIEW_FADE_MS + 300);
+    return () => {
+      animation.stop();
+      clearTimeout(fallback);
+    };
+  }, [contentDrawn, webOpacity]);
 
   /* ---------------------------------------------------------------- */
   /* Save                                                             */
@@ -460,6 +552,9 @@ export function EditorScreen({
       allowEmpty?: boolean;
       content?: string;
     }): Promise<boolean> => {
+      if (readOnlyRef.current) {
+        return true;
+      }
       if (savingRef.current || !loadedRef.current) {
         return true;
       }
@@ -529,7 +624,11 @@ export function EditorScreen({
   );
 
   const scheduleSave = useCallback(() => {
-    if (!loadedRef.current) {
+    if (readOnlyRef.current) {
+      // 只读页不写盘：连「清理旧标记」的重写也在加载阶段跳过了。
+      return;
+    }
+    if (!loadedRef.current || !hydratedRef.current) {
       return;
     }
     if (saveTimerRef.current) {
@@ -541,6 +640,11 @@ export function EditorScreen({
   }, [doSave]);
 
   const saveAndExit = useCallback(async () => {
+    if (readOnlyRef.current) {
+      // 只读浏览不碰磁盘，也不弹「正文为空」对话框。
+      onBack();
+      return;
+    }
     if (savingRef.current || emptyDialog.visible) {
       return;
     }
@@ -606,6 +710,20 @@ export function EditorScreen({
         case 'painted':
           // The page finished its first paint; drop the veil right away.
           setContentDrawn(true);
+          break;
+        case 'boot': {
+          // 冷启动指标（见 editor.js 顶部注释）：debug 包无 Metro 也能看。
+          // adb logcat -s ReactNativeJS:V | grep "\[editor-boot\]"
+          const sinceMount = Date.now() - mountAtRef.current;
+          console.log(
+            `[editor-boot] page ms=${data.ms} navMs=${data.navMs} paintMs=${data.paintMs ?? '-'} sinceMount=${sinceMount}`,
+          );
+          break;
+        }
+        case 'boot-content':
+          console.log(
+            `[editor-boot] content ms=${data.ms} navMs=${data.navMs}`,
+          );
           break;
         case 'imageClick':
           if (data.src) {
@@ -718,6 +836,10 @@ export function EditorScreen({
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (readOnlyRef.current) {
+        onBackRef.current();
+        return true;
+      }
       saveAndExit();
       return true;
     });
@@ -726,7 +848,7 @@ export function EditorScreen({
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => {
-      if (state === 'background') {
+      if (state === 'background' && !readOnlyRef.current) {
         doSave({allowEmpty: false});
       }
     });
@@ -762,6 +884,9 @@ export function EditorScreen({
   };
 
   const toggleToolbar = (next: Exclude<Toolbar, 'none'>) => {
+    if (readOnlyRef.current) {
+      return;
+    }
     const active = toolbar === next ? 'none' : next;
     setToolbar(active);
     invoke('toggleDoodleMode', active === 'doodle');
@@ -789,10 +914,36 @@ export function EditorScreen({
     invoke('toggleDoodleMode', false);
   };
 
+  // 冷启动首屏骨架：getEntry() 虽然是本地读，但先把页面结构画出来，
+  // 不必等 WebView 启动。整个骨架只做布局、不做动画，保证首帧开销最小。
   if (!loaded) {
+    const bone = withAlpha(colors.onSurfaceVariant, 0.16);
+    const boneSoft = withAlpha(colors.onSurfaceVariant, 0.1);
     return (
-      <View style={[styles.loading, {backgroundColor: colors.background}]}>
-        <ActivityIndicator color={colors.primary} />
+      <View style={[styles.root, {backgroundColor: colors.background}]}>
+        <View style={[styles.bootBar, {paddingTop: insets.top}]}>
+          <View style={[styles.bootLine, {width: 26, height: 26, borderRadius: 13, backgroundColor: boneSoft}]} />
+          <View style={[styles.bootLine, {flex: 1, height: 18, marginHorizontal: 12, backgroundColor: bone}]} />
+          <View style={[styles.bootLine, {width: 42, height: 22, backgroundColor: boneSoft}]} />
+        </View>
+        <View style={styles.bootBody}>
+          <View style={[styles.bootLine, {width: '58%', height: 24, marginBottom: 10, backgroundColor: bone}]} />
+          <View style={[styles.bootLine, {width: '32%', height: 12, marginBottom: 22, backgroundColor: boneSoft}]} />
+          {[0.94, 0.88, 0.91, 0.72, 0.9, 0.64].map((w, index) => (
+            <View
+              key={index}
+              style={[
+                styles.bootLine,
+                {
+                  width: `${Math.round(w * 100)}%`,
+                  height: 14,
+                  marginBottom: 12,
+                  backgroundColor: boneSoft,
+                },
+              ]}
+            />
+          ))}
+        </View>
       </View>
     );
   }
@@ -814,100 +965,156 @@ export function EditorScreen({
         <View style={[styles.topBar, {paddingTop: insets.top}]}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="返回并保存"
+            accessibilityLabel={readOnly ? '返回' : '返回并保存'}
             focusable={false}
             hitSlop={8}
-            onPress={saveAndExit}
+            onPress={readOnly ? onBack : saveAndExit}
             style={styles.topIcon}>
             <GlassIcon name="back" size={24} />
           </Pressable>
-          <TextInput
-            value={title}
-            onChangeText={setTitle}
-            placeholder="标题"
-            placeholderTextColor={withAlpha(colors.onSurfaceVariant, 0.68)}
-            numberOfLines={1}
-            maxLength={500}
-            style={[
-              styles.titleInput,
-              {
-                color: colors.onSurface,
-                fontSize: tokens.isCompact ? 16 : 18,
-              },
-            ]}
-          />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="日记信息"
-            focusable={false}
-            hitSlop={8}
-            onPress={() => {
-              setMetaMenuOpen(true);
-              setToolbar('none');
-              invoke('toggleDoodleMode', false);
-            }}
-            style={styles.metaButton}>
-            <GlassIcon name="info" size={22} />
-          </Pressable>
+          {readOnly ? (
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.titleInput,
+                styles.readOnlyTitle,
+                {
+                  color: colors.onSurface,
+                  fontSize: tokens.isCompact ? 16 : 18,
+                },
+              ]}>
+              {title || '手账'}
+            </Text>
+          ) : (
+            <TextInput
+              value={title}
+              onChangeText={setTitle}
+              placeholder="标题"
+              placeholderTextColor={withAlpha(colors.onSurfaceVariant, 0.68)}
+              numberOfLines={1}
+              maxLength={500}
+              style={[
+                styles.titleInput,
+                {
+                  color: colors.onSurface,
+                  fontSize: tokens.isCompact ? 16 : 18,
+                },
+              ]}
+            />
+          )}
+          {readOnly ? (
+            <View
+              accessibilityRole="text"
+              accessibilityLabel="只读模式"
+              style={styles.readOnlyBadge}>
+              <Text
+                style={{
+                  fontSize: 11,
+                  color: withAlpha(colors.onSurfaceVariant, 0.9),
+                }}>
+                只读
+              </Text>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="日记信息"
+              focusable={false}
+              hitSlop={8}
+              onPress={() => {
+                setMetaMenuOpen(true);
+                setToolbar('none');
+                invoke('toggleDoodleMode', false);
+              }}
+              style={styles.metaButton}>
+              <GlassIcon name="info" size={22} />
+            </Pressable>
+          )}
         </View>
       </GlassSurface>
 
       <View style={styles.content}>
-        <WebView
-          ref={webRef}
-          source={{uri: EDITOR_URL}}
-          originWhitelist={['file://*', 'about:blank']}
-          allowFileAccess
-          allowFileAccessFromFileURLs={false}
-          allowUniversalAccessFromFileURLs={false}
-          javaScriptEnabled
-          domStorageEnabled
-          cacheEnabled
-          mixedContentMode="never"
-          setSupportMultipleWindows={false}
-          javaScriptCanOpenWindowsAutomatically={false}
-          androidLayerType="hardware"
-          style={styles.webview}
-          injectedJavaScriptBeforeContentLoaded={BRIDGE_SHIM}
-          onMessage={handleMessage}
-          onLoadEnd={() => {
-            // The injected shim posts `ready` on window load; this is only a
-            // late fallback for the rare case where the injection landed after
-            // the load event. Never flush content from here directly: the
-            // editor's JS may not be initialised yet and the call would be lost.
-            setTimeout(() => {
-              if (!pageReadyRef.current) {
-                pageReadyRef.current = true;
-                setPageReady(true);
-                flushPending();
-              }
-            }, 800);
-          }}
-          onShouldStartLoadWithRequest={(request: any) =>
-            request.url.startsWith('file:///android_asset/editor/') ||
-            request.url === 'about:blank'
-          }
-        />
+        <Animated.View
+          pointerEvents={contentDrawn ? 'auto' : 'none'}
+          style={[styles.webviewWrap, {opacity: webOpacity}]}>
+          <WebView
+            ref={webRef}
+            source={{uri: readOnly ? EDITOR_READONLY_URL : EDITOR_URL}}
+            originWhitelist={['file://*', 'about:blank']}
+            allowFileAccess
+            allowFileAccessFromFileURLs={false}
+            allowUniversalAccessFromFileURLs={false}
+            javaScriptEnabled
+            domStorageEnabled
+            cacheEnabled
+            mixedContentMode="never"
+            setSupportMultipleWindows={false}
+            javaScriptCanOpenWindowsAutomatically={false}
+            androidLayerType="hardware"
+            style={styles.webview}
+            injectedJavaScriptBeforeContentLoaded={BRIDGE_SHIM}
+            // ?view=1 is the primary switch; this injected call is the belt-and-
+            // braces fallback for a cold WebView that somehow lost the query.
+            injectedJavaScript={
+              readOnly
+                ? 'try { window.setReadOnly && window.setReadOnly(true); } catch (e) {} true;'
+                : undefined
+            }
+            onMessage={handleMessage}
+            onLoadEnd={() => {
+              // The injected shim posts `ready` on window load; this is only a
+              // late fallback for the rare case where the injection landed after
+              // the load event. Never flush content from here directly: the
+              // editor's JS may not be initialised yet and the call would be lost.
+              setTimeout(() => {
+                if (!pageReadyRef.current) {
+                  pageReadyRef.current = true;
+                  setPageReady(true);
+                  flushPending();
+                }
+              }, 800);
+            }}
+            onShouldStartLoadWithRequest={(request: any) =>
+              request.url.startsWith('file:///android_asset/editor/') ||
+              request.url === 'about:blank'
+            }
+          />
+        </Animated.View>
 
-        {!loaded || !pageReady || !contentDrawn ? (
+        {/*
+          冷启动骨架（需求 2）：纯文本首屏直接来自本地 store，先于 WebView
+          的 4 个脚本解析完成。WebView 在下面以 opacity 0→1 淡入（120ms），
+          它真正画好（painted / 250ms 兜底）之后骨架才移除。
+          测量：adb logcat -s ReactNativeJS:V | grep "[editor-boot]"
+        */}
+        {!skeletonGone ? (
           <View
-            style={[
-              styles.loadingOverlay,
-              {backgroundColor: colors.background},
-            ]}>
-            <ActivityIndicator color={colors.primary} />
+            pointerEvents="none"
+            style={[styles.skeleton, {backgroundColor: colors.background}]}>
             <Text
-              style={{
-                marginTop: 10,
-                fontSize: 13,
-                color: colors.onSurfaceVariant,
-              }}>
-              正在打开手账…
+              numberOfLines={1}
+              style={[styles.skeletonTitle, {color: colors.onSurface}]}>
+              {title || '未命名手账'}
+            </Text>
+            <Text
+              style={[
+                styles.skeletonDate,
+                {color: withAlpha(colors.onSurfaceVariant, 0.78)},
+              ]}>
+              {firstScreenDate}
+            </Text>
+            <Text
+              numberOfLines={16}
+              style={[
+                styles.skeletonBody,
+                {color: withAlpha(colors.onSurface, 0.72)},
+              ]}>
+              {firstScreenText || ' '}
             </Text>
           </View>
         ) : null}
 
-        {toolbar !== 'none' ? (
+        {!readOnly && toolbar !== 'none' ? (
           <View
             style={{
               position: 'absolute',
@@ -976,6 +1183,8 @@ export function EditorScreen({
         ) : null}
       </View>
 
+      {/* 只读模式不渲染底部工具条与保存入口（需求 1）。 */}
+      {readOnly ? null : (
       <GlassSurface
         radius={0}
         elevation={8}
@@ -1024,10 +1233,11 @@ export function EditorScreen({
           />
         </View>
       </GlassSurface>
+      )}
 
       {/* Meta menu */}
       <Modal
-        visible={metaMenuOpen}
+        visible={metaMenuOpen && !readOnly}
         transparent
         animationType="fade"
         onRequestClose={() => setMetaMenuOpen(false)}>
@@ -1087,7 +1297,7 @@ export function EditorScreen({
       </Modal>
 
       <AppSheet
-        visible={weatherSheet}
+        visible={weatherSheet && !readOnly}
         title="选择天气"
         onClose={() => setWeatherSheet(false)}>
         <ChipFlow>
@@ -1105,7 +1315,7 @@ export function EditorScreen({
       </AppSheet>
 
       <AppSheet
-        visible={moodSheet}
+        visible={moodSheet && !readOnly}
         title="记录此刻心情"
         onClose={() => setMoodSheet(false)}>
         <ChipFlow>
@@ -1123,7 +1333,7 @@ export function EditorScreen({
       </AppSheet>
 
       <AppSheet
-        visible={categorySheet}
+        visible={categorySheet && !readOnly}
         title="日记分类"
         onClose={() => setCategorySheet(false)}>
         <ChipFlow>
@@ -1737,6 +1947,14 @@ function MenuItem({
 const styles = StyleSheet.create({
   root: {flex: 1},
   loading: {flex: 1, alignItems: 'center', justifyContent: 'center'},
+  bootBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  bootBody: {flex: 1, paddingHorizontal: 18, paddingTop: 18},
+  bootLine: {borderRadius: 6},
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1759,17 +1977,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   content: {flex: 1, position: 'relative'},
-  loadingOverlay: {
+  webviewWrap: {flex: 1},
+  webview: {flex: 1, backgroundColor: 'transparent'},
+  // 冷启动骨架：与 WebView 同尺寸覆盖，WebView 淡入完成后整块移除。
+  skeleton: {
     position: 'absolute',
     left: 0,
     right: 0,
     top: 0,
     bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingTop: 18,
     zIndex: Z.sticky,
   },
-  webview: {flex: 1, backgroundColor: 'transparent'},
+  skeletonTitle: {fontSize: 22, fontWeight: '700', marginBottom: 6},
+  skeletonDate: {fontSize: 12, marginBottom: 16},
+  skeletonBody: {fontSize: 15, lineHeight: 24},
+  readOnlyTitle: {textAlign: 'left'},
+  readOnlyBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   bottomBar: {
     flexDirection: 'row',
     paddingTop: 8,

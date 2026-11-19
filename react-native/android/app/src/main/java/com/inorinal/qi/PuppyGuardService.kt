@@ -1,5 +1,6 @@
 package com.inorinal.qi
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,7 +10,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.location.LocationManager
 import android.media.projection.MediaProjectionManager
 import android.os.BatteryManager
 import android.os.Build
@@ -18,11 +21,13 @@ import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import java.io.File
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * The only resident component of 祈.
@@ -183,6 +188,8 @@ class PuppyGuardService : Service() {
     runCatching { applyAutoRules(this) }
     val state = currentState()
     lastState = state
+    // 定期位置采样挂在心跳上：没有额外定时器，也不会把循环唤醒得更频繁。
+    runCatching { maybeSampleLocation(state) }
     val payload =
       linkedMapOf<String, Any?>(
         "waitMs" to nextWaitMs,
@@ -399,6 +406,96 @@ class PuppyGuardService : Service() {
     receiver = null
   }
 
+  // ------------------------------------------------------------ location trail
+
+  /**
+   * 按功耗档位定期采一个点（SAVER 30 分钟 / BALANCED 10 分钟 / REALTIME 2 分钟）。
+   *
+   * 挂在 [dispatchTick] 上而不是新开定时器：每次心跳只做几次 SharedPreferences
+   * 读取，距离上次采样不够久就直接返回。真正的取点只读 last-known
+   * （PASSIVE/NETWORK/GPS 里最新的那个），绝不 requestLocationUpdates，也绝不
+   * 申请 wakelock —— 设备醒着（亮屏）才有意义，灭屏时连 last-known 都不读。
+   *
+   * 注意：没有 ACCESS_BACKGROUND_LOCATION 时，进程不在前台读位置可能抛
+   * SecurityException；[runCatching] 在这里是刻意的降级（跳过本次采样），
+   * 不能让守护循环因此退出。下一次心跳会再试。
+   */
+  private fun maybeSampleLocation(state: PowerState) {
+    if (!state.screenOn) return
+    if (!hasLocationPermission()) return
+    val interval = locationIntervalMs(tier)
+    val nowElapsed = SystemClock.elapsedRealtime()
+    if (nowElapsed - prefs.getLong(PREF_LAST_LOCATION_ELAPSED, 0L) < interval) {
+      return
+    }
+    val manager =
+      getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+    val fix = latestKnownLocation(manager) ?: return
+    val at = System.currentTimeMillis()
+    // 先记时间再写文件：即使写盘失败，也不会每个心跳都重试到发热。
+    prefs.edit().putLong(PREF_LAST_LOCATION_ELAPSED, nowElapsed).apply()
+    lastLocationAt = at
+    appendTrailPoint(at, fix.latitude, fix.longitude)
+  }
+
+  private fun hasLocationPermission(): Boolean =
+    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+      PackageManager.PERMISSION_GRANTED ||
+      ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED
+
+  /** 只读 last-known：不触发任何 provider 请求，代价接近 0。 */
+  private fun latestKnownLocation(manager: LocationManager): android.location.Location? =
+    listOf(
+        LocationManager.PASSIVE_PROVIDER,
+        LocationManager.NETWORK_PROVIDER,
+        LocationManager.GPS_PROVIDER
+      )
+      .mapNotNull { provider ->
+        runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
+      }
+      .maxByOrNull { it.time }
+
+  /**
+   * 追加一条轨迹并保留最近 [TRAIL_MAX_POINTS] 条。
+   *
+   * 先写 `.tmp` 再 rename：JS 的 trailStore 随时可能在读这个文件，直接覆盖
+   * 有可能让它读到半个 JSON；rename 在同一文件系统内是原子的。
+   */
+  private fun appendTrailPoint(at: Long, lat: Double, lng: Double) {
+    runCatching {
+      val dir = File(filesDir, TRAIL_DIR)
+      if (!dir.exists() && !dir.mkdirs()) return
+      val target = File(dir, TRAIL_FILE)
+      val points = JSONArray()
+      if (target.exists()) {
+        val raw = runCatching { target.readText() }.getOrDefault("")
+        val existing =
+          runCatching { JSONObject(raw).optJSONArray("points") }.getOrNull()
+        if (existing != null) {
+          for (index in 0 until existing.length()) {
+            if (points.length() >= TRAIL_MAX_POINTS - 1) break
+            val point = existing.optJSONObject(index) ?: continue
+            points.put(point)
+          }
+        }
+      }
+      points.put(
+        JSONObject()
+          .put("t", at)
+          .put("lat", lat)
+          .put("lng", lng)
+      )
+      val root = JSONObject().put("points", points)
+      val temp = File(dir, "$TRAIL_FILE.tmp")
+      temp.writeText(root.toString())
+      if (!temp.renameTo(target)) {
+        target.delete()
+        temp.renameTo(target)
+      }
+    }
+  }
+
   // ------------------------------------------------------------------ companion
 
   companion object {
@@ -414,8 +511,28 @@ class PuppyGuardService : Service() {
     const val PREF_AUTO_RULES = "autoRules"
     const val PREF_AUTO_ACTIVE = "autoRuleActive"
 
+    /** 上次采样时间（elapsedRealtime，用于跨档位判断间隔；重启后归零无害）。 */
+    const val PREF_LAST_LOCATION_ELAPSED = "lastLocationElapsed"
+
     /** Last applied auto rule id, so switching rules is audited once, not every tick. */
     @Volatile private var appliedRule: String? = null
+
+    /** 后台位置采样的档位间隔：省电 30 分钟、智能 10 分钟、实时 2 分钟。 */
+    private const val SAVER_LOCATION_MS = 30L * 60L * 1000L
+    private const val BALANCED_LOCATION_MS = 10L * 60L * 1000L
+    private const val REALTIME_LOCATION_MS = 2L * 60L * 1000L
+
+    fun locationIntervalMs(tier: Tier): Long =
+      when (tier) {
+        Tier.SAVER -> SAVER_LOCATION_MS
+        Tier.BALANCED -> BALANCED_LOCATION_MS
+        Tier.REALTIME -> REALTIME_LOCATION_MS
+      }
+
+    /** JS 侧 trailStore 读取并合并 `files/qi/puppy-trail.json`。 */
+    const val TRAIL_DIR = "qi"
+    const val TRAIL_FILE = "puppy-trail.json"
+    const val TRAIL_MAX_POINTS = 200
 
     /**
      * Evaluate the mirrored rule list and apply the first matching rule's tier.
@@ -501,6 +618,9 @@ class PuppyGuardService : Service() {
 
     @Volatile var lastTickAt: Long = 0L
 
+    /** 最近一次后台位置采样的墙钟时间（0 = 还没采过）。 */
+    @Volatile var lastLocationAt: Long = 0L
+
     @Volatile var lastEventAt: Long = SystemClock.elapsedRealtime()
 
     @Volatile var tier: Tier = Tier.BALANCED
@@ -566,6 +686,8 @@ class PuppyGuardService : Service() {
         "idleMinutes" to state.idleMinutes,
         "startedAt" to startedAt,
         "lastTickAt" to lastTickAt,
+        "lastLocationAt" to lastLocationAt,
+        "locationIntervalMs" to locationIntervalMs(tier),
         "nextPollAt" to (if (lastTickAt == 0L) 0L else lastTickAt + nextWaitMs),
         "projectionActive" to projectionActive,
         "userPresents" to userPresentCount,

@@ -10,7 +10,7 @@ import {PermissionsAndroid, Platform} from 'react-native';
 import {api} from '../net/ApiClient';
 import {openJson, sealJson} from '../crypto/Crypto';
 import type {PairSummary} from '../data/pairTypes';
-import {qiDevice} from '../native/QiDevice';
+import {qiDevice, type LocationFix} from '../native/QiDevice';
 
 export type CommandKind =
   | 'guard.status'
@@ -53,6 +53,18 @@ export interface RelayPage {
   cursor: number;
 }
 
+/**
+ * location.get 的回传形状：在原生 LocationFix 上补一段可读地址。
+ *
+ * `address` 一定非空（逆地理失败时退回「纬度,经度」），UI 可以直接把它当主
+ * 文案；`addressSource` 让界面知道该不该把经纬度再显示成小字。
+ */
+export interface LocatedPlace extends LocationFix {
+  address?: string;
+  addressSource?: 'geocoder' | 'coordinates';
+  geoUri?: string;
+}
+
 const waiters = new Map<string, (reply: CommandReply) => void>();
 
 export function newCommandId(): string {
@@ -63,7 +75,7 @@ export async function sendCommand(
   pair: PairSummary,
   kind: CommandKind,
   args?: Record<string, unknown>,
-  timeoutMs = 25_000,
+  timeoutMs = 40_000,
 ): Promise<CommandReply> {
   if (!pair.peerPubkey) {
     throw new Error('对方公钥缺失，无法建立加密通道');
@@ -124,6 +136,9 @@ export async function executeCommand(
   try {
     const data = await runLocalCommand(request, policy);
     reply = {id: request.id, ok: true, data, at: Date.now()};
+    if (request.kind === 'location.get') {
+      notifyLocationViewed(data);
+    }
   } catch (error: any) {
     reply = {
       id: request.id,
@@ -138,6 +153,63 @@ export async function executeCommand(
     body: {kind: 'command.reply', ciphertext: JSON.stringify(envelope)},
   }).catch(() => undefined);
   return true;
+}
+
+/**
+ * 给一次定位结果补中文地址。
+ *
+ * 优先原生 Geocoder（LocationModule 内部优先 getAddressLine(0)，空则用
+ * 省/市/区/街道拼接）；逆地理需要网络，失败绝不能把整条定位请求判失败，所以
+ * 最后退回「纬度,经度」，并始终给出一个 `geo:` 链接供 UI 打开系统地图。
+ */
+async function describeFix(fix: LocationFix): Promise<LocatedPlace> {
+  const lat = Number(fix?.lat);
+  const lng = Number(fix?.lng);
+  if (!fix?.ok || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return fix;
+  }
+  const coordinateText = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  let address = '';
+  try {
+    const geocoded = await qiDevice.location.reverseGeocode(lat, lng);
+    if (geocoded?.ok) {
+      address = String(geocoded.address ?? '').trim();
+    }
+  } catch {
+    // 没有网络/ROM 不带逆地理服务：只是少了好看的文案，坐标仍然可用。
+  }
+  const fromGeocoder = address.length > 0;
+  if (!fromGeocoder) {
+    address = coordinateText;
+  }
+  return {
+    ...fix,
+    address,
+    addressSource: fromGeocoder ? 'geocoder' : 'coordinates',
+    geoUri: `geo:${lat},${lng}?q=${lat},${lng}(${encodeURIComponent(address)})`,
+  };
+}
+
+/**
+ * 被查看的一方留一条通知：位置被读取不需要本人确认，但必须让他知道。
+ *
+ * 只在真正取到坐标时发；无权限/无网络/执行失败都不打扰。通知失败（旧包没有
+ * QiNotice、系统限制）也绝不能反过来把定位回传判失败。
+ */
+function notifyLocationViewed(data: unknown): void {
+  const place = data as Partial<LocatedPlace> | null | undefined;
+  const lat = Number(place?.lat);
+  const lng = Number(place?.lng);
+  if (place?.ok === false || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return;
+  }
+  try {
+    qiDevice.notice
+      .post('qi.location.viewed', '祈 · 位置', '小狗刚刚查看了你的位置', false)
+      .catch(() => undefined);
+  } catch {
+    // 没有通知模块：静默跳过。
+  }
 }
 
 async function runLocalCommand(
@@ -174,7 +246,7 @@ async function runLocalCommand(
       return qiDevice.screenshot.status();
     case 'location.get':
       await ensureLocationPermission();
-      return qiDevice.location.locate();
+      return describeFix(await qiDevice.location.locate());
     case 'notifications.drain':
       return qiDevice.notifications.drain(Number(args.limit) || 50);
     case 'permissions.snapshot':

@@ -74,6 +74,19 @@
           tools:targetApi="31" />
       </service>
 
+      <!-- 小狗端的联动通道：常驻前台服务自己轮询中继，App 不在前台时也能
+           收到主人派的任务/券。只在配对为小狗端时由 JS 启动，解绑即停。 -->
+      <service
+        android:name=".qi.QiLinkService"
+        android:exported="false"
+        android:stopWithTask="false"
+        android:foregroundServiceType="specialUse">
+        <property
+          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+          android:value="pair_relay_notifications"
+          tools:targetApi="31" />
+      </service>
+
       <!-- Notification access: system binds it, the platform permission limits
            who can reach it. The relay starts with an empty whitelist. -->
       <service

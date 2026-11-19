@@ -11,66 +11,27 @@ import {useAppTheme} from '../../theme/AppThemeProvider';
 import {onAccentFor, withAlpha} from '../../theme/palette';
 import {type} from '../../theme/typography';
 import {GlassIcon} from '../../components/GlassIcon';
-import {MapPreview} from '../../components/MapPreview';
 import {ColorField, SoftCard} from '../../components/Surfaces';
-import {FlatButton, AppSheet, Pill} from '../../components/Ui';
+import {FlatButton, AppSheet} from '../../components/Ui';
 import {TopBar} from '../../components/TopBar';
 import {showToast} from '../../components/toast';
 import {useQi} from '../qi/QiProvider';
-import {recordTrailPoint} from '../../data/trailStore';
 
-type SheetKind = 'capture' | 'usage' | 'location' | 'notifications' | 'guard' | null;
+type SheetKind = 'capture' | 'guard' | null;
 
 
-/** 24 根细柱展示「今天每小时的屏幕时间」，没有第三方图表库也能读。 */
-function HourlyBars({hours}: {hours?: {hour: number; minutes: number}[]}) {
-  const {colors} = useAppTheme();
-  const list = hours && hours.length === 24 ? hours : [];
-  if (list.length === 0) {
-    return null;
-  }
-  const peak = Math.max(1, ...list.map(item => item.minutes));
-  const busiest = list.reduce((best, item) => (item.minutes > best.minutes ? item : best), list[0]);
-  return (
-    <View style={{marginTop: 12, marginBottom: 4}}>
-      <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
-        分时分布 · 最忙是 {busiest.hour} 点（{busiest.minutes} 分钟）
-      </Text>
-      <View style={{flexDirection: 'row', alignItems: 'flex-end', height: 78, marginTop: 8, gap: 2}}>
-        {list.map(item => (
-          <View key={item.hour} style={{flex: 1, alignItems: 'center'}}>
-            <View
-              style={{
-                width: '100%',
-                height: Math.max(2, (item.minutes / peak) * 64),
-                borderRadius: 3,
-                backgroundColor: item.minutes > 0 ? colors.primary : colors.surfaceVariant,
-                opacity: item.minutes > 0 ? 0.35 + 0.65 * (item.minutes / peak) : 0.5,
-              }}
-            />
-          </View>
-        ))}
-      </View>
-      <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 2}}>
-        {[0, 6, 12, 18, 23].map(hour => (
-          <Text key={hour} style={[type.caption, {color: colors.onSurfaceVariant}]}>
-            {hour}
-          </Text>
-        ))}
-      </View>
-    </View>
-  );
-}
-
-export function ControlCenter({onBack}: {onBack: () => void}) {
+export function ControlCenter({
+  onBack,
+  onOpenUsage,
+}: {
+  onBack: () => void;
+  onOpenUsage: () => void;
+}) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
   const {pair, runCommand, refreshPair} = useQi();
   const [busy, setBusy] = useState<string | null>(null);
   const [capture, setCapture] = useState<any>(null);
-  const [usage, setUsage] = useState<any>(null);
-  const [location, setLocation] = useState<any>(null);
-  const [notifications, setNotifications] = useState<any[]>([]);
   const [guard, setGuard] = useState<any>(null);
   const [sheet, setSheet] = useState<SheetKind>(null);
   const [message, setMessage] = useState('');
@@ -133,46 +94,8 @@ export function ControlCenter({onBack}: {onBack: () => void}) {
       icon: 'flame' as const,
       label: '使用时长',
       hint: '今日屏幕时间与 Top 应用',
-      onPress: async () => {
-        const data = await call('usage.stats');
-        if (data) {
-          setUsage(data);
-          setSheet('usage');
-        }
-      },
-    },
-    {
-      key: 'location',
-      icon: 'circle' as const,
-      label: '定位',
-      hint: '读取最近一次位置',
-      onPress: async () => {
-        const data = await call('location.get');
-        if (data) {
-          setLocation(data);
-          setSheet('location');
-          const point = data as {ok?: boolean; lat?: number; lng?: number; address?: string | null};
-          if (point.ok && typeof point.lat === 'number' && typeof point.lng === 'number') {
-            // 顺手记一笔轨迹：只在主人主动取位置时采样，不额外唤醒小狗端。
-            void recordTrailPoint({
-              at: Date.now(),
-              lat: point.lat,
-              lng: point.lng,
-              address: point.address ?? null,
-            }).catch(() => undefined);
-          }
-        }
-      },
-    },
-    {
-      key: 'notifications',
-      icon: 'info' as const,
-      label: '通知',
-      hint: '拉取最近的通知摘要',
-      onPress: async () => {
-        const data: any = await call('notifications.drain', {limit: 30});
-        setNotifications(Array.isArray(data) ? data : []);
-        setSheet('notifications');
+      onPress: () => {
+        onOpenUsage();
       },
     },
     {
@@ -266,26 +189,13 @@ export function ControlCenter({onBack}: {onBack: () => void}) {
         <SoftCard radius={18} style={styles.dataCard}>
           <View style={styles.dataRow}>
             <Text style={[type.body, {color: colors.onSurface}]}>今日屏幕时间</Text>
-            <Text style={[type.bodyStrong, {color: colors.onSurface}]}>
-              {usage?.today?.totalMinutes != null
-                ? `${usage.today.totalMinutes} 分钟`
-                : '点「使用时长」获取'}
-            </Text>
+            <Text style={[type.bodyStrong, {color: colors.primary}]}>看使用时长 →</Text>
           </View>
           {hint ? (
             <Text style={[type.caption, {color: colors.error, marginTop: 8}]}>
               {hint}
             </Text>
           ) : null}
-          <View style={[styles.divider, {backgroundColor: withAlpha(colors.outline, 0.3)}]} />
-          <View style={styles.dataRow}>
-            <Text style={[type.body, {color: colors.onSurface}]}>最近位置</Text>
-            <Text style={[type.caption, {color: colors.onSurfaceVariant}]} numberOfLines={1}>
-              {location?.ok
-                ? `${location.lat?.toFixed(4)}, ${location.lng?.toFixed(4)}`
-                : '点「定位」获取'}
-            </Text>
-          </View>
         </SoftCard>
 
         <Text
@@ -307,75 +217,6 @@ export function ControlCenter({onBack}: {onBack: () => void}) {
         <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 8}]}>
           {capture?.width}×{capture?.height} · 小狗端已收到查看通知
         </Text>
-      </AppSheet>
-
-      <AppSheet visible={sheet === 'usage'} title="使用时长" onClose={() => setSheet(null)}>
-        <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
-          今日共 {(usage?.today?.totalMinutes ?? 0)} 分钟 · 近 7 天{' '}
-          {(usage?.week?.totalMinutes ?? 0)} 分钟
-        </Text>
-        <HourlyBars hours={usage?.hours} />
-        {(usage?.top ?? []).map((item: any) => (
-          <View key={item.package ?? item.pkg} style={styles.usageRow}>
-            <Text style={[type.body, {color: colors.onSurface, flex: 1}]} numberOfLines={1}>
-              {item.label ?? item.package ?? item.pkg}
-            </Text>
-            <Text style={[type.bodyStrong, {color: colors.onSurface}]}>
-              {Math.round(item.minutes ?? 0)} 分钟
-            </Text>
-          </View>
-        ))}
-        {(usage?.top ?? []).length === 0 ? (
-          <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 8}]}>
-            小狗端还没有开启「使用情况访问」。
-          </Text>
-        ) : null}
-      </AppSheet>
-
-      <AppSheet visible={sheet === 'location'} title="最近位置" onClose={() => setSheet(null)}>
-        {location?.ok ? (
-          <>
-            <MapPreview
-              lat={Number(location.lat)}
-              lng={Number(location.lng)}
-              height={200}
-              caption={location.address || undefined}
-            />
-            <Text style={[type.body, {color: colors.onSurface, marginTop: 10}]}>
-              {location.address || `${location.lat?.toFixed(5)}, ${location.lng?.toFixed(5)}`}
-            </Text>
-            <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 6}]}>
-              {location.provider} · 精度 {Math.round(location.accuracy ?? 0)} 米 ·{' '}
-              {Math.round((location.ageMs ?? 0) / 1000)} 秒前
-            </Text>
-          </>
-        ) : (
-          <Text style={[type.body, {color: colors.onSurfaceVariant}]}>
-            {location?.reason || '还没有可用的位置。'}
-          </Text>
-        )}
-      </AppSheet>
-
-      <AppSheet visible={sheet === 'notifications'} title="通知摘要" onClose={() => setSheet(null)}>
-        {notifications.length === 0 ? (
-          <Text style={[type.body, {color: colors.onSurfaceVariant}]}>
-            没有可转发的通知（小狗端需开启通知使用权）。
-          </Text>
-        ) : (
-          notifications.map((item, index) => (
-            <View key={`${item.at}-${index}`} style={styles.noteRow}>
-              <Pill
-                text={item.package ?? '应用'}
-                color={colors.onSurfaceVariant}
-                background={colors.surfaceVariant}
-              />
-              <Text style={[type.caption, {color: colors.onSurface, marginTop: 4}]}>
-                {item.title ? `${item.title} · ` : ''}
-                {item.text ?? ''}
-              </Text>
-            </View>
-          ))
-        )}
       </AppSheet>
 
       <AppSheet visible={sheet === 'guard'} title="守护状态" onClose={() => setSheet(null)}>

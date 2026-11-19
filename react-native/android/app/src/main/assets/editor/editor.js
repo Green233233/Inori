@@ -1,5 +1,25 @@
 // ==================== editor core ====================
 
+/*
+ * 冷启动计时（v0.6.2 需求①「冷启动 ≤0.5s」）
+ * -------------------------------------------------------------------------
+ * window.__qiT0 在脚本开始执行的瞬间记录 performance.now()（该值本身是
+ * 「从本次导航开始到现在」的毫秒数，包含 HTML/CSS/vendor 脚本解析时间）。
+ * 首次绘制时把差值通过 postMessage({type:'boot', ms, navMs}) 回传给 RN，
+ * EditorScreen 会打印 `[editor-boot] ...`。
+ *
+ * 真机测量方法（debug 包没有 Metro 也能用）：
+ *   adb logcat -s ReactNativeJS:V | grep "\[editor-boot\]"
+ * 其中 ms  = 脚本开始 → 首帧（editor.js 自身开销）
+ *      navMs = 导航开始 → 首帧（整页冷启动，含 4 个 JS 文件解析）
+ *      sinceMount = 点击进入 → 首帧（RN 侧视角，包含建 WebView 的开销）
+ * 想测「点击到可见」的端到端时间，以 sinceMount 为准；目标 ≤500ms。
+ */
+window.__qiT0 = (window.performance && typeof window.performance.now === 'function')
+    ? window.performance.now()
+    : Date.now();
+window.__qiBootReported = false;
+
 const Atrament = window.Atrament;
 const MODE_DISABLED = window.ATRAMENT_MODE_DISABLED || 'disabled';
 const MODE_DRAW = window.ATRAMENT_MODE_DRAW || 'draw';
@@ -21,6 +41,26 @@ let savedSelectionRange = null;
 let caretScrollScheduled = false;
 let caretScrollTimer = null;
 let paper;
+let editorReadOnly = false;
+
+/*
+ * 文档级滚动（见 editor.css 顶部说明）。
+ * 纸面不再是滚动容器，所以所有原先的 paper.scrollTop / scrollLeft 都必须
+ * 走这两个 helper，否则多图页面里贴纸落点、涂鸦对齐、光标跟随都会错位。
+ */
+function getScrollTop() {
+    if (typeof window.scrollY === 'number') {
+        return Math.max(0, window.scrollY);
+    }
+    const scroller = document.scrollingElement || document.documentElement;
+    return Math.max(0, (scroller && scroller.scrollTop) || document.body.scrollTop || 0);
+}
+
+function scrollDocumentBy(delta) {
+    if (!delta) return;
+    const next = Math.max(0, getScrollTop() + delta);
+    window.scrollTo(0, next);
+}
 
 const scheduleIdle = window.requestIdleCallback
     ? (callback) => window.requestIdleCallback(callback, { timeout: 120 })
@@ -47,22 +87,94 @@ const doodle = {
     lastStateJson: ''
 };
 
+/**
+ * 只读模式的稳定入口：
+ * 1) URL 带 `?view=1`（或 `#view=1`，方便将来用 hash 路由）→ 直接只读；
+ * 2) RN 侧再通过注入脚本调用 window.setReadOnly(true) 兜底；
+ * 3) RN 也可以在运行中调用 setReadOnly(false) 退回编辑（例如「编辑」按钮）。
+ */
+function parseReadOnlyFromLocation() {
+    const search = window.location.search || '';
+    const hash = window.location.hash || '';
+    return /(?:^|[?&])view=1(?:&|$)/.test(search) ||
+        /(?:^|[#&])view=1(?:&|$)/.test(hash);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     paper = document.getElementById('paper');
-    const readOnly = /(?:^|[?&])view=1(?:&|$)/.test(window.location.search);
-    if (readOnly) {
+    editorReadOnly = parseReadOnlyFromLocation();
+    if (editorReadOnly) {
         enableViewMode();
     }
     initialiseDoodle();
     bindEditorEvents();
-    if (readOnly) {
+    if (editorReadOnly) {
         // The reader may still tap a picture, but stickers must never start a drag.
         bindImageClickHandlers();
     } else {
         bindStickerHandlers();
     }
     updateVisibleViewport();
+    scheduleBootReport();
 });
+
+/* 首帧回传：双层 rAF 之后再读时间，基本覆盖「内容已绘制」的时刻。 */
+function scheduleBootReport() {
+    if (window.__qiBootReported) return;
+    const raf = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 16));
+    raf(() => raf(() => reportBootMetric()));
+}
+
+function reportBootMetric() {
+    if (window.__qiBootReported) return;
+    window.__qiBootReported = true;
+    const now = (window.performance && typeof window.performance.now === 'function')
+        ? window.performance.now()
+        : Date.now();
+    const payload = {
+        type: 'boot',
+        ms: Math.round(now - window.__qiT0),
+        navMs: Math.round(now)
+    };
+    try {
+        const paints = window.performance && window.performance.getEntriesByType
+            ? window.performance.getEntriesByType('paint')
+            : [];
+        const firstPaint = paints.find((entry) => entry.name === 'first-contentful-paint') || paints[0];
+        if (firstPaint) {
+            payload.paintMs = Math.round(firstPaint.startTime);
+        }
+    } catch (error) {
+        // Paint Timing API is optional.
+    }
+    // 页面内也打一条，便于 chrome://inspect 直接看。
+    try {
+        console.log(`[editor-boot] page ms=${payload.ms} navMs=${payload.navMs}`);
+    } catch (error) {
+        // console may be unavailable.
+    }
+    postToNative(payload);
+}
+
+/* 首次绘制「有正文」的帧：RN 侧据此判断用户真正看到日记的时刻。 */
+function reportContentMetric() {
+    if (window.__qiContentReported) return;
+    window.__qiContentReported = true;
+    const now = (window.performance && typeof window.performance.now === 'function')
+        ? window.performance.now()
+        : Date.now();
+    try {
+        console.log(`[editor-boot] content ms=${Math.round(now - window.__qiT0)}`);
+    } catch (error) {
+        // console may be unavailable.
+    }
+    postToNative({
+        type: 'boot-content',
+        ms: Math.round(now - window.__qiT0),
+        navMs: Math.round(now)
+    });
+}
+
 
 function bindEditorEvents() {
     window.addEventListener('resize', () => {
@@ -80,6 +192,8 @@ function bindEditorEvents() {
         scheduleCaretVisibility();
     });
     paper.addEventListener('scroll', syncDoodleCanvasScroll);
+    // 文档滚动时同步涂鸦画布位移（纸面不再滚动，window 才是滚动源）。
+    window.addEventListener('scroll', syncDoodleCanvasScroll, { passive: true });
     paper.addEventListener('compositionupdate', scheduleCaretVisibility);
     paper.addEventListener('compositionend', scheduleCaretVisibility);
     paper.addEventListener('beforeinput', scheduleCaretVisibility);
@@ -146,9 +260,9 @@ function keepCaretVisible() {
     const margin = Math.max(40, Number.isNaN(lineHeight) ? 48 : lineHeight * 2.5);
 
     if (rect.bottom > visibleBottom - margin) {
-        paper.scrollTop = Math.max(0, paper.scrollTop + rect.bottom - visibleBottom + margin);
+        scrollDocumentBy(rect.bottom - visibleBottom + margin);
     } else if (rect.top < visibleTop + margin) {
-        paper.scrollTop = Math.max(0, paper.scrollTop + rect.top - visibleTop - margin);
+        scrollDocumentBy(rect.top - visibleTop - margin);
     }
 }
 
@@ -202,6 +316,7 @@ function restoreSelection() {
 // ==================== selection ====================
 
 function execCmd(command, value) {
+    if (editorReadOnly) return;
     paper.focus();
     restoreSelection();
     document.execCommand(command, false, value || null);
@@ -210,6 +325,7 @@ function execCmd(command, value) {
 }
 
 function changeFont(fontName) {
+    if (editorReadOnly) return;
     paper.focus();
     restoreSelection();
     const fontMap = {
@@ -223,6 +339,7 @@ function changeFont(fontName) {
 }
 
 function changeSize(size) {
+    if (editorReadOnly) return;
     paper.focus();
     restoreSelection();
     document.execCommand('fontSize', false, size);
@@ -268,6 +385,7 @@ function normalizeFontTags() {
 }
 
 function changeColor(color) {
+    if (editorReadOnly) return;
     paper.focus();
     restoreSelection();
     document.execCommand('foreColor', false, color);
@@ -277,9 +395,19 @@ function changeColor(color) {
 
 // ==================== doodle layer ====================
 
+function hasDoodleArtwork() {
+    return doodle.strokes.length > 0 || doodle.bitmapLayers.length > 0;
+}
+
 function initialiseDoodle() {
     doodle.canvas = document.getElementById('doodle-canvas');
     resizeDoodleCanvas();
+    if (editorReadOnly) {
+        // 只读页不需要手写引擎（Atrament/rough）：跳过初始化，冷启动更快。
+        // 但画布必须保留 —— 旧日记的涂鸦（data-doodle-json）要靠它重放，
+        // 见 loadDoodleJson()。画布本身 pointer-events:none，不拦截滚动。
+        return;
+    }
     createAtrament();
     applyBrushOptions();
 }
@@ -310,14 +438,15 @@ function createAtrament() {
 }
 
 function resizeDoodleCanvas() {
-    // Skip entirely in read-only view: the canvas is hidden there, and a
-    // full-height backing store can allocate tens of MB on dense screens.
-    if (document.body.classList.contains('view-mode')) {
+    // 只读页没有涂鸦时不分配大画布（全页 backing store 可达数十 MB）；
+    // 有涂鸦时必须分配，否则旧笔迹无处重放。
+    if (document.body.classList.contains('view-mode') && !hasDoodleArtwork()) {
         return;
     }
     const ratio = window.devicePixelRatio || 1;
     const contentHeight = Math.max(
         window.innerHeight,
+        document.documentElement ? document.documentElement.scrollHeight : 0,
         paper ? paper.scrollHeight : window.innerHeight
     );
     // Cap the backing store so a long page cannot allocate an enormous bitmap.
@@ -334,7 +463,8 @@ function resizeDoodleCanvas() {
 
 function syncDoodleCanvasScroll() {
     if (!paper || !doodle.canvas) return;
-    doodle.canvas.style.transform = `translateY(${-paper.scrollTop}px)`;
+    // 画布固定在视口上，用 translateY 抵消文档滚动，笔迹才和正文对齐。
+    doodle.canvas.style.transform = `translateY(${-getScrollTop()}px)`;
 }
 
 function atramentModeForTool(tool) {
@@ -563,6 +693,8 @@ function clearDoodle() {
 }
 
 function toggleDoodleMode(active) {
+    // 只读模式下涂鸦必须彻底关闭：它会把 contentEditable 改回 true 并锁死滚动。
+    if (editorReadOnly) return;
     doodle.active = active;
     doodle.canvas.classList.toggle('active', active);
     paper.contentEditable = String(!active);
@@ -679,7 +811,13 @@ function loadDoodleJson(json) {
         doodle.bitmapLayers = Array.isArray(parsed.bitmapLayers) ? parsed.bitmapLayers : [];
         doodle.undoStack = [];
         doodle.redoStack = [];
-        queueDoodleRender();
+        if (editorReadOnly && hasDoodleArtwork()) {
+            // 只读：没有 Atrament 画布交互，直接按当前文档高度重放笔迹。
+            resizeDoodleCanvas();
+            redrawDoodle();
+        } else {
+            queueDoodleRender();
+        }
         notifyDoodleStateChanged();
     } catch (error) {
         console.error('loadDoodleJson failed', error);
@@ -697,6 +835,7 @@ function mergeDoodle() {
 }
 
 function insertDoodleImage() {
+    if (editorReadOnly) return;
     const image = document.createElement('img');
     image.src = exportDoodleImage();
     image.className = 'inserted-image doodle-export';
@@ -830,10 +969,11 @@ function clearStickerDragStyles(target) {
 }
 
 function paperLocalPoint(clientX, clientY) {
+    // getBoundingClientRect 已经包含文档滚动量；再加 scrollTop 会重复计算。
     const paperRect = paper.getBoundingClientRect();
     return {
-        x: clientX - paperRect.left + paper.scrollLeft,
-        y: clientY - paperRect.top + paper.scrollTop
+        x: clientX - paperRect.left,
+        y: clientY - paperRect.top
     };
 }
 
@@ -862,21 +1002,24 @@ function commitStickerPosition(target, left, top) {
 }
 
 function defaultInsertPosition(size) {
-    const x = paper.scrollLeft + Math.max(16, (paper.clientWidth - size) / 2);
-    const y = paper.scrollTop + Math.max(24, paper.clientHeight * 0.28);
+    const x = Math.max(16, (paper.clientWidth - size) / 2);
+    // 文档滚动时「当前视口中心」= 滚动量 + 视口高度的一半附近。
+    const y = getScrollTop() + Math.max(24, window.innerHeight * 0.28);
     return clampStickerPosition(x, y, size, size);
 }
 
 function ensurePaperFitsStickers() {
     if (!paper) return;
-    let maxBottom = paper.clientHeight;
+    let maxBottom = Math.max(window.innerHeight, paper.clientHeight);
     Array.from(paper.querySelectorAll(STICKER_SELECTOR)).forEach((node) => {
         const top = parseFloat(node.style.top || node.getAttribute('data-top') || '0');
         const height = node.offsetHeight || parseFloat(node.style.height) || DEFAULT_STICKER_SIZE;
         maxBottom = Math.max(maxBottom, top + height + 48);
     });
     const needed = Math.ceil(maxBottom);
-    if (needed > paper.clientHeight) {
+    const current = parseFloat(paper.style.minHeight || '0') || 0;
+    if (needed > current) {
+        // 只增不减：贴纸永远在纸面范围内，可随文档一起滚动。
         paper.style.minHeight = `${needed}px`;
     }
     resizeDoodleCanvas();
@@ -940,6 +1083,7 @@ function buildImageSticker(imageSrc, size) {
 }
 
 function insertSticker(name) {
+    if (editorReadOnly) return;
     const emoji = STICKER_MAP[name] || STICKER_MAP.star;
     const sticker = buildEmojiSticker(emoji, DEFAULT_STICKER_SIZE);
     paper.appendChild(sticker);
@@ -950,6 +1094,7 @@ function insertSticker(name) {
 }
 
 function insertCustomSticker(imageSrc) {
+    if (editorReadOnly) return;
     if (!imageSrc) return;
     const sticker = buildImageSticker(imageSrc, CUSTOM_STICKER_SIZE);
     paper.appendChild(sticker);
@@ -960,6 +1105,7 @@ function insertCustomSticker(imageSrc) {
 }
 
 function insertImage(imageSrc) {
+    if (editorReadOnly) return;
     if (!imageSrc) return;
     const image = document.createElement('img');
     image.src = imageSrc;
@@ -1169,6 +1315,7 @@ function ensureStickerMoveable() {
 }
 
 function selectSticker(sticker) {
+    if (editorReadOnly) return;
     if (!sticker || doodle.active) return;
     ensureStickerMoveable();
     if (selectedSticker && selectedSticker !== sticker) {
@@ -1217,6 +1364,7 @@ function deleteSelectedSticker() {
 
 function bindStickerNode(sticker) {
     if (!sticker) return;
+    if (editorReadOnly) return;
     sticker.removeAttribute('data-sticker-bound');
     if (isStickerBound(sticker)) return;
     markStickerBound(sticker);
@@ -1269,6 +1417,7 @@ function isMoveableUiEvent(event) {
 }
 
 function bindStickerHandlers() {
+    if (editorReadOnly) return;
     upgradeLegacyStickers();
     Array.from(paper.querySelectorAll(STICKER_SELECTOR)).forEach((sticker) => {
         sticker.removeAttribute('data-sticker-bound');
@@ -1287,6 +1436,13 @@ function bindStickerHandlers() {
 
     if (stickerHandlersBound) return;
     stickerHandlersBound = true;
+
+    // 删除按钮是 position:fixed，文档滚动后必须重算位置，否则会飘在原地。
+    window.addEventListener('scroll', () => {
+        if (selectedSticker) {
+            updateStickerDeleteButton();
+        }
+    }, { passive: true });
 
     const deleteBtn = getStickerDeleteButton();
     if (deleteBtn) {
@@ -1366,6 +1522,13 @@ function getContent() {
 function setContent(html) {
     deselectSticker();
     paper.innerHTML = sanitizeEditorHtml(html || '');
+    if (editorReadOnly) {
+        // 旧数据可能内联 contenteditable，只读时必须清理干净（否则长按弹键盘）。
+        Array.from(paper.querySelectorAll('[contenteditable]')).forEach((node) => {
+            node.setAttribute('contenteditable', 'false');
+        });
+        paper.setAttribute('contenteditable', 'false');
+    }
     bindImageClickHandlers();
     if (!document.body.classList.contains('view-mode')) {
         bindStickerHandlers();
@@ -1373,10 +1536,11 @@ function setContent(html) {
     extractDoodleDataNode();
     savedSelectionRange = null;
     requestAnimationFrame(() => {
-        if (!document.body.classList.contains('view-mode')) {
-            resizeDoodleCanvas();
-            syncDoodleCanvasScroll();
-        }
+        // 只读页也要同步：旧涂鸦需要按正文高度重放并跟随文档滚动。
+        resizeDoodleCanvas();
+        syncDoodleCanvasScroll();
+        // 第一次真正有正文的绘制：这是用户「看到日记内容」的时刻。
+        reportContentMetric();
         // Tell native the first paint is done so the loading veil can go away
         // immediately instead of waiting for a fixed timeout.
         postToNative({type: 'painted'});
@@ -1399,19 +1563,94 @@ function postToNative(payload) {
  * Read-only presentation mode (`editor.html?view=1`):
  * the very same document/CSS renders the journal, so images, stickers and
  * doodles look identical to the editor, but nothing is editable.
+ *
+ * v0.6.2：只读入口统一为 window.setReadOnly(true)，URL 的 ?view=1 只是
+ * 「冷启动即只读」的快捷方式；两者最终都走这里，保证：
+ *   - 所有 contenteditable 被显式设为 false（长按不弹键盘、不出光标）
+ *   - 涂鸦画布/贴纸拖拽手柄/删除按钮全部隐藏
+ *   - body / html 的 overflow 恢复，避免涂鸦模式遗留的 overflow:hidden 卡死滚动
  */
 function enableViewMode() {
+    editorReadOnly = true;
     document.body.classList.add('view-mode');
-    paper.setAttribute('contenteditable', 'false');
-    paper.removeAttribute('contenteditable');
-    const doodle = document.getElementById('doodle-canvas');
-    if (doodle) {
-        doodle.style.display = 'none';
+    document.documentElement.classList.remove('qi-view-pending');
+    if (paper) {
+        // 显式 false（不是 removeAttribute）：需求要求只读时 contenteditable
+        // 全为 false；contenteditable=false 不会触发 IME，长按不弹键盘。
+        paper.setAttribute('contenteditable', 'false');
+        paper.blur();
+    }
+    // 旧数据里可能残留内联 contenteditable，一并清掉。
+    Array.from(document.querySelectorAll('[contenteditable]')).forEach((node) => {
+        if (node === paper) return;
+        node.setAttribute('contenteditable', 'false');
+    });
+    if (typeof deselectSticker === 'function') {
+        deselectSticker();
+    }
+    // 画布保留（可见）以重放旧涂鸦；只关掉交互，绝不吃滚动事件。
+    const canvasEl = doodle.canvas || document.getElementById('doodle-canvas');
+    if (canvasEl) {
+        doodle.active = false;
+        canvasEl.classList.remove('active');
+        canvasEl.style.display = '';
+        canvasEl.style.pointerEvents = 'none';
+    }
+    if (doodle.atrament) {
+        doodle.atrament.mode = MODE_DISABLED;
     }
     const deleteButton = document.getElementById('sticker-delete-btn');
     if (deleteButton) {
         deleteButton.style.display = 'none';
     }
+    // 涂鸦模式可能把滚动锁死；只读页必须永远可滚动。
+    document.body.style.overflow = '';
+    document.documentElement.style.overflow = '';
+}
+
+/**
+ * 退回编辑态（同一个 WebView 里由「编辑」按钮触发）。调用方需要在入口处
+ * 重新加载或显式调用 window.setReadOnly(false)；这里保持页面状态不重载。
+ */
+function leaveViewMode() {
+    editorReadOnly = false;
+    document.body.classList.remove('view-mode');
+    document.documentElement.classList.remove('qi-view-pending');
+    if (paper) {
+        paper.setAttribute('contenteditable', 'true');
+    }
+    if (doodle.canvas) {
+        doodle.canvas.style.display = '';
+    }
+    if (!doodle.atrament) {
+        // 只读启动时跳过了 Atrament 构造，回到编辑态时再补建。
+        createAtrament();
+        applyBrushOptions();
+    }
+    const canvasEl = document.getElementById('doodle-canvas');
+    if (canvasEl) {
+        canvasEl.style.display = '';
+    }
+    const deleteButton = document.getElementById('sticker-delete-btn');
+    if (deleteButton) {
+        deleteButton.style.display = '';
+    }
+    bindStickerHandlers();
+    resizeDoodleCanvas();
+    syncDoodleCanvasScroll();
+}
+
+function setReadOnly(flag) {
+    if (flag) {
+        enableViewMode();
+    } else {
+        leaveViewMode();
+    }
+    return editorReadOnly;
+}
+
+function isReadOnly() {
+    return editorReadOnly;
 }
 
 function sanitizeEditorHtml(html) {
@@ -1477,6 +1716,10 @@ Object.assign(window, {
     setBrushRoughness,
     setBrushSize,
     setContent,
+    // 只读接口：RN 侧注入脚本兜底调用，URL ?view=1 只是冷启动快捷方式。
+    setReadOnly,
+    isReadOnly,
+    leaveViewMode,
     setDoodleTool: setBrush,
     setBrushOptions: (optionsJson) => {
         const options = typeof optionsJson === 'string' ? JSON.parse(optionsJson) : optionsJson;

@@ -101,8 +101,8 @@ android {
         applicationId "com.green.inorinal"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10
-        versionName "v0.6.1"
+        versionCode 11
+        versionName "v0.6.2"
     }
     signingConfigs {
         debug {

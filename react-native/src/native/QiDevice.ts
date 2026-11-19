@@ -322,6 +322,22 @@ type ReminderApi = {
   rescheduleAll(): Promise<boolean>;
 };
 
+/** 小狗端常驻「联动」通道（QiLinkService）的运行状态。 */
+export type LinkStatus = {
+  running: boolean;
+  foreground: boolean;
+  cursor: number;
+  lastPollAt: number;
+  lastError: string;
+  backlog: boolean;
+};
+
+type LinkApi = {
+  start(token: string, baseUrl: string): Promise<boolean>;
+  stop(): Promise<boolean>;
+  status(): Promise<LinkStatus>;
+};
+
 const permissionsModule = NativeModules.QiDevicePermissions as
   | PermissionsApi
   | undefined;
@@ -338,6 +354,7 @@ const overlayModule = NativeModules.QiOverlay as OverlayApi | undefined;
 const auditModule = NativeModules.QiAudit as AuditApi | undefined;
 const widgetModule = NativeModules.QiWidget as WidgetApi | undefined;
 const reminderModule = NativeModules.QiReminder as ReminderApi | undefined;
+const linkModule = NativeModules.QiLink as LinkApi | undefined;
 
 function missing(name: string): never {
   throw new Error(`${name} 未注册：请重新构建 Android 应用`);
@@ -381,6 +398,10 @@ function requireWidget(): WidgetApi {
 
 function requireReminder(): ReminderApi {
   return reminderModule ?? missing('QiReminder');
+}
+
+function requireLink(): LinkApi {
+  return linkModule ?? missing('QiLink');
 }
 
 /** True when the installed APK ships every device module. */
@@ -560,6 +581,19 @@ export const qiNotice = {
   cancel: (id: string): Promise<boolean> => requireNotice().cancel(id),
 };
 
+export const qiLink = {
+  /** 当前 APK 是否带常驻联动服务（旧包没有，调用会抛错）。 */
+  available: !!linkModule,
+  /**
+   * 启动常驻联动通道。只在配对为小狗端且已就绪时调用；
+   * token/baseUrl 由调用方从当前会话传入，不在 JS 侧缓存。
+   */
+  start: (token: string, baseUrl: string): Promise<boolean> =>
+    requireLink().start(token, baseUrl),
+  stop: (): Promise<boolean> => requireLink().stop(),
+  status: (): Promise<LinkStatus> => requireLink().status(),
+};
+
 export const qiDevice = {
   permissions: qiDevicePermissions,
   guard: qiGuard,
@@ -572,4 +606,5 @@ export const qiDevice = {
   widget: qiWidget,
   reminders: qiReminder,
   notice: qiNotice,
+  link: qiLink,
 };

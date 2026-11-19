@@ -1,6 +1,8 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   Animated,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
   PanResponder,
   Pressable,
@@ -311,6 +313,25 @@ export function AppDialog({
 /* Bottom sheet                                                        */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 输入法占用高度。Modal 是独立窗口，Android 的 adjustResize 不会把它顶上去，
+ * 所以弹窗自己让位：键盘弹出时把根容器的底部内边距补上。
+ */
+function useKeyboardHeight() {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', event => {
+      setHeight(event.endCoordinates?.height ?? 0);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => setHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return height;
+}
+
 export function AppSheet({
   visible,
   title,
@@ -328,13 +349,15 @@ export function AppSheet({
   const insets = useSafeAreaInsets();
   const {height: windowHeight} = useWindowDimensions();
   const {mounted, progress} = useModalPresence(visible);
+  const keyboardHeight = useKeyboardHeight();
 
   /**
    * The sheet keeps two heights: the height its content actually needs, and the
    * expanded height (80% of the window) the user can drag the handle up to.
    * Height is measured instead of guessed so the last line is never clipped.
    */
-  const expandedHeight = Math.round(windowHeight * 0.8);
+  const availableHeight = Math.max(180, windowHeight - keyboardHeight);
+  const expandedHeight = Math.round(availableHeight * 0.8);
   const [contentHeight, setContentHeight] = useState(0);
   const [footerHeight, setFooterHeight] = useState(0);
   const [expanded, setExpanded] = useState(false);
@@ -407,7 +430,9 @@ export function AppSheet({
   }
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <View style={styles.sheetRoot}>
+      <KeyboardAvoidingView
+        behavior="padding"
+        style={[styles.sheetRoot, {paddingBottom: keyboardHeight}]}>
         <Animated.View
           style={[StyleSheet.absoluteFill, styles.sheetScrim, {opacity: progress}]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
@@ -471,7 +496,7 @@ export function AppSheet({
             </GlassSurface>
           </Animated.View>
         </Animated.View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

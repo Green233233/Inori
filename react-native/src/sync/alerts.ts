@@ -10,11 +10,17 @@ import {qiNotice} from '../native/QiDevice';
 import {listCoupons} from '../data/couponApi';
 import type {Coupon, Role} from '../data/pairTypes';
 import {loadTasks, type QiTask} from './tasks';
+import type {RelayItem} from './commands';
 
 interface AlertState {
   tasks: string[];
   coupons: string[];
+  /** 中继里已经提醒过的条目，key 为 `${seq}:${kind}`。 */
+  relay: string[];
 }
+
+/** 中继条目；服务端还会给一个本地化的 createdAtDisplay。 */
+export type RelayAlertItem = RelayItem & {createdAtDisplay?: string};
 
 const MAX_SEEN = 200;
 const cache: {state?: AlertState} = {};
@@ -27,13 +33,14 @@ async function loadState(): Promise<AlertState> {
   if (cache.state) {
     return cache.state;
   }
-  let state: AlertState = {tasks: [], coupons: []};
+  let state: AlertState = {tasks: [], coupons: [], relay: []};
   try {
     const raw = await native.readText(statePath());
     const parsed = JSON.parse(raw) as Partial<AlertState>;
     state = {
       tasks: Array.isArray(parsed.tasks) ? parsed.tasks.slice(-MAX_SEEN) : [],
       coupons: Array.isArray(parsed.coupons) ? parsed.coupons.slice(-MAX_SEEN) : [],
+      relay: Array.isArray(parsed.relay) ? parsed.relay.slice(-MAX_SEEN) : [],
     };
   } catch {
     // 首次运行没有文件。
@@ -118,13 +125,74 @@ async function scanCoupons(role: Role): Promise<number> {
 }
 
 /**
+ * 中继条目的前台兜底通知：原生常驻服务会 ack 掉 `task.verdict`/`reward.grant`，
+ * 所以正常情况下这里看不到它们；但 App 已在前台时中继可能先被 JS 拉走，
+ * 这里补一条，避免「只在后台有提醒、前台反而没有」。
+ *
+ * 只认对方动作的结果与奖励券，命令（command.send）由调用方自己执行，不重复提醒。
+ */
+function relayNotice(
+  item: RelayAlertItem,
+  role: Role,
+): {title: string; body: string} | null {
+  const when = item.createdAtDisplay ? ` · ${item.createdAtDisplay}` : '';
+  switch (item.kind) {
+    case 'task.verdict':
+      return role === 'PUPPY'
+        ? {title: '任务有结果了', body: `主人看过你提交的内容${when}`}
+        : {title: '任务有结果了', body: `小狗提交的任务有更新${when}`};
+    case 'reward.grant':
+      return role === 'PUPPY'
+        ? {title: '收到一张奖励券', body: `打开「和好券」看看主人给了什么${when}`}
+        : {title: '小狗给你发了奖励券', body: `打开「和好券」看看${when}`};
+    default:
+      return null;
+  }
+}
+
+async function scanRelay(role: Role, items: RelayAlertItem[]): Promise<number> {
+  if (items.length === 0) {
+    return 0;
+  }
+  const state = await loadState();
+  const seen = new Set(state.relay);
+  const before = seen.size;
+  let fresh = 0;
+  for (const item of items) {
+    // seq 是服务端单调序号，天然能区分同一条消息的重复投递。
+    const key = `${item.seq}:${item.kind}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    const notice = relayNotice(item, role);
+    seen.add(key);
+    if (!notice) {
+      continue;
+    }
+    // 与原生常驻服务用同一个通知 id（qi.link.<seq>）：万一两边同时拉到
+    // 同一条消息，第二次是「更新」而不是多出一条重复通知。
+    await post(`qi.link.${item.seq}`, notice.title, notice.body);
+    fresh += 1;
+  }
+  if (seen.size !== before) {
+    await saveState({...state, relay: Array.from(seen).slice(-MAX_SEEN)});
+  }
+  return fresh;
+}
+
+/**
  * 刷新后调用一次：发现对方的新动作就弹通知。
+ * `relayItems` 是本轮中继轮询拿到的条目（App 在前台时由 QiProvider 传入）。
  * 失败一律吞掉——通知只是锦上添花，不能影响同步本身。
  */
-export async function scanAlerts(role: Role): Promise<{tasks: number; coupons: number}> {
+export async function scanAlerts(
+  role: Role,
+  relayItems: RelayAlertItem[] = [],
+): Promise<{tasks: number; coupons: number; relay: number}> {
   const tasks = await scanTasks(role).catch(() => 0);
   const coupons = await scanCoupons(role).catch(() => 0);
-  return {tasks, coupons};
+  const relay = await scanRelay(role, relayItems).catch(() => 0);
+  return {tasks, coupons, relay};
 }
 
 /** 本地刚做完动作时清掉游标，避免自己收到自己的通知。 */

@@ -16,10 +16,12 @@ import {SoftCard} from '../../components/Surfaces';
 import {FlatButton} from '../../components/Ui';
 import {TopBar} from '../../components/TopBar';
 import {showToast} from '../../components/toast';
+import {MapPreview} from '../../components/MapPreview';
 import {useQi} from '../qi/QiProvider';
 import {
   clearTrail,
   loadTrail,
+  recordTrailPoint,
   trailMoves,
   type TrailPoint,
 } from '../../data/trailStore';
@@ -41,6 +43,14 @@ export function TrailScreen({onBack}: {onBack: () => void}) {
   const [hours, setHours] = useState<HourBucket[]>([]);
   const [points, setPoints] = useState<TrailPoint[]>([]);
   const [loading, setLoading] = useState(false);
+  const [locating, setLocating] = useState(false);
+  /** 最近一次主动取到的位置（含逆地理地址），只存在本机。 */
+  const [latest, setLatest] = useState<{
+    lat: number;
+    lng: number;
+    address: string;
+    at: number;
+  } | null>(null);
 
   const refreshLocal = useCallback(async () => {
     setPoints(await loadTrail());
@@ -66,6 +76,38 @@ export function TrailScreen({onBack}: {onBack: () => void}) {
     void refreshUsage();
   }, [refreshLocal, refreshUsage]);
 
+  /**
+   * 向小狗端现取一次位置：拿到的地址直接当主文案，同时补一笔到轨迹里，
+   * 这样「地图 + 文字地址」和「位置采样」看到的是同一个点。
+   */
+  const locate = useCallback(async () => {
+    setLocating(true);
+    try {
+      const reply = await runCommand('location.get');
+      const data = reply?.data as
+        | {lat?: number; lng?: number; address?: string; addressSource?: string}
+        | undefined;
+      const lat = Number(data?.lat);
+      const lng = Number(data?.lng);
+      if (!reply?.ok || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+        showToast(reply?.error || '小狗端暂时没有可用的位置');
+        return;
+      }
+      const address =
+        (data?.address || '').trim() || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+      const at = Date.now();
+      setLatest({lat, lng, address, at});
+      await recordTrailPoint({at, lat, lng, address}).catch(() => undefined);
+      await refreshLocal();
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : '取位置失败，小狗端可能不在线',
+      );
+    } finally {
+      setLocating(false);
+    }
+  }, [refreshLocal, runCommand]);
+
   const moves = trailMoves(points);
   const peak = Math.max(1, ...hours.map(item => item.minutes));
   const busiest = hours.length > 0 ? hours.reduce((best, item) => (item.minutes > best.minutes ? item : best), hours[0]) : null;
@@ -78,8 +120,40 @@ export function TrailScreen({onBack}: {onBack: () => void}) {
         contentContainerStyle={[styles.body, {paddingBottom: insets.bottom + 32}]}
         showsVerticalScrollIndicator={false}>
         <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
-          使用时段实时取一次；位置只有在你取过位置之后才会留痕，不做后台定位。
+          使用时段实时取一次；位置在你取过之后才会留痕，日常只在后台低频采样。
         </Text>
+
+        <Text style={[type.section, styles.sectionTitle, {color: colors.onSurface}]}>小狗现在在哪</Text>
+        <SoftCard>
+          {latest ? (
+            <>
+              <MapPreview
+                lat={latest.lat}
+                lng={latest.lng}
+                height={168}
+                label={
+                  latest.address.startsWith(String(latest.lat.toFixed(4)))
+                    ? null
+                    : latest.address
+                }
+              />
+              <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 8}]}>
+                {latest.address} · {formatTime(latest.at)} 取的
+              </Text>
+            </>
+          ) : (
+            <Text style={[type.body, {color: colors.onSurfaceVariant}]}>
+              还没取过位置。点一下下面的按钮，向小狗端现取一次；取到后地图和文字地址都会留在这里。
+            </Text>
+          )}
+          <View style={styles.actions}>
+            <FlatButton
+              label={locating ? '正在取…' : '取一次位置'}
+              onPress={() => void locate()}
+              disabled={locating}
+            />
+          </View>
+        </SoftCard>
 
         <Text style={[type.section, styles.sectionTitle, {color: colors.onSurface}]}>使用时段</Text>
         <SoftCard>
@@ -130,7 +204,7 @@ export function TrailScreen({onBack}: {onBack: () => void}) {
         <SoftCard>
           {points.length === 0 ? (
             <Text style={[type.body, {color: colors.onSurfaceVariant}]}>
-              还没有采到位置。去「设备管控中心」点一次「定位」，这里就会留下一条记录。
+              还没有采到位置。上面点一次「取一次位置」，这里就会留下一条记录。
             </Text>
           ) : (
             points

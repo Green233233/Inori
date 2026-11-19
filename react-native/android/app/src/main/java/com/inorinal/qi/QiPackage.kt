@@ -24,7 +24,9 @@ class QiPackage : ReactPackage {
       AuditLogModule(reactContext),
       WidgetModule(reactContext),
       ReminderModule(reactContext),
-      NoticeModule(reactContext)
+      NoticeModule(reactContext),
+      // 小狗端常驻「联动」通道：App 不在前台时也能收到新任务/券（见 QiLinkService）。
+      LinkServiceModule(reactContext)
     )
 
   override fun createViewManagers(

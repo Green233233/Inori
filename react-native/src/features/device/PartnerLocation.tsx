@@ -75,7 +75,7 @@ export function PartnerLocation({onBack}: {onBack: () => void}) {
             type.caption,
             {color: colors.onSurfaceVariant, marginBottom: 14},
           ]}>
-          每点一次只在主人手机上取一次坐标，不会持续定位；请求会在他那边留下记录。
+          每点一次只在主人手机上取一次坐标，不会持续定位；主人那边会收到一条提示。
         </Text>
 
         {fix?.ok ? (

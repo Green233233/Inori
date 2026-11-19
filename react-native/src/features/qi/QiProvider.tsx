@@ -13,6 +13,11 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import {
+  AppState,
+  PermissionsAndroid,
+  Platform,
+} from 'react-native';
 import {PowerTier} from '../../config';
 import {
   CONSENT_VERSION,
@@ -39,12 +44,18 @@ import {
 import {
   api,
   errorMessage,
+  getServerUrl,
   setServerUrl,
   setToken,
 } from '../../net/ApiClient';
 import {showToast} from '../../components/toast';
 import {qiApi} from '../../native/QiNative';
-import {qiDeviceAvailable, qiGuard, qiWidget} from '../../native/QiDevice';
+import {
+  qiDeviceAvailable,
+  qiGuard,
+  qiLink,
+  qiWidget,
+} from '../../native/QiDevice';
 import {syncJournal, SyncResult} from '../../sync/partnerStore';
 import {configureReminders} from '../../sync/reminders';
 import {scanAlerts} from '../../sync/alerts';
@@ -306,6 +317,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
     () =>
       run(async () => {
         await api('/api/v1/auth/logout', {method: 'POST'}).catch(() => null);
+        await qiLink.stop().catch(() => undefined);
         await saveToken(null);
         setToken(null);
         tokenRef.current = null;
@@ -373,6 +385,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
         await api('/api/v1/pairs', {method: 'DELETE', body: {}}).catch(
           () => null,
         );
+        await qiLink.stop().catch(() => undefined);
         setSas(null);
         await patch({pair: null, pendingBindingCode: null});
       }),
@@ -569,7 +582,9 @@ export function QiProvider({children}: {children: React.ReactNode}) {
             const latest = await loadQiState();
             if (latest.pair) {
               await refreshTasks(latest.pair).catch(() => undefined);
-              await scanAlerts(latest.pair.myRole).catch(() => undefined);
+              await scanAlerts(latest.pair.myRole, page.items).catch(
+                () => undefined,
+              );
             }
           }
           if (page.cursor !== cursorRef.current) {
@@ -586,6 +601,59 @@ export function QiProvider({children}: {children: React.ReactNode}) {
       cancelled = true;
     };
   }, [stage, state.pair?.pairId, patch, refreshPair]);
+
+  // 小狗端的常驻联动通道：App 不在前台/被划掉时，主人派的任务与券也能提醒。
+  // 只有「小狗端 + 已就绪」才启动；解绑与退出登录在各自流程里 stop。
+  const notificationAskedRef = useRef(false);
+  useEffect(() => {
+    if (!qiLink.available) {
+      return;
+    }
+    if (stage !== 'ready' || state.pair?.myRole !== 'PUPPY') {
+      qiLink.stop().catch(() => undefined);
+      return;
+    }
+    let cancelled = false;
+    const ensureNotifications = async () => {
+      // Android 13+ 通知是运行时权限；只有第一次启动服务前问一次。
+      if (notificationAskedRef.current || Number(Platform.Version) < 33) {
+        return;
+      }
+      notificationAskedRef.current = true;
+      const granted = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+      ).catch(() => false);
+      if (granted || cancelled) {
+        return;
+      }
+      // 用户拒绝也不阻塞服务：通知发不出去时会静默跳过。
+      await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+      ).catch(() => undefined);
+    };
+    const start = async () => {
+      const token = tokenRef.current;
+      if (!token) {
+        return;
+      }
+      await ensureNotifications();
+      if (cancelled) {
+        return;
+      }
+      await qiLink.start(token, getServerUrl()).catch(() => undefined);
+    };
+    start().catch(() => undefined);
+    // 从后台回来时再确认一次：系统可能已经把服务回收并重建失败。
+    const subscription = AppState.addEventListener('change', next => {
+      if (next === 'active') {
+        start().catch(() => undefined);
+      }
+    });
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, [stage, state.pair?.myRole, state.pair?.pairId]);
 
   const runCommand = useCallback(
     async (kind: CommandKind, args?: Record<string, unknown>) => {

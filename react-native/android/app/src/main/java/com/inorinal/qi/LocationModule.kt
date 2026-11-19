@@ -284,6 +284,11 @@ class LocationModule(reactContext: ReactApplicationContext) :
   }
 
   private fun format(address: Address): String {
+    // Geocoder 已经返回本地化的完整地址（中文 ROM 是「北京市海淀区中关村大街
+    // 27 号」这种），优先用它；少数 ROM 的 addressLine 为空，再用行政区/街道
+    // 组件拼一个兜底，保证 reverseGeocode 尽量不返回空串。
+    val line = address.getAddressLine(0)?.trim().orEmpty()
+    if (line.isNotEmpty()) return line
     val parts =
       listOfNotNull(
         address.adminArea,
@@ -292,7 +297,7 @@ class LocationModule(reactContext: ReactApplicationContext) :
         address.thoroughfare,
         address.subThoroughfare
       )
-    return if (parts.isEmpty()) address.getAddressLine(0) ?: "" else parts.joinToString("")
+    return parts.joinToString("")
   }
 
   companion object {

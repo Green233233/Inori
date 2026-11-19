@@ -13,15 +13,12 @@ import {AppThemeProvider, useAppTheme} from './src/theme/AppThemeProvider';
 import {JournalDataProvider, useJournalData} from './src/data/JournalDataProvider';
 import {DEFAULT_SETTINGS, AppSettings, Category} from './src/data/types';
 import {
-  getEntry,
   loadSettings as loadSettingsFromDisk,
   saveSettings as saveSettingsToDisk,
 } from './src/data/storage';
-import {needsWebEditor} from './src/journal/richDoc';
 import {MainTabs, MainTabKey} from './src/screens/MainTabs';
 import {CategoryEntriesScreen} from './src/screens/CategoryEntriesScreen';
 import {EditorScreen} from './src/screens/EditorScreen';
-import {NativeEditorScreen} from './src/screens/NativeEditorScreen';
 import {SettingsScreen} from './src/screens/SettingsScreen';
 import {AboutScreen} from './src/screens/AboutScreen';
 import {LicensesScreen} from './src/screens/LicensesScreen';
@@ -32,10 +29,10 @@ import {QiProvider, useQi} from './src/features/qi/QiProvider';
 import {ConsentGate} from './src/features/onboarding/ConsentGate';
 import {AuthScreen} from './src/features/auth/AuthScreen';
 import {PairingScreen} from './src/features/pair/PairingScreen';
-import {SharedEntryScreen} from './src/screens/SharedEntryScreen';
 import {isPartnerEntry} from './src/sync/partnerStore';
 import {PermissionCenter} from './src/features/device/PermissionCenter';
 import {ControlCenter} from './src/features/control/ControlCenter';
+import {UsageStatsScreen} from './src/features/control/UsageStatsScreen';
 import {TrailScreen} from './src/features/control/Trail';
 import {AuthorizationStatus} from './src/features/device/AuthorizationStatus';
 import {PartnerLocation} from './src/features/device/PartnerLocation';
@@ -56,11 +53,10 @@ import type {Coupon} from './src/data/pairTypes';
 
 type Route =
   | {name: 'category'; category: Category}
-  | {name: 'editor'; entryId: string}
-  | {name: 'nativeEditor'; entryId: string}
-  | {name: 'partner'; entryId: string}
+  | {name: 'editor'; entryId: string; readOnly?: boolean}
   | {name: 'permissionCenter'}
   | {name: 'controlCenter'}
+  | {name: 'usageStats'}
   | {name: 'authorizationStatus'}
   | {name: 'partnerLocation'}
   | {name: 'couponDetail'; coupon: Coupon}
@@ -222,17 +218,8 @@ function AppShell({
   const openEntry = useCallback(
     async (id: string) => {
       const partner = await isPartnerEntry(id).catch(() => false);
-      if (partner) {
-        push({name: 'partner', entryId: id});
-        return;
-      }
-      // 纯文字日记走原生编辑器；含图片/贴纸/涂鸦的仍交给完整编辑器。
-      const entry = id === 'new' ? null : await getEntry(id).catch(() => null);
-      const simple = !entry || !needsWebEditor(entry.content);
-      push({
-        name: simple ? 'nativeEditor' : 'editor',
-        entryId: id,
-      });
+      // 编辑与只读统一走 WebView 编辑器；对方的日记用同一页面但只读。
+      push({name: 'editor', entryId: id, readOnly: partner});
     },
     [push],
   );
@@ -319,7 +306,7 @@ function AppShell({
           activeTab={tab}
           onTabChange={setTab}
           onOpenEntry={openEntry}
-          onNewEntry={() => push({name: 'nativeEditor', entryId: 'new'})}
+          onNewEntry={() => push({name: 'editor', entryId: 'new'})}
           onOpenCategory={category => push({name: 'category', category})}
           onOpenSettings={() => push({name: 'settings'})}
           onOpenAbout={() => push({name: 'about'})}
@@ -358,7 +345,7 @@ function AppShell({
                 category={top.category}
                 onBack={pop}
                 onOpenEntry={openEntry}
-                onNewEntry={() => push({name: 'nativeEditor', entryId: 'new'})}
+                onNewEntry={() => push({name: 'editor', entryId: 'new'})}
               />
             ) : null}
             {top.name === 'editor' ? (
@@ -366,26 +353,20 @@ function AppShell({
                 key={top.entryId}
                 entryId={top.entryId}
                 settings={settings}
+                readOnly={top.readOnly}
                 onBack={pop}
               />
-            ) : null}
-            {top.name === 'nativeEditor' ? (
-              <NativeEditorScreen
-                key={top.entryId}
-                entryId={top.entryId}
-                settings={settings}
-                onBack={pop}
-              />
-            ) : null}
-            {top.name === 'partner' ? (
-              <SharedEntryScreen entryId={top.entryId} onBack={pop} />
             ) : null}
             {top.name === 'permissionCenter' ? (
               <PermissionCenter onBack={pop} />
             ) : null}
             {top.name === 'controlCenter' ? (
-              <ControlCenter onBack={pop} />
+              <ControlCenter
+                onBack={pop}
+                onOpenUsage={() => push({name: 'usageStats'})}
+              />
             ) : null}
+            {top.name === 'usageStats' ? <UsageStatsScreen onBack={pop} /> : null}
             {top.name === 'authorizationStatus' ? (
               <AuthorizationStatus onBack={pop} />
             ) : null}
