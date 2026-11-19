@@ -37,6 +37,7 @@ import {native} from '../native/InorinalNative';
 import {BRIDGE_SHIM} from '../editor/bridgeShim';
 import {ImageViewer} from '../components/ImageViewer';
 import {getEntry, saveEntry} from '../data/storage';
+import {getPartnerEntry} from '../sync/partnerStore';
 import {
   AppSettings,
   CATEGORY_LABEL,
@@ -414,7 +415,11 @@ export function EditorScreen({
         return;
       }
 
-      const entry = await getEntry(entryId);
+      // 对方的日记不在本机日记库里，而是同步层镜像（partner.json）；
+      // 只读打开时必须回退到镜像，否则会误判「该日记不存在」。
+      const entry =
+        (await getEntry(entryId)) ??
+        (await getPartnerEntry(entryId).catch(() => null));
       if (cancelled) {
         return;
       }
