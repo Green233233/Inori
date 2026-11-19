@@ -1,5 +1,7 @@
 /** HTML helpers ported from util/HtmlText.kt and media/JournalMediaStore.kt. */
 
+import {paths} from '../native/InorinalNative';
+
 const SAFE_ENTRY_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_FILE_NAME = /^[A-Za-z0-9._-]{1,200}$/;
 const MEDIA_URI_RE =
@@ -164,6 +166,25 @@ export function extractMediaRefs(html: string): MediaRef[] {
     }
   }
   return result;
+}
+
+/** journal-media://local/<id>/<file> -> file://<entryMediaDir>/<file> for RN Image. */
+export function resolveMediaUri(uri: string, entryId?: string): string {
+  if (!uri.startsWith('journal-media://')) {
+    return uri;
+  }
+  MEDIA_URI_RE.lastIndex = 0;
+  const match = MEDIA_URI_RE.exec(uri);
+  if (!match) {
+    return uri;
+  }
+  const owner = match[1];
+  const fileName = match[2];
+  if (!isSafeEntryId(owner) || !isSafeFileName(fileName)) {
+    return uri;
+  }
+  const dir = paths.entryMedia(entryId ?? owner);
+  return `file://${dir}/${fileName}`;
 }
 
 /** journal-media://local/<id>/<file> -> media/<id>/<file> (backup form). */

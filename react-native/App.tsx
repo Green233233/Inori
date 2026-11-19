@@ -375,12 +375,6 @@ function AppShell({
                 entryId={top.entryId}
                 settings={settings}
                 onBack={pop}
-                onOpenWebEditor={() =>
-                  setStack(previous => [
-                    ...previous.slice(0, -1),
-                    {name: 'editor', entryId: top.entryId},
-                  ])
-                }
               />
             ) : null}
             {top.name === 'partner' ? (

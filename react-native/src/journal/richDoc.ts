@@ -4,9 +4,20 @@ export type DocBlock =
   | {kind: 'text'; id: string; text: string}
   | {kind: 'image'; id: string; uri: string};
 
+export interface StickerInfo {
+  kind: 'emoji' | 'image';
+  /** emoji 字符，或图片贴纸的 src（data URI / journal-media://）。 */
+  value: string;
+  left: number;
+  top: number;
+  size: number;
+  rotate: number;
+}
+
 export interface DocSticker {
   id: string;
   html: string;
+  info: StickerInfo | null;
 }
 
 export interface RichDoc {
@@ -80,7 +91,8 @@ export function parseRichDoc(html: string): RichDoc {
   STICKER_REGEX.lastIndex = 0;
   let stickerMatch = STICKER_REGEX.exec(html);
   while (stickerMatch) {
-    stickers.push({id: nextId('s'), html: stickerMatch[0]});
+    const stickerHtml = stickerMatch[0];
+    stickers.push({id: nextId('s'), html: stickerHtml, info: parseStickerInfo(stickerHtml)});
     stickerMatch = STICKER_REGEX.exec(html);
   }
 
@@ -126,7 +138,9 @@ export function serializeRichDoc(doc: RichDoc): string {
     });
   });
 
-  doc.stickers.forEach(sticker => parts.push(sticker.html));
+  doc.stickers.forEach(sticker => {
+    parts.push(sticker.info ? buildStickerHtml(sticker.info, sticker.id) : sticker.html);
+  });
 
   if (doc.doodle && doc.doodle.strokes.length) {
     const payload = {
@@ -152,9 +166,9 @@ export function serializeRichDoc(doc: RichDoc): string {
   return parts.join('') || '<div><br></div>';
 }
 
-/** 只有纯文字 + 图片、没有贴纸和涂鸦的文档，可以安全地在原生页里编辑。 */
-export function isNativeEditable(doc: RichDoc): boolean {
-  return !doc.hasStickers;
+/** 文字、图片、涂鸦、贴纸都已在原生页支持，任何文档都可原生编辑。 */
+export function isNativeEditable(_doc: RichDoc): boolean {
+  return true;
 }
 
 export function docPreview(doc: RichDoc, limit = 80): string {
@@ -169,10 +183,55 @@ export function docPreview(doc: RichDoc, limit = 80): string {
   return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
-/**
- * 只有贴纸必须回到 WebView 编辑器：贴纸是绝对定位的可拖拽节点，
- * 原生编辑器目前不接管它的摆放。
- */
-export function needsWebEditor(html: string): boolean {
-  return /<span\b[^>]*class="[^"]*journal-sticker[^"]*"[^>]*>/i.test(html);
+/** 贴纸已由原生编辑器接管，不再需要回退 WebView；保留函数以免调用方零散改动。 */
+export function needsWebEditor(_html: string): boolean {
+  return false;
+}
+
+const STYLE_NUMBER = (style: string, key: string): number | null => {
+  const match = style.match(new RegExp(`${key}\\s*:\\s*(-?[\\d.]+)px`, 'i'));
+  return match ? Number(match[1]) : null;
+};
+
+/** 解析贴纸节点的位置/尺寸/旋转，兼容编辑器写入的 data-* 与内联样式。 */
+export function parseStickerInfo(html: string): StickerInfo | null {
+  const kindMatch = html.match(/data-sticker-kind="([^"]*)"/i);
+  const kind = kindMatch?.[1] === 'image' ? 'image' : 'emoji';
+  const styleMatch = html.match(/style="([^"]*)"/i);
+  const style = styleMatch?.[1] ?? '';
+  const emojiMatch = html.match(/class="[^"]*journal-sticker__emoji[^"]*"[^>]*>([^<]*)</i);
+  const srcMatch = html.match(/class="[^"]*journal-sticker__media[^"]*"[^>]*src="([^"]*)"/i)
+    ?? html.match(/<img\b[^>]*\bsrc="([^"]*)"/i);
+  const value = kind === 'image' ? srcMatch?.[1] ?? '' : emojiMatch?.[1] ?? '';
+  if (!value) {
+    return null;
+  }
+  const rotateMatch = html.match(/data-rotate="(-?[\d.]+)"/i)
+    ?? html.match(/rotate\((-?[\d.]+)deg\)/i);
+  const size = STYLE_NUMBER(style, 'width') ?? 72;
+  return {
+    kind,
+    value,
+    left: STYLE_NUMBER(style, 'left') ?? 20,
+    top: STYLE_NUMBER(style, 'top') ?? 20,
+    size,
+    rotate: rotateMatch ? Number(rotateMatch[1]) : 0,
+  };
+}
+
+/** 生成与 WebView 编辑器完全一致的贴纸节点，两套编辑器可互相打开。 */
+export function buildStickerHtml(info: StickerInfo, id = nextId('s')): string {
+  const inner =
+    info.kind === 'image'
+      ? `<img class="journal-sticker__media" src="${info.value}" alt="sticker" draggable="false">`
+      : `<span class="journal-sticker__emoji">${encodeText(info.value)}</span>`;
+  const style =
+    `position:absolute;left:${Math.round(info.left)}px;top:${Math.round(info.top)}px;` +
+    `width:${Math.round(info.size)}px;height:${Math.round(info.size)}px;display:flex;` +
+    `transform:rotate(${Math.round(info.rotate)}deg);transform-origin:center center`;
+  return (
+    `<span class="journal-sticker" contenteditable="false" data-sticker-id="${id}" ` +
+    `data-sticker-kind="${info.kind}" data-rotate="${Math.round(info.rotate)}" ` +
+    `style="${style}">${inner}</span>`
+  );
 }

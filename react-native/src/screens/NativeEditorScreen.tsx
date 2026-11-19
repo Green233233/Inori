@@ -25,14 +25,16 @@ import {useAppTheme} from '../theme/AppThemeProvider';
 import {type} from '../theme/typography';
 import {TextButton, FlatButton} from '../components/Ui';
 import {TopBar} from '../components/TopBar';
-import {SoftCard} from '../components/Surfaces';
 import {showToast} from '../components/toast';
 import {AppSettings, JournalEntry, defaultEntryTitle, todayIso} from '../data/types';
 import {getEntry, saveEntry} from '../data/storage';
+import {resolveMediaUri} from '../data/html';
 import {native} from '../native/InorinalNative';
 import {
   DocBlock,
   RichDoc,
+  StickerInfo,
+  buildStickerHtml,
   docPreview,
   emptyRichDoc,
   parseRichDoc,
@@ -42,6 +44,11 @@ import {
 const AUTO_SAVE_DELAY = 700;
 const PHOTO_MAX_BYTES = 2_400_000;
 const DOODLE_HEIGHT = 260;
+const STICKER_SIZE = 72;
+const IMAGE_STICKER_SIZE = 112;
+const STICKER_PALETTE = ['❤️', '⭐', '😊', '🌸', '☀️', '🌙', '☁️', '❄️', '🍃', '🐱', '🐶', '🐦', '🐟'];
+const STICKER_STAGE_HEIGHT = 220;
+const STAGE_WIDTH = 320;
 
 function makeId(): string {
   const now = Date.now().toString(36);
@@ -55,16 +62,19 @@ function makeBlock(kind: 'text' | 'image', value = ''): DocBlock {
     : {kind: 'image', id: makeId(), uri: value};
 }
 
+function makeSticker(info: StickerInfo): {id: string; html: string; info: StickerInfo} {
+  const id = makeId();
+  return {id, html: buildStickerHtml(info, id), info};
+}
+
 export function NativeEditorScreen({
   entryId,
   settings,
   onBack,
-  onOpenWebEditor,
 }: {
   entryId: string;
   settings: AppSettings;
   onBack: () => void;
-  onOpenWebEditor: () => void;
 }) {
   const {colors, surfaces} = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -73,7 +83,6 @@ export function NativeEditorScreen({
   const [title, setTitle] = useState('');
   const [doc, setDoc] = useState<RichDoc>(() => emptyRichDoc());
   const [visibility, setVisibility] = useState<'private' | 'pair'>('pair');
-  const [blocked, setBlocked] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -116,12 +125,7 @@ export function NativeEditorScreen({
       entryRef.current = entry;
       setTitle(entry.title);
       setVisibility(entry.visibility === 'private' ? 'private' : 'pair');
-      const parsed = parseRichDoc(entry.content);
-      if (parsed.hasStickers) {
-        setBlocked(true);
-        return;
-      }
-      setDoc(parsed);
+      setDoc(parseRichDoc(entry.content));
     })();
     return () => {
       cancelled = true;
@@ -173,7 +177,7 @@ export function NativeEditorScreen({
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (blocked || !entryRef.current) {
+    if (!entryRef.current) {
       return;
     }
     if (timerRef.current) {
@@ -187,7 +191,7 @@ export function NativeEditorScreen({
         clearTimeout(timerRef.current);
       }
     };
-  }, [title, doc, visibility, blocked, save]);
+  }, [title, doc, visibility, save]);
 
   const preview = useMemo(() => docPreview(doc), [doc]);
 
@@ -223,36 +227,77 @@ export function NativeEditorScreen({
     }
   }, []);
 
-  const close = useCallback(async () => {
-    if (blocked) {
-      onBack();
-      return;
+  const addEmojiSticker = useCallback((emoji: string) => {
+    setDoc(previous => {
+      const offset = previous.stickers.length * 14;
+      return {
+        ...previous,
+        stickers: [
+          ...previous.stickers,
+          makeSticker({
+            kind: 'emoji',
+            value: emoji,
+            left: 24 + offset,
+            top: 24 + offset,
+            size: STICKER_SIZE,
+            rotate: 0,
+          }),
+        ],
+      };
+    });
+  }, []);
+
+  const addImageSticker = useCallback(async () => {
+    try {
+      const picked = await native.pickImage(PHOTO_MAX_BYTES, true);
+      if (!picked?.dataUri) {
+        return;
+      }
+      setDoc(previous => {
+        const offset = previous.stickers.length * 14;
+        return {
+          ...previous,
+          stickers: [
+            ...previous.stickers,
+            makeSticker({
+              kind: 'image',
+              value: picked.dataUri,
+              left: 24 + offset,
+              top: 24 + offset,
+              size: IMAGE_STICKER_SIZE,
+              rotate: 0,
+            }),
+          ],
+        };
+      });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '选择贴纸失败');
     }
+  }, []);
+
+  const moveSticker = useCallback((id: string, left: number, top: number) => {
+    setDoc(previous => ({
+      ...previous,
+      stickers: previous.stickers.map(sticker =>
+        sticker.id === id && sticker.info
+          ? {...sticker, info: {...sticker.info, left, top}}
+          : sticker,
+      ),
+    }));
+  }, []);
+
+  const removeSticker = useCallback((id: string) => {
+    setDoc(previous => ({
+      ...previous,
+      stickers: previous.stickers.filter(sticker => sticker.id !== id),
+    }));
+  }, []);
+
+  const close = useCallback(async () => {
     await save(title, doc, visibility);
     onBack();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocked, title, doc, visibility, save]);
-
-  if (blocked) {
-    return (
-      <View style={[styles.root, {backgroundColor: colors.background}]}>
-        <TopBar title="这篇日记" onBack={onBack} />
-        <View style={styles.blockedWrap}>
-          <SoftCard>
-            <Text style={[type.headline, {color: colors.onSurface}]}>
-              这篇日记含贴纸
-            </Text>
-            <Text style={[type.body, {color: colors.onSurfaceVariant, marginTop: 8}]}>
-              原生编辑器目前负责文字、图片与涂鸦；为了不丢掉贴纸的摆放，
-              这篇请用完整编辑器打开。
-            </Text>
-          </SoftCard>
-          <FlatButton label="用完整编辑器打开" onPress={onOpenWebEditor} style={{marginTop: 16}} />
-          <TextButton label="返回" onPress={onBack} style={{marginTop: 8}} />
-        </View>
-      </View>
-    );
-  }
+  }, [title, doc, visibility, save]);
 
   return (
     <KeyboardAvoidingView
@@ -321,7 +366,7 @@ export function NativeEditorScreen({
             ) : (
               <View key={block.id} style={styles.photoRow}>
                 <Image
-                  source={{uri: block.uri}}
+                  source={{uri: resolveMediaUri(block.uri, entryRef.current?.id)}}
                   resizeMode="cover"
                   style={styles.photo}
                   accessibilityLabel="日记照片"
@@ -330,6 +375,36 @@ export function NativeEditorScreen({
               </View>
             ),
           )}
+
+          <View style={[styles.stickerStage, {backgroundColor: surfaces.sunken}]}>
+            {doc.stickers.length ? (
+              doc.stickers.map(sticker =>
+                sticker.info ? (
+                  <StickerView
+                    key={sticker.id}
+                    info={sticker.info}
+                    onMove={(left, top) => moveSticker(sticker.id, left, top)}
+                    onRemove={() => removeSticker(sticker.id)}
+                  />
+                ) : null,
+              )
+            ) : (
+              <Text style={styles.stickerEmpty}>从下面挑一个贴纸，按住可以拖动</Text>
+            )}
+          </View>
+
+          <View style={styles.paletteRow}>
+            {STICKER_PALETTE.map(emoji => (
+              <Pressable
+                key={emoji}
+                accessibilityRole="button"
+                accessibilityLabel={`贴纸 ${emoji}`}
+                onPress={() => addEmojiSticker(emoji)}
+                style={({pressed}) => [styles.paletteItem, pressed && styles.pressed]}>
+                <Text style={styles.paletteEmoji}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </View>
 
           <DoodleCanvas
             doc={doc}
@@ -351,6 +426,16 @@ export function NativeEditorScreen({
 
           <View style={[styles.row, {marginTop: 12}]}>
             <FlatButton
+              label="图片贴纸"
+              onPress={() => {
+                void addImageSticker();
+              }}
+              style={{flex: 1}}
+            />
+          </View>
+
+          <View style={[styles.row, {marginTop: 12}]}>
+            <FlatButton
               label={visibility === 'private' ? '仅自己可见' : '共享给 TA'}
               onPress={() =>
                 setVisibility(previous => (previous === 'private' ? 'pair' : 'private'))
@@ -361,16 +446,96 @@ export function NativeEditorScreen({
             />
           </View>
 
-          {doc.hasStickers ? (
-            <TextButton
-              label="用完整编辑器打开（贴纸）"
-              onPress={onOpenWebEditor}
-              style={{marginTop: 18}}
-            />
-          ) : null}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+function StickerView({
+  info,
+  onMove,
+  onRemove,
+}: {
+  info: StickerInfo;
+  onMove: (left: number, top: number) => void;
+  onRemove: () => void;
+}) {
+  const [selected, setSelected] = useState(false);
+  const startRef = useRef({left: info.left, top: info.top});
+  const movedRef = useRef(false);
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+  const posRef = useRef({left: info.left, top: info.top});
+  posRef.current = {left: info.left, top: info.top};
+
+  const responder = useMemo(
+    () =>
+      PanResponder.create({
+        // no capture handlers: the ✕ badge must win the touch over the drag responder
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: () => {
+          startRef.current = {
+            left: Math.max(0, Math.min(STAGE_WIDTH - info.size, posRef.current.left)),
+            top: Math.max(0, Math.min(STICKER_STAGE_HEIGHT - info.size, posRef.current.top)),
+          };
+          movedRef.current = false;
+        },
+        onPanResponderMove: (_event, gesture) => {
+          if (Math.abs(gesture.dx) + Math.abs(gesture.dy) > 4) {
+            movedRef.current = true;
+          }
+          const maxLeft = Math.max(0, STAGE_WIDTH - info.size);
+          const maxTop = Math.max(0, STICKER_STAGE_HEIGHT - info.size);
+          const left = Math.max(0, Math.min(maxLeft, startRef.current.left + gesture.dx));
+          const top = Math.max(0, Math.min(maxTop, startRef.current.top + gesture.dy));
+          onMoveRef.current(left, top);
+        },
+        onPanResponderRelease: () => {
+          if (!movedRef.current) {
+            setSelected(value => !value);
+          }
+        },
+      }),
+    // responder identity must stay stable during a gesture; callbacks go through refs
+    [info.size],
+  );
+
+  return (
+    <View
+      {...responder.panHandlers}
+      style={[
+        styles.sticker,
+        {
+          left: Math.max(0, Math.min(STAGE_WIDTH - info.size, info.left)),
+          top: Math.max(0, Math.min(STICKER_STAGE_HEIGHT - info.size, info.top)),
+          width: info.size,
+          height: info.size,
+          transform: [{rotate: `${info.rotate}deg`}],
+        },
+      ]}
+      accessibilityLabel={info.kind === 'image' ? '图片贴纸' : `贴纸 ${info.value}`}>
+      {info.kind === 'image' ? (
+        <Image
+          source={{uri: resolveMediaUri(info.value)}}
+          resizeMode="contain"
+          style={styles.stickerImage}
+        />
+      ) : (
+        <Text style={styles.stickerEmoji}>{info.value}</Text>
+      )}
+      {selected ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="移除贴纸"
+          onPress={onRemove}
+          hitSlop={14}
+          style={styles.stickerRemove}>
+          <Text style={styles.stickerRemoveLabel}>✕</Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -502,9 +667,50 @@ const styles = StyleSheet.create({
   photoRow: {marginBottom: 10},
   photo: {width: '100%', height: 220, borderRadius: 14, marginBottom: 6},
   row: {flexDirection: 'row', marginTop: 6},
-  blockedWrap: {padding: 20},
   saveSlot: {minWidth: 64, alignItems: 'flex-end'},
   saveLabel: {fontSize: 14, fontWeight: '600'},
+  stickerStage: {
+    height: STICKER_STAGE_HEIGHT,
+    borderRadius: 18,
+    marginTop: 16,
+    overflow: 'hidden',
+  },
+  stickerEmpty: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    top: 96,
+    textAlign: 'center',
+    fontSize: 13,
+    color: '#8A8A8E',
+  },
+  sticker: {position: 'absolute', alignItems: 'center', justifyContent: 'center'},
+  stickerImage: {width: '100%', height: '100%'},
+  stickerEmoji: {fontSize: 40},
+  stickerRemove: {
+    position: 'absolute',
+    right: 2,
+    top: 2,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1C1C1E',
+  },
+  stickerRemoveLabel: {color: '#FFFFFF', fontSize: 12, fontWeight: '700'},
+  paletteRow: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 12},
+  paletteItem: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  paletteEmoji: {fontSize: 24},
+  pressed: {opacity: 0.6},
   doodleWrap: {marginTop: 6, marginBottom: 14},
   doodleHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
   doodleBoard: {marginTop: 8, borderRadius: 14, overflow: 'hidden'},

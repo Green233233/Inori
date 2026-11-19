@@ -5,6 +5,7 @@ import {
   parseRichDoc,
   serializeRichDoc,
 } from '../src/journal/richDoc';
+import {resolveMediaUri} from '../src/data/html';
 
 describe('richDoc', () => {
   it('把段落与照片按顺序还原', () => {
@@ -74,7 +75,7 @@ describe('richDoc', () => {
   it('带贴纸的日记要求回到完整编辑器', () => {
     const sticker =
       '<span class="journal-sticker" contenteditable="false" data-sticker-kind="emoji" data-rotate="0"><span class="journal-sticker__emoji">🍃</span></span>';
-    expect(needsWebEditor(`<div>字</div>${sticker}`)).toBe(true);
+    expect(needsWebEditor(`<div>字</div>${sticker}`)).toBe(false);
     expect(needsWebEditor('<div>字</div>')).toBe(false);
     expect(parseRichDoc(`<div>字</div>${sticker}`).hasStickers).toBe(true);
   });
@@ -83,5 +84,62 @@ describe('richDoc', () => {
     const doc = emptyRichDoc();
     doc.blocks = [{kind: 'text', id: 'a', text: 'x'.repeat(120)}];
     expect(docPreview(doc, 20)).toBe(`${'x'.repeat(20)}…`);
+  });
+
+  it('贴纸解析与重建保持位置与旋转', () => {
+    const html =
+      '<div>正文</div><span class="journal-sticker" contenteditable="false" data-sticker-id="s1" data-sticker-kind="emoji" data-rotate="15" style="position:absolute;left:48px;top:96px;width:72px;height:72px;display:flex;transform:rotate(15deg);transform-origin:center center"><span class="journal-sticker__emoji">⭐</span></span>';
+    const doc = parseRichDoc(html);
+    expect(doc.stickers).toHaveLength(1);
+    expect(doc.stickers[0].info).toMatchObject({
+      kind: 'emoji',
+      value: '⭐',
+      left: 48,
+      top: 96,
+      size: 72,
+      rotate: 15,
+    });
+    const rebuilt = serializeRichDoc(doc);
+    expect(rebuilt).toContain('data-sticker-kind="emoji"');
+    expect(rebuilt).toContain('left:48px');
+    expect(rebuilt).toContain('rotate(15deg)');
+    expect(rebuilt).toContain('⭐');
+    expect(needsWebEditor(rebuilt)).toBe(false);
+  });
+
+  it('图片贴纸读出 src', () => {
+    const html =
+      '<span class="journal-sticker" data-sticker-kind="image" data-rotate="0" style="position:absolute;left:10px;top:12px;width:112px;height:112px"><img class="journal-sticker__media" src="journal-media://x/s.png" alt="sticker"></span>';
+    const doc = parseRichDoc(html);
+    expect(doc.stickers[0].info).toMatchObject({
+      kind: 'image',
+      value: 'journal-media://x/s.png',
+      size: 112,
+    });
+    expect(serializeRichDoc(doc)).toContain('src="journal-media://x/s.png"');
+  });
+});
+
+describe('resolveMediaUri', () => {
+  it('把 journal-media 映射到应用媒体目录的 file 路径', () => {
+    const uri = 'journal-media://local/abc123/photo.jpg';
+    const resolved = resolveMediaUri(uri);
+    expect(resolved.startsWith('file://')).toBe(true);
+    expect(resolved).toContain('/journal_media/abc123/photo.jpg');
+  });
+
+  it('允许用当前日记 id 覆盖归属（共享来的图片）', () => {
+    const resolved = resolveMediaUri('journal-media://local/other/file.png', 'mine');
+    expect(resolved).toContain('/journal_media/mine/file.png');
+  });
+
+  it('其它 scheme 原样返回', () => {
+    expect(resolveMediaUri('data:image/png;base64,AAA')).toBe('data:image/png;base64,AAA');
+    expect(resolveMediaUri('file:///tmp/a.png')).toBe('file:///tmp/a.png');
+  });
+
+  it('非法 id 或文件名不解析', () => {
+    expect(resolveMediaUri('journal-media://local/../x/a.png')).toBe('journal-media://local/../x/a.png');
+    expect(resolveMediaUri('journal-media://local/ok/bad|name.png')).toBe('journal-media://local/ok/bad|name.png');
   });
 });
