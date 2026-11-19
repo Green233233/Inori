@@ -226,6 +226,12 @@ export function EditorScreen({
   const {colors, surfaces, isDark, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
   const webRef = useRef<any>(null);
+  /**
+   * WebView 渲染进程崩溃（多图 base64 撑爆内存）时的自愈次数。
+   * 崩溃后 React Native 侧收不到任何 painted/ready 消息，界面会永远停在骨架上，
+   * 所以这里显式 reload 一次，再失败就把骨架收起，让用户至少看到只读首屏文本。
+   */
+  const crashReloadsRef = useRef(0);
   const [loaded, setLoaded] = useState(false);
   const [pageReady, setPageReady] = useState(false);
   const [contentDrawn, setContentDrawn] = useState(false);
@@ -1060,6 +1066,19 @@ export function EditorScreen({
                 ? 'try { window.setReadOnly && window.setReadOnly(true); } catch (e) {} true;'
                 : undefined
             }
+            onRenderProcessGone={() => {
+              if (crashReloadsRef.current < 1) {
+                crashReloadsRef.current += 1;
+                setLoaded(false);
+                setPageReady(false);
+                pageReadyRef.current = false;
+                webRef.current?.reload?.();
+                return;
+              }
+              setSkeletonGone(true);
+              setContentDrawn(true);
+              showToast('这篇日记的图片太大，先把纯文本显示出来');
+            }}
             onMessage={handleMessage}
             onLoadEnd={() => {
               // The injected shim posts `ready` on window load; this is only a
