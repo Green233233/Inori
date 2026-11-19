@@ -24,6 +24,9 @@ import {
   qiScreenshot,
   AuditRecord,
 } from '../../native/QiDevice';
+import {qiLimits} from '../../native/QiLimits';
+import type {AppLimitRules} from '../../native/QiLimits';
+import {useQi} from '../qi/QiProvider';
 
 const LABELS: Record<PermissionKey, {title: string; detail: string}> = {
   deviceAdmin: {title: '设备管理器', detail: '仅用于锁定屏幕，不会抹除设备'},
@@ -49,6 +52,8 @@ export function PermissionCenter({onBack}: {onBack: () => void}) {
   const [apiLevel, setApiLevel] = useState(33);
   const [logs, setLogs] = useState<AuditRecord[]>([]);
   const [guardRunning, setGuardRunning] = useState(false);
+  const [limits, setLimits] = useState<AppLimitRules | null>(null);
+  const {sendAppLimit} = useQi();
   const [refreshing, setRefreshing] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -65,6 +70,10 @@ export function PermissionCenter({onBack}: {onBack: () => void}) {
       const shot = await qiScreenshot.status().catch(() => null);
       if (shot) {
         setStanding(shot.standingEnabled);
+        const rules = await qiLimits.getRules().catch(() => null);
+        if (rules) {
+          setLimits(rules);
+        }
         setApiLevel(shot.apiLevel);
       }
       const guard = await qiGuard.status().catch(() => null);
@@ -206,6 +215,42 @@ export function PermissionCenter({onBack}: {onBack: () => void}) {
                   }
                   setGuardRunning(next);
                 } catch (error: any) {
+                  showToast(error?.message ?? '切换失败');
+                }
+              }}
+              trackColor={{true: colors.primary, false: colors.outline}}
+            />
+          </View>
+        </SoftCard>
+
+        <SoftCard radius={18} style={styles.card}>
+          <View style={styles.row}>
+            <View style={{flex: 1}}>
+              <Text style={[type.bodyStrong, {color: colors.onSurface}]}>
+                应用限制
+              </Text>
+              <Text
+                style={[
+                  type.caption,
+                  {color: colors.onSurfaceVariant, marginTop: 3},
+                ]}>
+                {limits?.enabled
+                  ? `主人限定了 ${limits.blocked.length} 个应用，打开时会被挡住`
+                  : '主人没有限制任何应用；关掉后立即生效，主人那边也会看到'}
+              </Text>
+            </View>
+            <Switch
+              accessibilityLabel="应用限制"
+              value={limits?.enabled === true}
+              onValueChange={async next => {
+                const base = limits ?? {enabled: false, blocked: [], updatedAt: 0};
+                const updated: AppLimitRules = {...base, enabled: next};
+                setLimits(updated);
+                try {
+                  await sendAppLimit(updated);
+                  showToast(next ? '已开启应用限制' : '已关闭应用限制');
+                } catch (error: any) {
+                  setLimits(base);
                   showToast(error?.message ?? '切换失败');
                 }
               }}

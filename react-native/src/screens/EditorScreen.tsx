@@ -76,6 +76,10 @@ function toPlainPreview(html: string): string {
   }
   return html
     .replace(/<div[^>]*doodle-data[\s\S]*?<\/div>/gi, ' ')
+    // 图片（含内联 base64 的 data URI）一律不参与纯文本：一行几千个字符的
+    // base64 既没法读，也会把回退页面撑爆。只留一句占位。
+    .replace(/<img\b[^>]*>/gi, ' ')
+    .replace(/data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<br\s*\/?>/gi, '\n')

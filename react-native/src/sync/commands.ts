@@ -15,7 +15,12 @@ import {qiDevice, type LocationFix} from '../native/QiDevice';
 export type CommandKind =
   | 'guard.status'
   | 'guard.tier'
+  | 'guard.lock'
   | 'usage.stats'
+  | 'usage.day'
+  | 'usage.range'
+  | 'usage.sessions'
+  | 'apps.list'
   | 'screen.capture'
   | 'screenshot.status'
   | 'location.get'
@@ -212,6 +217,13 @@ function notifyLocationViewed(data: unknown): void {
   }
 }
 
+/** 本地时区的今天 0 点：usage.day 没带 dayStartMs 时的缺省窗口。 */
+function startOfToday(): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today.getTime();
+}
+
 async function runLocalCommand(
   request: CommandRequest,
   policy: CommandPolicy,
@@ -223,6 +235,35 @@ async function runLocalCommand(
         throw new Error('小狗端关闭了「使用时长」共享');
       }
       return qiDevice.usage.aggregate();
+    case 'usage.day': {
+      if (!policy.allowUsage) {
+        throw new Error('小狗端关闭了「使用时长」共享');
+      }
+      const dayStartMs = Number(args.dayStartMs);
+      return qiDevice.usage.dayStats(
+        Number.isFinite(dayStartMs) ? dayStartMs : startOfToday(),
+      );
+    }
+    case 'usage.range':
+      if (!policy.allowUsage) {
+        throw new Error('小狗端关闭了「使用时长」共享');
+      }
+      return qiDevice.usage.rangeStats(Number(args.days) || 7);
+    case 'usage.sessions': {
+      if (!policy.allowUsage) {
+        throw new Error('小狗端关闭了「使用时长」共享');
+      }
+      const toMs = Number(args.toMs);
+      const fromMs = Number(args.fromMs);
+      const end = Number.isFinite(toMs) ? toMs : Date.now();
+      // 默认看最近 24 小时：主人端轨迹时间轴最常用的窗口。
+      const start = Number.isFinite(fromMs) ? fromMs : end - 24 * 60 * 60 * 1000;
+      return qiDevice.usage.sessions(start, end);
+    }
+    case 'apps.list':
+      // 应用清单不是「使用数据」，不受 allowUsage 门控；主人的使用时长页用它
+      // 把 pkg 补成中文名。
+      return qiDevice.usage.installedApps();
     case 'overlay.show':
       if (!policy.allowOverlay) {
         throw new Error('小狗端关闭了「全屏消息」');
@@ -235,6 +276,8 @@ async function runLocalCommand(
       return qiDevice.guard.status();
     case 'guard.tier':
       return qiDevice.guard.setTier(String(args.tier) as never);
+    case 'guard.lock':
+      return qiDevice.guard.lockNow();
     case 'screen.capture': {
       const status = await qiDevice.screenshot.status();
       if (!status.canCapture) {

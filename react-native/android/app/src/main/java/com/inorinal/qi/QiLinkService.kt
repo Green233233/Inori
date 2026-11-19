@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -13,8 +14,12 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.facebook.react.bridge.ReadableArray
+import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.ReadableType
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
@@ -24,6 +29,9 @@ import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
@@ -44,8 +52,13 @@ import org.json.JSONObject
  *
  * 明确不做的事：
  *  - 不打印 token / baseUrl / ciphertext：日志只有 kind、seq 和异常类名；
- *  - 不解密消息：`ciphertext` 只在内存里跟着 JSON 走一趟就被丢弃；
- *  - 不碰 `command.send` 的确认：那条命令必须留给 JS 执行，服务只提醒。
+ *  - 不解析普通消息：`ciphertext` 只在内存里跟着 JSON 走一趟就被丢弃。
+ *
+ * 唯一的例外是这台设备自己就能回答的只读命令：`command.send` 里 kind 为
+ * `location.get` / `usage.stats` / `permissions.snapshot` 时，服务自己解密、
+ * 执行、回一条 `command.reply`，再 ack 那一条。原因是 App 被划掉后 JS 的
+ * 轮询不在，主人不该为一个「对方没有响应」干等 40 秒。其余命令保持老样子：
+ * 只提醒、不执行、不 ack。
  *
  * 生命周期：
  *  - `START_STICKY` + `stopWithTask=false`：进程被系统回收后由系统重建，
@@ -58,6 +71,27 @@ class QiLinkService : Service() {
   private var loopThread: Thread? = null
   private val loopLock = ReentrantLock()
   private val loopSignal = loopLock.newCondition()
+
+  /**
+   * 只读命令的执行线程。
+   *
+   * 单线程是刻意的：轮询线程只管收消息，命令（定位可能要 12 秒、逆地理 6
+   * 秒）在这里串行跑，既不会阻塞长轮询，也不会几条命令一起把主线程/GPS
+   * 抢爆。线程本身是 daemon，进程死了就跟着走。
+   */
+  private val commandExecutor: ExecutorService =
+    Executors.newSingleThreadExecutor { runnable ->
+      Thread(runnable, "qi-link-command").apply {
+        isDaemon = true
+        priority = Thread.NORM_PRIORITY - 1
+      }
+    }
+
+  /** 20 秒硬上限：超时就打断执行线程，让主人收到带 error 的回复。 */
+  private val commandWatchdog: ScheduledExecutorService =
+    Executors.newSingleThreadScheduledExecutor { runnable ->
+      Thread(runnable, "qi-link-command-watchdog").apply { isDaemon = true }
+    }
 
   /** 启动时由 JS 传入；只在内存里，随进程消失。 */
   @Volatile private var pendingToken: String? = null
@@ -134,6 +168,9 @@ class QiLinkService : Service() {
     wake()
     loopThread?.let { thread -> runCatching { thread.join(1_000) } }
     loopThread = null
+    // 服务停了就不该再执行新命令；已经在跑的等它自己超时（20 秒上限）。
+    commandExecutor.shutdown()
+    commandWatchdog.shutdownNow()
   }
 
   private fun wake() {
@@ -224,7 +261,15 @@ class QiLinkService : Service() {
         val kind = item.optString("kind", "")
         if (seq <= 0L) continue
         val time = item.optString("createdAt", "")
+        // 应用限制是「状态同步」而不是「命令」：小狗端可能根本不在前台，
+        // JS 的 relay 循环那时是停的，所以必须由常驻服务自己落盘。
+        if (kind == KIND_APP_LIMIT) {
+          if (applyAppLimit(item, token)) continue
+        }
         if (kind in NOTIFY_KINDS) {
+          // 自己能回答的只读命令：交给执行线程，回包成功后由它 ack 这一条。
+          // 不在这里 ack：万一回包没发出去，下一条轮询还应该能重试。
+          if (kind == KIND_COMMAND_SEND && dispatchCommand(item, token)) continue
           // 一次最多三条：刚从后台回来时别把积压的消息一次性刷屏。
           val fresh = !firstRun() || isRecent(time)
           if (fresh && notified < MAX_NOTIFICATIONS_PER_PAGE && canPostNotification()) {
@@ -240,6 +285,248 @@ class QiLinkService : Service() {
     val next = page.optLong("cursor", 0L)
     if (next > 0L) prefs.edit().putLong(PREF_CURSOR, next).apply()
     remainingBacklog = (items?.length() ?: 0) >= PAGE_LIMIT
+  }
+
+  // -------------------------------------------------------------- commands
+
+  /**
+   * 原生落盘一条 `app.limit`（主人下发的应用限制），返回是否接管。
+   *
+   * 不走 `command.reply`：这不是一次问答，只是把名单同步过来。落盘成功就
+   * ack，让主人端看到「已送达」；失败则留着重试，JS 兜底也还能处理。
+   * 必须在这里做而不是交给 JS，因为小狗端 app 大概率在后台（那时 JS 的
+   * relay 循环是停的），而限制恰恰要在「小狗没看祈」的时候生效。
+   */
+  private fun applyAppLimit(item: JSONObject, token: String): Boolean {
+    val seq = item.optLong("seq", 0L)
+    val ciphertext = item.optString("ciphertext", "")
+    if (seq <= 0L || ciphertext.isEmpty()) return false
+    val pair = pairContext() ?: return false
+    return try {
+      val payload = JSONObject(PairRelayCrypto.open(this, pair.first, pair.second, ciphertext))
+      val rules =
+        JSONObject()
+          .put("enabled", payload.optBoolean("enabled", false))
+          .put("blocked", payload.optJSONArray("blocked") ?: JSONArray())
+      if (!AppLimitWatcher.applyRules(this, rules.toString())) {
+        // 解析失败时保留旧名单，条目留给下一轮重试。
+        lastCommandError = "bad_limit_rules"
+        return false
+      }
+      // 服务可能在限制开启前就起来了，这里补一次 start（幂等）。
+      AppLimitWatcher.start(this)
+      acknowledge(listOf(seq), token)
+      lastCommandAt = System.currentTimeMillis()
+      lastCommandError = ""
+      true
+    } catch (error: Exception) {
+      lastCommandError = error.javaClass.simpleName
+      Log.w(TAG, "app_limit_failed ${error.javaClass.simpleName}")
+      false
+    }
+  }
+
+  /**
+   * 尝试在原生侧执行一条 `command.send`，返回是否接管。
+   *
+   * 只有 [NATIVE_COMMAND_KINDS] 这三个只读命令会被接管；解不开、缺配对上下文
+   * 或者不是只读命令都返回 false，条目原样留给 JS 轮询（JS 会自己解一次）。
+   * 解密在轮询线程上同步做：ECDH 结果有缓存，AES-GCM 只解一个几百字节的
+   * JSON，代价是微秒级；这样上层能直接决定「要不要通知」。
+   */
+  private fun dispatchCommand(item: JSONObject, token: String): Boolean {
+    val seq = item.optLong("seq", 0L)
+    val ciphertext = item.optString("ciphertext", "")
+    if (seq <= 0L || ciphertext.isEmpty()) return false
+    val pair = pairContext() ?: return false
+    val request =
+      try {
+        JSONObject(PairRelayCrypto.open(this, pair.first, pair.second, ciphertext))
+      } catch (error: Exception) {
+        // 换过密钥、或不是发给我们的：留给 JS，它解不开也会安静丢掉。
+        Log.w(TAG, "command_open_failed ${error.javaClass.simpleName}")
+        return false
+      }
+    val id = request.optString("id", "")
+    val kind = request.optString("kind", "")
+    if (id.isEmpty() || kind !in NATIVE_COMMAND_KINDS) return false
+    if (!running.get()) return false
+    try {
+      commandExecutor.execute { runNativeCommand(pair, seq, id, kind, token) }
+    } catch (error: Exception) {
+      Log.w(TAG, "command_dispatch_failed ${error.javaClass.simpleName}")
+      return false
+    }
+    return true
+  }
+
+  /** 执行线程入口：读命令 → 本地执行 → 封 `command.reply` → 回发 → ack。 */
+  private fun runNativeCommand(
+    pair: Pair<String, String>,
+    seq: Long,
+    id: String,
+    kind: String,
+    token: String
+  ) {
+    val self = Thread.currentThread()
+    val watchdog =
+      runCatching {
+        commandWatchdog.schedule(
+          {
+            lastCommandError = "timeout"
+            self.interrupt()
+          },
+          COMMAND_TIMEOUT_MS,
+          TimeUnit.MILLISECONDS
+        )
+      }.getOrNull()
+    try {
+      val reply = JSONObject().put("id", id)
+      try {
+        val data = executeReadOnlyCommand(kind)
+        reply.put("ok", true).put("data", data)
+        if (kind == KIND_LOCATION_GET) notifyLocationViewed(data)
+      } catch (error: Exception) {
+        lastCommandError = error.javaClass.simpleName
+        // 只记 kind 与异常类名：命令参数与坐标不进日志。
+        Log.w(TAG, "command_failed kind=$kind ${error.javaClass.simpleName}")
+        reply.put("ok", false).put("error", commandErrorMessage(kind, error))
+      }
+      reply.put("at", System.currentTimeMillis())
+      val envelope = PairRelayCrypto.seal(this, pair.first, pair.second, reply.toString())
+      val body =
+        JSONObject()
+          .put("kind", KIND_COMMAND_REPLY)
+          .put("ciphertext", envelope)
+          .toString()
+      request("POST", "/api/v1/relay/send", body, token, 15_000L)
+      // 回包真的发出去了才 ack：否则宁可下一条轮询再执行一次，也不能让主人
+      // 拿着一个永远到不了的 40 秒超时。
+      acknowledge(listOf(seq), token)
+      lastCommandAt = System.currentTimeMillis()
+      lastCommandError = ""
+    } catch (error: Exception) {
+      lastCommandError = error.javaClass.simpleName
+      Log.w(TAG, "command_reply_failed ${error.javaClass.simpleName}")
+    } finally {
+      watchdog?.cancel(false)
+      // 看门狗可能是靠 interrupt 结束等待的，把中断位清掉，线程要能被复用。
+      Thread.interrupted()
+    }
+  }
+
+  private fun executeReadOnlyCommand(kind: String): Any =
+    when (kind) {
+      KIND_LOCATION_GET -> {
+        if (!QiLocationEngine.hasPermission(this)) {
+          throw IllegalStateException("缺少定位权限")
+        }
+        QiLocationEngine.describeJson(this, QiLocationEngine.locateNow(this))
+      }
+      KIND_USAGE_STATS -> {
+        if (!QiUsageAggregator.hasUsageAccess(this)) {
+          throw IllegalStateException("没有「使用情况访问」权限")
+        }
+        writableToJson(QiUsageAggregator.aggregate(this))
+      }
+      KIND_PERMISSIONS_SNAPSHOT -> permissionSnapshotJson()
+      KIND_GUARD_LOCK -> lockDeviceNow()
+      else -> throw IllegalArgumentException("未知命令：$kind")
+    }
+
+  /**
+   * 远程锁屏。设备管理器只持有 force-lock，所以这里能做的就只是把屏幕锁上；
+   * 没授权时明确报错，让主人知道要先让小狗开设备管理器。
+   */
+  private fun lockDeviceNow(): Any {
+    val manager = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+    if (!manager.isAdminActive(QiDeviceAdminReceiver.component(this))) {
+      throw IllegalStateException("小狗还没有开启设备管理员")
+    }
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+      @Suppress("DEPRECATION")
+      manager.lockNow()
+    } else {
+      manager.lockNow()
+    }
+    AuditLogModule.write("admin.remoteLock", "主人远程锁定屏幕", this)
+    return JSONObject().put("lockedAt", System.currentTimeMillis())
+  }
+
+  /** 与 `QiDevicePermissions.getSnapshot` 同形：[{key, granted}]。 */
+  private fun permissionSnapshotJson(): JSONArray {
+    val array = JSONArray()
+    PermissionCenterModule.snapshot(this).forEach { (key, granted) ->
+      array.put(JSONObject().put("key", key).put("granted", granted))
+    }
+    return array
+  }
+
+  /**
+   * 位置被读取就地留痕：文案与 JS 的 `commands.ts` → `notifyLocationViewed`
+   * 完全一致，重复到达时按 id 更新同一条。
+   */
+  private fun notifyLocationViewed(data: Any?) {
+    val place = data as? JSONObject ?: return
+    if (!place.optBoolean("ok", false)) return
+    if (!place.has("lat") || !place.has("lng")) return
+    if (!canPostNotification()) return
+    runCatching {
+      NoticeCenter.post(this, NOTICE_LOCATION_VIEWED, "祈 · 位置", "小狗刚刚查看了你的位置", false)
+    }.onFailure { Log.w(TAG, "notice_failed ${it.javaClass.simpleName}") }
+  }
+
+  /** 给主人看的一句话错误；带上「怎么修」，而不是只回异常类名。 */
+  private fun commandErrorMessage(kind: String, error: Exception): String =
+    when {
+      error is InterruptedException -> "执行超时，稍后再试"
+      error is IllegalStateException && kind == KIND_LOCATION_GET ->
+        "缺少定位权限，请在系统设置里给「祈」开启定位"
+      error is IllegalStateException && kind == KIND_USAGE_STATS ->
+        "小狗端没有「使用情况访问」权限"
+      else -> error.message ?: "执行失败"
+    }
+
+  private fun writableToJson(map: ReadableMap): JSONObject {
+    val json = JSONObject()
+    val keys = map.keySetIterator()
+    while (keys.hasNextKey()) {
+      val key = keys.nextKey()
+      when (map.getType(key)) {
+        ReadableType.Null -> json.put(key, JSONObject.NULL)
+        ReadableType.Boolean -> json.put(key, map.getBoolean(key))
+        ReadableType.Number -> json.put(key, map.getDouble(key))
+        ReadableType.String -> json.put(key, map.getString(key) ?: "")
+        ReadableType.Map -> json.put(key, writableToJson(map.getMap(key) ?: continue))
+        ReadableType.Array -> json.put(key, writableToArray(map.getArray(key) ?: continue))
+        else -> json.put(key, JSONObject.NULL)
+      }
+    }
+    return json
+  }
+
+  private fun writableToArray(array: ReadableArray): JSONArray {
+    val json = JSONArray()
+    for (index in 0 until array.size()) {
+      when (array.getType(index)) {
+        ReadableType.Null -> json.put(JSONObject.NULL)
+        ReadableType.Boolean -> json.put(array.getBoolean(index))
+        ReadableType.Number -> json.put(array.getDouble(index))
+        ReadableType.String -> json.put(array.getString(index) ?: "")
+        ReadableType.Map -> json.put(writableToJson(array.getMap(index) ?: continue))
+        ReadableType.Array -> json.put(writableToArray(array.getArray(index) ?: continue))
+        else -> json.put(JSONObject.NULL)
+      }
+    }
+    return json
+  }
+
+  /** 原生执行命令需要的配对上下文；缺任一项就不接手，留给 JS。 */
+  private fun pairContext(): Pair<String, String>? {
+    val pairId = prefs.getString(PREF_PAIR_ID, "")?.trim().orEmpty()
+    val peerPublicB64 = prefs.getString(PREF_PEER_PUB, "")?.trim().orEmpty()
+    if (pairId.isEmpty() || peerPublicB64.isEmpty()) return null
+    return pairId to peerPublicB64
   }
 
   /** 首次启动（没有游标）时只提醒最近发生的事，历史积压只确认不打扰。 */
@@ -449,24 +736,61 @@ class QiLinkService : Service() {
     const val PREFS = "qi.link"
     const val PREF_CURSOR = "cursor"
 
+    /** 配对上下文：由 JS 在配对成功后写进来，原生执行只读命令时要用。 */
+    const val PREF_PAIR_ID = "pair_id"
+    const val PREF_PEER_PUB = "peer_pub"
+
     const val ACTION_START = "com.inorinal.qi.link.START"
     const val ACTION_STOP = "com.inorinal.qi.link.STOP"
     const val EXTRA_TOKEN = "token"
     const val EXTRA_BASE_URL = "baseUrl"
 
+    private const val TAG = "QiLink"
     private const val SECRETS_PREFS = "qi.secrets"
     private const val TOKEN_KEY = "account.token"
     private const val POLL_WAIT_SECONDS = 30
     private const val PAGE_LIMIT = 50
     private const val MAX_NOTIFICATIONS_PER_PAGE = 3
 
+    /** location.get 冷启动可能花掉定位引擎的 12 秒，20 秒是它的上限加余量。 */
+    private const val COMMAND_TIMEOUT_MS = 20_000L
+
     private const val KIND_TASK_CREATE = "task.create"
     private const val KIND_TASK_VERDICT = "task.verdict"
     private const val KIND_REWARD_GRANT = "reward.grant"
     private const val KIND_COMMAND_SEND = "command.send"
+    private const val KIND_COMMAND_REPLY = "command.reply"
+
+    private const val KIND_LOCATION_GET = "location.get"
+    private const val KIND_USAGE_STATS = "usage.stats"
+    private const val KIND_PERMISSIONS_SNAPSHOT = "permissions.snapshot"
+    private const val KIND_APP_LIMIT = "app.limit"
+    private const val KIND_GUARD_LOCK = "guard.lock"
+
+    /** 只有这三个只读命令值得原生抢在 JS 前面执行。 */
+    private val NATIVE_COMMAND_KINDS =
+      setOf(KIND_LOCATION_GET, KIND_USAGE_STATS, KIND_PERMISSIONS_SNAPSHOT, KIND_GUARD_LOCK)
+
+    /** 与 JS 侧 `notifyLocationViewed` 用同一个 id，重复时是「更新」。 */
+    private const val NOTICE_LOCATION_VIEWED = "qi.location.viewed"
 
     private val NOTIFY_KINDS =
       setOf(KIND_TASK_CREATE, KIND_TASK_VERDICT, KIND_REWARD_GRANT, KIND_COMMAND_SEND)
+
+    /**
+     * 写入配对上下文（只写 prefs，服务每轮轮询前自己读，不需要 IPC）。
+     *
+     * 两个值都不是秘密：pairId 是配对编号，公钥本来就是公开的；真正的设备
+     * 私钥仍然只在 Keystore 里，解密时现取。
+     */
+    fun setPairContext(context: Context, pairId: String, peerPublicB64: String) {
+      context
+        .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putString(PREF_PAIR_ID, pairId)
+        .putString(PREF_PEER_PUB, peerPublicB64)
+        .apply()
+    }
 
     /** 与 JS 侧 alerts.ts 用同一个 id，重复时是「更新」而不是「再来一条」。 */
     fun noticeId(seq: Long): String = "qi.link.$seq"
@@ -481,6 +805,10 @@ class QiLinkService : Service() {
 
     /** 本轮是否还有积压（JS 只读展示用，不影响行为）。 */
     @Volatile var remainingBacklog: Boolean = false
+
+    /** 最近一次原生命令执行的时间 / 失败类名：只进 status，不含参数与坐标。 */
+    @Volatile private var lastCommandAt: Long = 0L
+    @Volatile private var lastCommandError: String = ""
 
     fun isRunning(): Boolean = instance != null
 
@@ -502,10 +830,10 @@ class QiLinkService : Service() {
     }
 
     fun snapshot(context: Context): Map<String, Any?> {
-      val cursor =
-        context
-          .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-          .getLong(PREF_CURSOR, 0L)
+      val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      val cursor = prefs.getLong(PREF_CURSOR, 0L)
+      val pairId = prefs.getString(PREF_PAIR_ID, "")?.trim().orEmpty()
+      val peerPublicB64 = prefs.getString(PREF_PEER_PUB, "")?.trim().orEmpty()
       return linkedMapOf(
         "running" to isRunning(),
         "foreground" to foreground,
@@ -513,6 +841,10 @@ class QiLinkService : Service() {
         "lastPollAt" to lastPollAt,
         "lastError" to lastError,
         "backlog" to remainingBacklog,
+        // JS 只有看到 true 才敢把只读命令让给原生：否则没人执行。
+        "pairReady" to (pairId.isNotEmpty() && peerPublicB64.isNotEmpty()),
+        "lastCommandAt" to lastCommandAt,
+        "lastCommandError" to lastCommandError,
       )
     }
   }

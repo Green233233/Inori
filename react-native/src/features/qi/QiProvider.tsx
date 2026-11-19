@@ -38,6 +38,7 @@ import type {
 } from '../../data/pairTypes';
 import {
   ensureIdentity,
+  openJson,
   sha256Text,
   shortAuthString,
 } from '../../crypto/Crypto';
@@ -57,12 +58,16 @@ import {
   qiWidget,
 } from '../../native/QiDevice';
 import {syncJournal, SyncResult} from '../../sync/partnerStore';
+import {handleAppLimit, sendAppLimit} from '../../sync/appLimit';
+import {qiLimits} from '../../native/QiLimits';
+import type {AppLimitRules} from '../../native/QiLimits';
 import {configureReminders} from '../../sync/reminders';
 import {scanAlerts} from '../../sync/alerts';
 import {refreshTasks} from '../../sync/tasks';
 import {
   CommandKind,
   CommandReply,
+  RelayItem,
   executeCommand,
   handleReply,
   pollRelay,
@@ -79,6 +84,73 @@ interface PairResponse {
   pair: PairSummary;
   bindingCode?: string;
   codeExpiresAt?: string;
+}
+
+/**
+ * 这三个只读命令也由常驻服务在原生侧执行并回包（见 QiLinkService）。
+ *
+ * JS 再执行一遍的代价很实在：一次多余定位（最坏 12 秒 + 一次 GPS），而且
+ * 主人会收到两份 id 相同的回复，第二份只会被 handleReply 丢掉。
+ */
+const NATIVE_COMMAND_KINDS = new Set<CommandKind>([
+  'location.get',
+  'usage.stats',
+  'permissions.snapshot',
+]);
+
+/** 常驻服务此刻是否在替我们收命令，并且真的握着配对上下文。 */
+async function nativeLinkRunning(): Promise<boolean> {
+  if (!qiLink.available) {
+    return false;
+  }
+  try {
+    const status = await qiLink.status();
+    // pairReady 缺省按 false 处理：没有上下文时原生只能提醒、不能执行，
+    // 这时候 JS 必须自己上手，否则这条命令就没人答了。
+    return status.running && status.pairReady === true;
+  } catch {
+    // 模块缺失或桥断了：继续走 JS 的老路径，不能因此漏执行。
+    return false;
+  }
+}
+
+/**
+ * 只解密头部拿 kind，不执行。
+ *
+ * 消息本来就要在 executeCommand 里再解一次；这里多解一次只是为了知道
+ * 「原生会不会接手」。解不开就当作不接手，让 executeCommand 按老逻辑吞掉。
+ */
+async function peekCommandKind(
+  pair: PairSummary,
+  item: RelayItem,
+): Promise<CommandKind | null> {
+  if (!pair.peerPubkey) {
+    return null;
+  }
+  try {
+    const request = await openJson<{kind?: string}>(
+      pair.pairId,
+      pair.peerPubkey,
+      JSON.parse(item.ciphertext),
+    );
+    return typeof request?.kind === 'string'
+      ? (request.kind as CommandKind)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 原生已接手这条只读命令时，JS 必须放手，否则会重复执行。 */
+async function isHandledByNative(
+  pair: PairSummary,
+  item: RelayItem,
+): Promise<boolean> {
+  if (!(await nativeLinkRunning())) {
+    return false;
+  }
+  const kind = await peekCommandKind(pair, item);
+  return kind !== null && NATIVE_COMMAND_KINDS.has(kind);
 }
 
 interface QiContextValue {
@@ -119,6 +191,8 @@ interface QiContextValue {
   setAutoRules: (rules: AutoRule[]) => Promise<void>;
   /** 装扮：本地观感 + 桌面小组件文案，同步推一次 widget。 */
   setAppearance: (next: Appearance) => Promise<void>;
+  /** 应用限制：本机落一份镜像，同时把名单推给对方（主人下发 / 小狗回报关闭）。 */
+  sendAppLimit: (rules: AppLimitRules) => Promise<void>;
   syncNow: () => Promise<SyncResult | null>;
   lastSyncAt: number;
 }
@@ -520,6 +594,21 @@ export function QiProvider({children}: {children: React.ReactNode}) {
     [patch, run],
   );
 
+  const sendAppLimitAction = useCallback(
+    (rules: AppLimitRules) =>
+      run(async () => {
+        const current = await loadQiState();
+        if (!current.pair) {
+          throw new Error('还没有完成配对，无法下发应用限制');
+        }
+        // 先在自己这台设备上落一份镜像，界面立刻能看到名单，
+        // 对方离线时也不会出现「保存了但什么都没有」的错觉。
+        await qiLimits.setRules(rules).catch(() => false);
+        await sendAppLimit(current.pair, rules);
+      }),
+    [run],
+  );
+
   // 启动时把已保存的规则重新镜像一遍：重装/进程重启后原生侧不至于丢规则。
   const autoRulesRef = useRef(state.autoRules);
   useEffect(() => {
@@ -568,12 +657,22 @@ export function QiProvider({children}: {children: React.ReactNode}) {
               continue;
             }
             if (item.kind === 'command.send') {
+              // 常驻服务在跑时，只读命令它已经解密执行并回包了；这里跳过，
+              // 否则同一条命令会被执行两次（多一次定位、多一份回包）。
+              if (await isHandledByNative(current.pair, item)) {
+                continue;
+              }
               await executeCommand(current.pair, item, {
                 allowOverlay: current.allowOverlay,
                 allowUsage: current.allowUsage,
               }).catch(() => undefined);
             } else if (item.kind === 'command.reply') {
               await handleReply(current.pair, item).catch(() => undefined);
+            } else if (
+              item.kind === 'app.limit' ||
+              item.kind === 'app.limit.ack'
+            ) {
+              await handleAppLimit(current.pair, item).catch(() => undefined);
             }
           }
           if (page.items.length > 0) {
@@ -641,6 +740,15 @@ export function QiProvider({children}: {children: React.ReactNode}) {
         return;
       }
       await qiLink.start(token, getServerUrl()).catch(() => undefined);
+      // 服务靠这份上下文在 JS 不在时解密并回答只读命令；重新读一次状态，
+      // 保证刚换过/刚补上的公钥也能同步过去。
+      const latest = await loadQiState().catch(() => null);
+      const pair = latest?.pair;
+      if (!cancelled && pair?.pairId && pair.peerPubkey) {
+        await qiLink
+          .setPairContext(pair.pairId, pair.peerPubkey)
+          .catch(() => undefined);
+      }
     };
     start().catch(() => undefined);
     // 从后台回来时再确认一次：系统可能已经把服务回收并重建失败。
@@ -653,7 +761,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
       cancelled = true;
       subscription.remove();
     };
-  }, [stage, state.pair?.myRole, state.pair?.pairId]);
+  }, [stage, state.pair?.myRole, state.pair?.pairId, state.pair?.peerPubkey]);
 
   const runCommand = useCallback(
     async (kind: CommandKind, args?: Record<string, unknown>) => {
@@ -713,6 +821,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
       setPolicy,
       setAutoRules,
       setAppearance,
+      sendAppLimit: sendAppLimitAction,
       runCommand,
       syncNow,
       lastSyncAt,
@@ -744,6 +853,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
       runCommand,
       syncNow,
       lastSyncAt,
+      sendAppLimitAction,
     ],
   );
 

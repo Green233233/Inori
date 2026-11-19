@@ -1,0 +1,41 @@
+[Unit]
+Description=Inorinal (Qi) self-hosted server
+Documentation=https://github.com/inorinal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=inorinal
+Group=inorinal
+WorkingDirectory=/opt/inorinal/app
+ExecStart=/opt/inorinal/venv/bin/python /opt/inorinal/app/run.py --host 127.0.0.1 --port 8095 --data-dir /var/lib/inorinal
+
+# 异常退出自动拉起；restart 之间留 3s 避免瞬间打爆日志。
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+
+# 沙箱：代码目录只读，只有数据目录可写。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/inorinal
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+PrivateDevices=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# 不把 .pyc 写进只读的 /opt/inorinal/app。
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=inorinal
+
+[Install]
+WantedBy=multi-user.target

@@ -121,6 +121,82 @@ export interface UsageAggregate {
   generatedAt: number;
 }
 
+/** byCategory 的固定 key；中文标签由原生侧给出，这里只约束 key。 */
+export type UsageCategoryKey =
+  | 'social'
+  | 'media'
+  | 'music'
+  | 'game'
+  | 'tools'
+  | 'uncategorized';
+
+export interface UsageCategory {
+  key: UsageCategoryKey;
+  label: string;
+  minutes: number;
+}
+
+export interface UsageAppEntry {
+  pkg: string;
+  label: string;
+  minutes: number;
+  sessions: number;
+  /** 48dp PNG 的 data URL；原生侧拿不到图标时为 null。 */
+  icon: string | null;
+}
+
+/** 单日明细的公共部分：dayStats 的一天、rangeStats 里的一天都是这个形状。 */
+export interface UsageDaySummary {
+  /** 本地零点；原生侧会把传入时间归一到 0 点后回传。 */
+  dayStartMs: number;
+  totalMinutes: number;
+  /** 24 项，perHour[3] 是 03:00-04:00 的分钟数。 */
+  perHour: number[];
+  byCategory: UsageCategory[];
+  /** 最多 12 个，按分钟降序。 */
+  apps: UsageAppEntry[];
+}
+
+export interface UsageDayStats extends UsageDaySummary {
+  ok: true;
+}
+
+export interface UsageRangeStats {
+  ok: true;
+  totalMinutes: number;
+  /** days[0] 是今天，数组往后倒推。 */
+  days: UsageDaySummary[];
+}
+
+export interface UsageSession {
+  pkg: string;
+  label: string;
+  startMs: number;
+  endMs: number;
+  /** 一位小数：几十秒的一次打开也有值，不会全是 0。 */
+  minutes: number;
+  /** 查询窗口结束时还没等到 ACTIVITY_PAUSED，已裁剪到窗口末尾。 */
+  open: boolean;
+}
+
+export interface UsageSessions {
+  ok: true;
+  sessions: UsageSession[];
+}
+
+export interface InstalledApp {
+  pkg: string;
+  label: string;
+  /** 从 MAIN/LAUNCHER intent 解析出来的，所以目前恒为 true。 */
+  launchable: boolean;
+  icon: string | null;
+}
+
+export interface InstalledApps {
+  ok: true;
+  apps: InstalledApp[];
+}
+
 export interface ScreenshotStatus {
   apiLevel: number;
   standingEnabled: boolean;
@@ -266,6 +342,10 @@ type UsageApi = {
   queryUsageStats(interval: string, days: number): Promise<UsageBlock>;
   queryEvents(days: number): Promise<UsageBlock>;
   aggregate(): Promise<UsageAggregate>;
+  dayStats(dayStartMs: number): Promise<UsageDayStats>;
+  rangeStats(days: number): Promise<UsageRangeStats>;
+  sessions(fromMs: number, toMs: number): Promise<UsageSessions>;
+  installedApps(): Promise<InstalledApps>;
 };
 
 type ScreenshotApi = {
@@ -330,12 +410,16 @@ export type LinkStatus = {
   lastPollAt: number;
   lastError: string;
   backlog: boolean;
+  /** 原生是否已经有 pairId/公钥：没有就不该把只读命令让给它。 */
+  pairReady?: boolean;
 };
 
 type LinkApi = {
   start(token: string, baseUrl: string): Promise<boolean>;
   stop(): Promise<boolean>;
   status(): Promise<LinkStatus>;
+  /** 配对上下文：常驻服务在没有 JS 时执行只读命令要用。 */
+  setPairContext(pairId: string, peerPublicB64: string): Promise<boolean>;
 };
 
 const permissionsModule = NativeModules.QiDevicePermissions as
@@ -485,6 +569,17 @@ export const qiUsageStats = {
     requireUsage().queryEvents(days),
   /** One round trip for 今日 / 近 7 天 / Top 8. */
   aggregate: (): Promise<UsageAggregate> => requireUsage().aggregate(),
+  /** 指定某一天（本地 0 点的毫秒时间戳）的完整统计：每小时、分类、Top 12 应用。 */
+  dayStats: (dayStartMs: number): Promise<UsageDayStats> =>
+    requireUsage().dayStats(dayStartMs),
+  /** 从今天往前连续 N 天（1..30，原生侧夹取），days[0] 是今天。 */
+  rangeStats: (days: number): Promise<UsageRangeStats> =>
+    requireUsage().rangeStats(days),
+  /** 时间窗内的会话明细，用于轨迹时间轴；跨窗口的会话会被裁剪并标记 open。 */
+  sessions: (fromMs: number, toMs: number): Promise<UsageSessions> =>
+    requireUsage().sessions(fromMs, toMs),
+  /** 有启动图标的已安装应用（Android 11+ 需 manifest 的 queries 才能解析）。 */
+  installedApps: (): Promise<InstalledApps> => requireUsage().installedApps(),
 };
 
 export const qiScreenshot = {
@@ -592,6 +687,14 @@ export const qiLink = {
     requireLink().start(token, baseUrl),
   stop: (): Promise<boolean> => requireLink().stop(),
   status: (): Promise<LinkStatus> => requireLink().status(),
+  /**
+   * 把「用哪个 pairId、加密给谁」交给常驻服务。App 被划掉后 JS 的轮询不在，
+   * 定位 / 使用时长 / 权限快照这三个只读命令由原生直接执行并回包。
+   */
+  setPairContext: (
+    pairId: string,
+    peerPublicB64: string,
+  ): Promise<boolean> => requireLink().setPairContext(pairId, peerPublicB64),
 };
 
 export const qiDevice = {

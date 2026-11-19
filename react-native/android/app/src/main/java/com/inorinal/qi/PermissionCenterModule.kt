@@ -33,35 +33,23 @@ import com.facebook.react.bridge.ReadableArray
  *    removed by us (via the system's own confirmation dialog); battery
  *    optimisation, notification access and overlay have no programmatic
  *    "ungrant", so we report `needsUserAction` instead of pretending.
+ *  - The checks themselves live in the companion object and take a [Context],
+ *    so [QiLinkService] can answer `permissions.snapshot` without a running
+ *    React bridge (and without a second copy of these rules).
  */
 class PermissionCenterModule(reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
 
   override fun getName(): String = "QiDevicePermissions"
 
-  /** Keys are the contract with `QiDevice.ts`; order drives the settings list. */
-  private val keys =
-    listOf(
-      KEY_DEVICE_ADMIN,
-      KEY_ACCESSIBILITY,
-      KEY_USAGE_ACCESS,
-      KEY_OVERLAY,
-      KEY_BATTERY_UNRESTRICTED,
-      KEY_NOTIFICATION_LISTENER,
-      KEY_EXACT_ALARM,
-      KEY_LOCATION,
-      KEY_PHOTO_SHARE,
-      KEY_SCREEN_CAPTURE_STANDING
-    )
-
   @ReactMethod
   fun getSnapshot(promise: Promise) {
     try {
       val array = Arguments.createArray()
-      keys.forEach { key ->
+      snapshot(reactApplicationContext).forEach { row ->
         val map = Arguments.createMap()
-        map.putString("key", key)
-        map.putBoolean("granted", isGranted(key))
+        map.putString("key", row.first)
+        map.putBoolean("granted", row.second)
         array.pushMap(map)
       }
       promise.resolve(array)
@@ -75,7 +63,7 @@ class PermissionCenterModule(reactContext: ReactApplicationContext) :
     try {
       val map = Arguments.createMap()
       map.putString("key", key)
-      map.putBoolean("granted", isGranted(key))
+      map.putBoolean("granted", isGranted(reactApplicationContext, key))
       map.putBoolean("revocable", key == KEY_DEVICE_ADMIN)
       promise.resolve(map)
     } catch (error: Exception) {
@@ -91,7 +79,7 @@ class PermissionCenterModule(reactContext: ReactApplicationContext) :
   @ReactMethod
   fun openSettings(key: String, promise: Promise) {
     try {
-      val intent = settingsIntent(key)
+      val intent = settingsIntent(reactApplicationContext, key)
       if (intent == null) {
         promise.resolve(false)
         return
@@ -134,7 +122,7 @@ class PermissionCenterModule(reactContext: ReactApplicationContext) :
     var launched = false
     for (index in 0 until keys.size()) {
       val key = keys.getString(index) ?: continue
-      val intent = settingsIntent(key) ?: continue
+      val intent = settingsIntent(reactApplicationContext, key) ?: continue
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       launched = runCatching { reactApplicationContext.startActivity(intent) }.isSuccess
       break
@@ -147,214 +135,220 @@ class PermissionCenterModule(reactContext: ReactApplicationContext) :
     val result = Arguments.createMap()
     result.putString("key", key)
     if (key == KEY_DEVICE_ADMIN) {
+      // An app may always drop its own admin rights, and that is the only path
+      // that works everywhere: Android 15 no longer ships the
+      // `android.app.action.REMOVE_DEVICE_ADMIN` activity, so asking the
+      // system to open it silently does nothing.
       val removed =
         runCatching {
-            // DevicePolicyManager exposes the add action as a constant but the
-            // remove action only as a platform string, so it is written out here.
-            val intent =
-              Intent("android.app.action.REMOVE_DEVICE_ADMIN")
-                .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent())
-                .putExtra(
-                  DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                  "移除后祈将无法再锁定屏幕"
-                )
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            reactApplicationContext.startActivity(intent)
+            val manager =
+              reactApplicationContext.getSystemService(Context.DEVICE_POLICY_SERVICE)
+                as DevicePolicyManager
+            manager.removeActiveAdmin(adminComponent(reactApplicationContext))
           }
           .isSuccess
-      result.putBoolean("revoked", false) // the system asks for confirmation
-      result.putBoolean("launched", removed)
-      result.putBoolean("needsUserAction", true)
+      result.putBoolean("revoked", removed)
+      result.putBoolean("launched", false)
+      result.putBoolean("needsUserAction", false)
       promise.resolve(result)
       return
     }
     // Everything else has no programmatic revoke path; send the user there.
-    val launched = runCatching { openSettingsSync(key) }.getOrDefault(false)
+    val launched = runCatching { openSettingsSync(reactApplicationContext, key) }.getOrDefault(false)
     result.putBoolean("revoked", false)
     result.putBoolean("launched", launched)
     result.putBoolean("needsUserAction", true)
     promise.resolve(result)
   }
 
-  // ---------------------------------------------------------------- checks
-
-  private fun isGranted(key: String): Boolean =
-    when (key) {
-      KEY_DEVICE_ADMIN -> deviceAdminActive()
-      KEY_ACCESSIBILITY -> accessibilityEnabled()
-      KEY_USAGE_ACCESS -> usageAccessGranted()
-      KEY_OVERLAY -> Settings.canDrawOverlays(reactApplicationContext)
-      KEY_BATTERY_UNRESTRICTED -> batteryUnrestricted()
-      KEY_NOTIFICATION_LISTENER -> notificationListenerEnabled()
-      KEY_EXACT_ALARM -> exactAlarmAllowed()
-      KEY_LOCATION -> locationGranted()
-      KEY_PHOTO_SHARE -> photoShareGranted()
-      KEY_SCREEN_CAPTURE_STANDING -> ScreenshotModule.standingReady(reactApplicationContext)
-      else -> false
-    }
-
-  private fun adminComponent(): ComponentName =
-    ComponentName(reactApplicationContext, QiDeviceAdminReceiver::class.java)
-
-  private fun deviceAdminActive(): Boolean =
-    runCatching {
-        val manager =
-          reactApplicationContext.getSystemService(Context.DEVICE_POLICY_SERVICE)
-            as DevicePolicyManager
-        manager.isAdminActive(adminComponent())
-      }
-      .getOrDefault(false)
-
-  /**
-   * Reads the system's enabled-services list and answers "is *this package*
-   * among them". We do not declare an AccessibilityService on purpose (it would
-   * mean broad input access we refuse to hold), so today this reports false;
-   * the parser stays correct the moment a narrow service ships.
-   */
-  private fun accessibilityEnabled(): Boolean {
-    val context = reactApplicationContext
-    val enabled =
-      Settings.Secure.getString(
-        context.contentResolver,
-        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-      ) ?: return false
-    val masterOn =
-      Settings.Secure.getInt(
-        context.contentResolver,
-        Settings.Secure.ACCESSIBILITY_ENABLED,
-        0
-      ) == 1
-    if (!masterOn) return false
-    val prefix = context.packageName + "/"
-    return enabled.split(':').any { it.startsWith(prefix) }
-  }
-
-  private fun usageAccessGranted(): Boolean =
-    runCatching {
-        val appOps =
-          reactApplicationContext.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-        // unsafeCheckOpNoThrow is the API 29+ replacement for checkOpNoThrow;
-        // minSdk is 29 so no legacy branch is needed. MODE_DEFAULT means "never
-        // asked", which must read as not granted.
-        appOps.unsafeCheckOpNoThrow(
-          AppOpsManager.OPSTR_GET_USAGE_STATS,
-          Process.myUid(),
-          reactApplicationContext.packageName
-        ) == AppOpsManager.MODE_ALLOWED
-      }
-      .getOrDefault(false)
-
-  private fun batteryUnrestricted(): Boolean =
-    runCatching {
-        val power =
-          reactApplicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
-        power.isIgnoringBatteryOptimizations(reactApplicationContext.packageName)
-      }
-      .getOrDefault(false)
-
-  private fun notificationListenerEnabled(): Boolean =
-    runCatching {
-        NotificationManagerCompat.getEnabledListenerPackages(reactApplicationContext)
-          .contains(reactApplicationContext.packageName)
-      }
-      .getOrDefault(false)
-
-  /** Before API 31 exact alarms needed no permission at all. */
-  private fun exactAlarmAllowed(): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
-    return runCatching {
-        val alarm =
-          reactApplicationContext.getSystemService(Context.ALARM_SERVICE)
-            as android.app.AlarmManager
-        alarm.canScheduleExactAlarms()
-      }
-      .getOrDefault(false)
-  }
-
-  private fun locationGranted(): Boolean {
-    val context = reactApplicationContext
-    val fine =
-      ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) ==
-        PackageManager.PERMISSION_GRANTED
-    val coarse =
-      ContextCompat.checkSelfPermission(
-        context,
-        android.Manifest.permission.ACCESS_COARSE_LOCATION
-      ) == PackageManager.PERMISSION_GRANTED
-    return fine || coarse
-  }
-
-  /**
-   * Android 14 added "select photos" (partial access); that still counts as a
-   * usable photo permission for the picker, so it is accepted here.
-   */
-  private fun photoShareGranted(): Boolean {
-    val context = reactApplicationContext
-    fun granted(permission: String) =
-      ContextCompat.checkSelfPermission(context, permission) ==
-        PackageManager.PERMISSION_GRANTED
-
-    return when {
-      Build.VERSION.SDK_INT >= 34 ->
-        granted("android.permission.READ_MEDIA_IMAGES") ||
-          granted("android.permission.READ_MEDIA_VISUAL_USER_SELECTED")
-      Build.VERSION.SDK_INT >= 33 -> granted("android.permission.READ_MEDIA_IMAGES")
-      else -> granted(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-    }
-  }
-
-  // --------------------------------------------------------------- intents
-
-  private fun settingsIntent(key: String): Intent? {
-    val context = reactApplicationContext
-    val packageUri = Uri.fromParts("package", context.packageName, null)
-    return when (key) {
-      KEY_DEVICE_ADMIN ->
-        Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
-          .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent())
-          .putExtra(
-            DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-            "允许祈在你同意时锁定屏幕（仅此一项）"
-          )
-      KEY_ACCESSIBILITY -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-      KEY_USAGE_ACCESS -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
-      KEY_OVERLAY ->
-        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).setData(packageUri)
-      // REQUEST_IGNORE_BATTERY_OPTIMIZATIONS shows the one-tap exemption dialog;
-      // the generic settings page is the fallback for ROMs that hide it.
-      KEY_BATTERY_UNRESTRICTED ->
-        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).setData(packageUri)
-      KEY_NOTIFICATION_LISTENER ->
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-          Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-        } else {
-          Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-        }
-      KEY_EXACT_ALARM ->
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-          Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).setData(packageUri)
-        } else {
-          Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(packageUri)
-        }
-      // Runtime permissions cannot be granted from Settings directly; the app
-      // details page is where the user turns them on after a denial.
-      KEY_LOCATION, KEY_PHOTO_SHARE ->
-        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(packageUri)
-      // Screen capture consent is a MediaProjection dialog, never a settings
-      // toggle: JS must call ScreenshotModule.requestPermission() instead.
-      KEY_SCREEN_CAPTURE_STANDING -> null
-      else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(packageUri)
-    }
-  }
-
-  private fun openSettingsSync(key: String): Boolean {
-    val intent = settingsIntent(key) ?: return false
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    reactApplicationContext.startActivity(intent)
-    return true
-  }
-
   companion object {
+    /**
+     * Snapshot 的纯数据版本：常驻服务用它在没有 JS 时回答
+     * `permissions.snapshot`，返回顺序与设置页一致。
+     */
+    internal fun snapshot(context: Context): List<Pair<String, Boolean>> =
+      KEYS.map { key -> key to isGranted(context, key) }
+
+    internal fun isGranted(context: Context, key: String): Boolean =
+      when (key) {
+        KEY_DEVICE_ADMIN -> deviceAdminActive(context)
+        KEY_ACCESSIBILITY -> accessibilityEnabled(context)
+        KEY_USAGE_ACCESS -> usageAccessGranted(context)
+        KEY_OVERLAY -> Settings.canDrawOverlays(context)
+        KEY_BATTERY_UNRESTRICTED -> batteryUnrestricted(context)
+        KEY_NOTIFICATION_LISTENER -> notificationListenerEnabled(context)
+        KEY_EXACT_ALARM -> exactAlarmAllowed(context)
+        KEY_LOCATION -> locationGranted(context)
+        KEY_PHOTO_SHARE -> photoShareGranted(context)
+        KEY_SCREEN_CAPTURE_STANDING -> ScreenshotModule.standingReady(context)
+        else -> false
+      }
+
+    private fun adminComponent(context: Context): ComponentName =
+      ComponentName(context, QiDeviceAdminReceiver::class.java)
+
+    private fun deviceAdminActive(context: Context): Boolean =
+      runCatching {
+          val manager =
+            context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+          manager.isAdminActive(adminComponent(context))
+        }
+        .getOrDefault(false)
+
+    /**
+     * Reads the system's enabled-services list and answers "is *this package*
+     * among them". We do not declare an AccessibilityService on purpose (it would
+     * mean broad input access we refuse to hold), so today this reports false;
+     * the parser stays correct the moment a narrow service ships.
+     */
+    private fun accessibilityEnabled(context: Context): Boolean {
+      val enabled =
+        Settings.Secure.getString(
+          context.contentResolver,
+          Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+      val masterOn =
+        Settings.Secure.getInt(
+          context.contentResolver,
+          Settings.Secure.ACCESSIBILITY_ENABLED,
+          0
+        ) == 1
+      if (!masterOn) return false
+      val prefix = context.packageName + "/"
+      return enabled.split(':').any { it.startsWith(prefix) }
+    }
+
+    private fun usageAccessGranted(context: Context): Boolean =
+      runCatching {
+          val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+          // unsafeCheckOpNoThrow is the API 29+ replacement for checkOpNoThrow;
+          // minSdk is 29 so no legacy branch is needed. MODE_DEFAULT means "never
+          // asked", which must read as not granted.
+          appOps.unsafeCheckOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+          ) == AppOpsManager.MODE_ALLOWED
+        }
+        .getOrDefault(false)
+
+    private fun batteryUnrestricted(context: Context): Boolean =
+      runCatching {
+          val power = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+          power.isIgnoringBatteryOptimizations(context.packageName)
+        }
+        .getOrDefault(false)
+
+    private fun notificationListenerEnabled(context: Context): Boolean =
+      runCatching {
+          NotificationManagerCompat.getEnabledListenerPackages(context)
+            .contains(context.packageName)
+        }
+        .getOrDefault(false)
+
+    /** Before API 31 exact alarms needed no permission at all. */
+    private fun exactAlarmAllowed(context: Context): Boolean {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+      return runCatching {
+          val alarm = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+          alarm.canScheduleExactAlarms()
+        }
+        .getOrDefault(false)
+    }
+
+    private fun locationGranted(context: Context): Boolean {
+      val fine =
+        ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+          PackageManager.PERMISSION_GRANTED
+      val coarse =
+        ContextCompat.checkSelfPermission(
+          context,
+          android.Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+      return fine || coarse
+    }
+
+    /**
+     * Android 14 added "select photos" (partial access); that still counts as a
+     * usable photo permission for the picker, so it is accepted here.
+     */
+    private fun photoShareGranted(context: Context): Boolean {
+      fun granted(permission: String) =
+        ContextCompat.checkSelfPermission(context, permission) ==
+          PackageManager.PERMISSION_GRANTED
+
+      return when {
+        Build.VERSION.SDK_INT >= 34 ->
+          granted("android.permission.READ_MEDIA_IMAGES") ||
+            granted("android.permission.READ_MEDIA_VISUAL_USER_SELECTED")
+        Build.VERSION.SDK_INT >= 33 -> granted("android.permission.READ_MEDIA_IMAGES")
+        else -> granted(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+      }
+    }
+
+    private fun settingsIntent(context: Context, key: String): Intent? {
+      val packageUri = Uri.fromParts("package", context.packageName, null)
+      return when (key) {
+        KEY_DEVICE_ADMIN ->
+          Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent(context))
+            .putExtra(
+              DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+              "允许祈在你同意时锁定屏幕（仅此一项）"
+            )
+        KEY_ACCESSIBILITY -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        KEY_USAGE_ACCESS -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+        KEY_OVERLAY ->
+          Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).setData(packageUri)
+        // REQUEST_IGNORE_BATTERY_OPTIMIZATIONS shows the one-tap exemption dialog;
+        // the generic settings page is the fallback for ROMs that hide it.
+        KEY_BATTERY_UNRESTRICTED ->
+          Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).setData(packageUri)
+        KEY_NOTIFICATION_LISTENER ->
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+          } else {
+            Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+          }
+        KEY_EXACT_ALARM ->
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).setData(packageUri)
+          } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(packageUri)
+          }
+        // Runtime permissions cannot be granted from Settings directly; the app
+        // details page is where the user turns them on after a denial.
+        KEY_LOCATION, KEY_PHOTO_SHARE ->
+          Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(packageUri)
+        // Screen capture consent is a MediaProjection dialog, never a settings
+        // toggle: JS must call ScreenshotModule.requestPermission() instead.
+        KEY_SCREEN_CAPTURE_STANDING -> null
+        else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(packageUri)
+      }
+    }
+
+    private fun openSettingsSync(context: Context, key: String): Boolean {
+      val intent = settingsIntent(context, key) ?: return false
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      context.startActivity(intent)
+      return true
+    }
+
+    /** Keys are the contract with `QiDevice.ts`; order drives the settings list. */
+    private val KEYS =
+      listOf(
+        KEY_DEVICE_ADMIN,
+        KEY_ACCESSIBILITY,
+        KEY_USAGE_ACCESS,
+        KEY_OVERLAY,
+        KEY_BATTERY_UNRESTRICTED,
+        KEY_NOTIFICATION_LISTENER,
+        KEY_EXACT_ALARM,
+        KEY_LOCATION,
+        KEY_PHOTO_SHARE,
+        KEY_SCREEN_CAPTURE_STANDING
+      )
+
     const val KEY_DEVICE_ADMIN = "deviceAdmin"
     const val KEY_ACCESSIBILITY = "accessibility"
     const val KEY_USAGE_ACCESS = "usageAccess"

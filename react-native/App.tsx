@@ -33,6 +33,8 @@ import {isPartnerEntry} from './src/sync/partnerStore';
 import {PermissionCenter} from './src/features/device/PermissionCenter';
 import {ControlCenter} from './src/features/control/ControlCenter';
 import {UsageStatsScreen} from './src/features/control/UsageStatsScreen';
+import {AppLimitScreen} from './src/features/control/AppLimitScreen';
+import {showToast} from './src/components/toast';
 import {TrailScreen} from './src/features/control/Trail';
 import {AuthorizationStatus} from './src/features/device/AuthorizationStatus';
 import {PartnerLocation} from './src/features/device/PartnerLocation';
@@ -57,6 +59,7 @@ type Route =
   | {name: 'permissionCenter'}
   | {name: 'controlCenter'}
   | {name: 'usageStats'}
+  | {name: 'appLimit'}
   | {name: 'authorizationStatus'}
   | {name: 'partnerLocation'}
   | {name: 'couponDetail'; coupon: Coupon}
@@ -201,7 +204,12 @@ function AppShell({
   onSettingsChange: (next: AppSettings) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const {syncNow, lastSyncAt} = useQi();
+  const {syncNow, lastSyncAt, sendAppLimit, state: qiState} = useQi();
+  const partnerName = qiState.pair
+    ? qiState.pair.myRole === 'MASTER'
+      ? qiState.pair.puppyName
+      : qiState.pair.ownerName
+    : '对方';
   const {refresh} = useJournalData();
   const [tab, setTab] = useState<MainTabKey>('home');
   const [stack, setStack] = useState<Route[]>([]);
@@ -364,9 +372,18 @@ function AppShell({
               <ControlCenter
                 onBack={pop}
                 onOpenUsage={() => push({name: 'usageStats'})}
+                onOpenAppLimit={() => push({name: 'appLimit'})}
               />
             ) : null}
             {top.name === 'usageStats' ? <UsageStatsScreen onBack={pop} /> : null}
+            {top.name === 'appLimit' ? (
+              <AppLimitScreen
+                onBack={pop}
+                partnerName={partnerName}
+                onToast={showToast}
+                onSendRules={sendAppLimit}
+              />
+            ) : null}
             {top.name === 'authorizationStatus' ? (
               <AuthorizationStatus onBack={pop} />
             ) : null}

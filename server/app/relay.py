@@ -19,6 +19,7 @@ POLL_LIMIT = 50
 RELAY_TTL_HOURS = 7 * 24
 
 ALLOWED_KINDS = frozenset({
+    "app.limit", "app.limit.ack", "guard.lock",
     "permission.state", "power.tier", "task.create", "task.submit", "task.verdict",
     "command.send", "command.reply", "report.status", "reward.grant", "panic",
     "screenshot.request", "screenshot.consent", "screenshot.frame",

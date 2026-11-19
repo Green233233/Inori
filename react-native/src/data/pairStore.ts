@@ -9,7 +9,7 @@ import {qiCrypto, qiSecrets} from '../native/QiNative';
 import type {Appearance, AutoRule, QiState} from './pairTypes';
 import {DEFAULT_APPEARANCE} from './pairTypes';
 import type {PowerTier} from '../config';
-import {DEFAULT_SERVER_URL} from '../config';
+import {DEFAULT_SERVER_PIN, DEFAULT_SERVER_URL} from '../config';
 
 export const CONSENT_VERSION = 1;
 const TOKEN_KEY = 'account.token';
@@ -20,7 +20,7 @@ function statePath(): string {
 
 export const DEFAULT_QI_STATE: QiState = {
   serverUrl: DEFAULT_SERVER_URL,
-  pin: '',
+  pin: DEFAULT_SERVER_PIN,
   username: null,
   deviceId: '',
   pair: null,

@@ -23,9 +23,11 @@ type SheetKind = 'capture' | 'guard' | null;
 export function ControlCenter({
   onBack,
   onOpenUsage,
+  onOpenAppLimit,
 }: {
   onBack: () => void;
   onOpenUsage: () => void;
+  onOpenAppLimit: () => void;
 }) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -99,11 +101,30 @@ export function ControlCenter({
       },
     },
     {
+      key: 'limits',
+      icon: 'info' as const,
+      label: '应用限制',
+      hint: '被禁应用在小狗端全屏拦截',
+      onPress: () => {
+        onOpenAppLimit();
+      },
+    },
+    {
       key: 'message',
       icon: 'text' as const,
       label: '全屏消息',
       hint: '在小狗屏幕中央显示一句话',
       onPress: () => setMessageOpen(true),
+    },
+    {
+      key: 'lock',
+      icon: 'info' as const,
+      label: '远程锁屏',
+      hint: '让小狗的手机立刻锁上',
+      onPress: async () => {
+        const data = await call('guard.lock');
+        if (data) showToast('已让小狗的手机锁屏');
+      },
     },
     {
       key: 'guard',

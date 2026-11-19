@@ -91,6 +91,8 @@ class PuppyGuardService : Service() {
     ensureForeground(if (projectionActive) baselineType() or MEDIA_PROJECTION_TYPE else baselineType())
     startLoop()
     registerReceivers()
+    // 应用限制跟随常驻服务启停：服务活着就可能拦截，服务结束就撤掉浮层。
+    AppLimitWatcher.start(this)
     running = true
     startedAt = System.currentTimeMillis()
     wakeLoop()
@@ -122,6 +124,7 @@ class PuppyGuardService : Service() {
     }
     loopThread = null
     unregisterReceivers()
+    AppLimitWatcher.stop(this)
     endProjectionInternal(demote = false)
   }
 
