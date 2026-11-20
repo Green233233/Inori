@@ -432,6 +432,43 @@ class QiLinkService : Service() {
         }
         writableToJson(QiUsageAggregator.aggregate(this))
       }
+      // 「使用时长」页与轨迹页用的是分日/分段命令，原来只在小狗端 JS 里实现，
+      // 他没打开祈的时候主人端只能等到 40 秒超时。这三个走和 usage.stats 同一套
+      // 事件流聚合（QiUsageReport → UsageStatsModule），后台也能回包。
+      KIND_USAGE_DAY -> {
+        if (!QiUsageAggregator.hasUsageAccess(this)) {
+          throw IllegalStateException("没有「使用情况访问」权限")
+        }
+        val args = request.optJSONObject("args")
+        val dayStart =
+          args?.optDouble("dayStartMs", 0.0)?.toLong()?.takeIf { it > 0 }
+            ?: java.util.Calendar.getInstance()
+              .apply {
+                set(java.util.Calendar.HOUR_OF_DAY, 0)
+                set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+              }
+              .timeInMillis
+        writableToJson(QiUsageReport.day(dayStart))
+      }
+      KIND_USAGE_RANGE -> {
+        if (!QiUsageAggregator.hasUsageAccess(this)) {
+          throw IllegalStateException("没有「使用情况访问」权限")
+        }
+        val days = request.optJSONObject("args")?.optInt("days", 7) ?: 7
+        writableToJson(QiUsageReport.range(days))
+      }
+      KIND_USAGE_SESSIONS -> {
+        if (!QiUsageAggregator.hasUsageAccess(this)) {
+          throw IllegalStateException("没有「使用情况访问」权限")
+        }
+        val args = request.optJSONObject("args")
+        val now = System.currentTimeMillis()
+        val from = args?.optDouble("fromMs", 0.0)?.toLong()?.takeIf { it > 0 } ?: (now - 24 * 60 * 60 * 1000L)
+        val to = args?.optDouble("toMs", 0.0)?.toLong()?.takeIf { it > 0 } ?: now
+        writableToJson(QiUsageReport.sessions(from, to))
+      }
       KIND_PERMISSIONS_SNAPSHOT -> permissionSnapshotJson()
       KIND_GUARD_LOCK -> lockDeviceNow()
       KIND_OVERLAY_SHOW -> showFullscreenMessage(request)
@@ -535,7 +572,8 @@ class QiLinkService : Service() {
       error is InterruptedException -> "执行超时，稍后再试"
       error is IllegalStateException && kind == KIND_LOCATION_GET ->
         "缺少定位权限，请在系统设置里给「祈」开启定位"
-      error is IllegalStateException && kind == KIND_USAGE_STATS ->
+      error is IllegalStateException && kind in
+        setOf(KIND_USAGE_STATS, KIND_USAGE_DAY, KIND_USAGE_RANGE, KIND_USAGE_SESSIONS) ->
         "小狗端没有「使用情况访问」权限"
       else -> error.message ?: "执行失败"
     }
@@ -816,6 +854,9 @@ class QiLinkService : Service() {
 
     private const val KIND_LOCATION_GET = "location.get"
     private const val KIND_USAGE_STATS = "usage.stats"
+    private const val KIND_USAGE_DAY = "usage.day"
+    private const val KIND_USAGE_RANGE = "usage.range"
+    private const val KIND_USAGE_SESSIONS = "usage.sessions"
     private const val KIND_PERMISSIONS_SNAPSHOT = "permissions.snapshot"
     private const val KIND_APP_LIMIT = "app.limit"
     private const val KIND_GUARD_LOCK = "guard.lock"
@@ -833,6 +874,9 @@ class QiLinkService : Service() {
       setOf(
         KIND_LOCATION_GET,
         KIND_USAGE_STATS,
+        KIND_USAGE_DAY,
+        KIND_USAGE_RANGE,
+        KIND_USAGE_SESSIONS,
         KIND_PERMISSIONS_SNAPSHOT,
         KIND_GUARD_LOCK,
         KIND_OVERLAY_SHOW,

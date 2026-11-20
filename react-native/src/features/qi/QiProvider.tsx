@@ -96,6 +96,11 @@ interface PairResponse {
 const NATIVE_COMMAND_KINDS = new Set<CommandKind>([
   'location.get',
   'usage.stats',
+  // v0.6.8：「使用时长」页与轨迹页按天/按段取数，这三个也必须由原生接手，
+  // 否则小狗端没打开祈的时候只能等到 40 秒超时。
+  'usage.day',
+  'usage.range',
+  'usage.sessions',
   'permissions.snapshot',
 ]);
 

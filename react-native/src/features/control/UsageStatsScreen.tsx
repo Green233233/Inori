@@ -77,24 +77,38 @@ export function UsageStatsScreen({onBack}: {onBack: () => void}) {
     async (silent = false) => {
       setBusy(true);
       try {
-        const [dayReply, prevReply, weekReply] = await Promise.all([
+        // v0.6.8：三条命令以前用 Promise.all，只要其中一条（比如 7 天汇总
+        // 在小狗端算得慢一点）没回包，整页就只剩「对方没有响应」——明明当天
+        // 的数据已经拿到了。改成 allSettled：能显示多少显示多少，只有三条全
+        // 失败才报错。
+        const [dayResult, prevResult, weekResult] = await Promise.allSettled([
           runCommand('usage.day', {dayStartMs}),
           runCommand('usage.day', {dayStartMs: dayStartMs - DAY_MS}),
           runCommand('usage.range', {days: 7}),
         ]);
         refreshPair().catch(() => undefined);
-        if (!dayReply.ok) {
+        const dayReply = dayResult.status === 'fulfilled' ? dayResult.value : null;
+        const prevReply = prevResult.status === 'fulfilled' ? prevResult.value : null;
+        const weekReply = weekResult.status === 'fulfilled' ? weekResult.value : null;
+
+        if (!dayReply?.ok) {
           setDay(null);
           setPrevDay(null);
           setWeek(null);
-          setHint(dayReply.error ?? '小狗端没有返回数据');
+          const allFailed = !prevReply?.ok && !weekReply?.ok;
+          const firstError =
+            (dayReply && !dayReply.ok && dayReply.error) ||
+            (dayResult.status === 'rejected' && (dayResult.reason as any)?.message);
+          setHint(
+            allFailed || !firstError
+              ? firstError || '小狗端没有返回数据'
+              : firstError,
+          );
           return;
         }
         setDay(dayReply.data as UsageDaySummary);
-        setPrevDay(
-          prevReply.ok ? (prevReply.data as UsageDaySummary) : null,
-        );
-        setWeek(weekReply.ok ? (weekReply.data as UsageRangeStats) : null);
+        setPrevDay(prevReply?.ok ? (prevReply.data as UsageDaySummary) : null);
+        setWeek(weekReply?.ok ? (weekReply.data as UsageRangeStats) : null);
         setHint(null);
       } catch (error: any) {
         setDay(null);

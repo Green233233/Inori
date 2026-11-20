@@ -47,6 +47,8 @@ class UsageStatsModule(reactContext: ReactApplicationContext) :
   private val io = Executors.newSingleThreadExecutor { runnable ->
     Thread(runnable, "qi-usage").apply { isDaemon = true }
   }
+
+  init { QiUsageReport.attach(this) }
   private val labels = HashMap<String, String>()
   private val labelsLock = Any()
 
@@ -184,6 +186,18 @@ class UsageStatsModule(reactContext: ReactApplicationContext) :
         promise.reject("usage_failed", error.message ?: "读取应用列表失败", error)
       }
     }
+  }
+
+  // 原生指令通道（QiLinkService）复用同一套聚合，避免两套口径。
+  internal fun linkDayStats(dayStartMs: Long): WritableMap = dayStatsBlock(dayStartMs)
+
+  internal fun linkRangeStats(days: Int): WritableMap = rangeStatsBlock(days)
+
+  internal fun linkSessions(fromMs: Long, toMs: Long): WritableMap = sessionsBlock(fromMs, toMs)
+
+  override fun invalidate() {
+    QiUsageReport.detach()
+    super.invalidate()
   }
 
   // ---------------------------------------------------------------- internals
@@ -889,4 +903,32 @@ internal object QiUsageAggregator {
         }
     return calendar.timeInMillis to System.currentTimeMillis()
   }
+}
+
+/**
+ * 原生指令通道用的聚合入口。
+ *
+ * RN 模块实例由 QiPackage 在 App 启动时创建并长期存活，这里只持一个引用，
+ * 让 QiLinkService 能直接用同一套「按事件流切会话」的实现回包，
+ * 不必把 600 行统计逻辑再抄一遍。
+ */
+internal object QiUsageReport {
+  @Volatile private var module: UsageStatsModule? = null
+
+  fun attach(instance: UsageStatsModule) {
+    module = instance
+  }
+
+  fun detach() {
+    module = null
+  }
+
+  private fun require(): UsageStatsModule =
+    module ?: throw IllegalStateException("使用数据模块还没准备好，请先打开一次祈")
+
+  fun day(dayStartMs: Long): WritableMap = require().linkDayStats(dayStartMs)
+
+  fun range(days: Int): WritableMap = require().linkRangeStats(days)
+
+  fun sessions(fromMs: Long, toMs: Long): WritableMap = require().linkSessions(fromMs, toMs)
 }
