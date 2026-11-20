@@ -215,6 +215,47 @@ class ApiTest(unittest.TestCase):
         }, expect=401)
         client.call("GET", "/api/v1/auth/me", expect=200)
 
+    def test_device_can_switch_account_when_pubkey_matches(self) -> None:
+        """同一台手机换账号：公钥一致就允许把设备记录改绑到新账号。"""
+        first, device_id = self._master("switcha")
+        pubkey = "MASTER-PUBKEY-" + "A" * 40
+        invite = self._new_invite()
+        second = Client(self.base)
+        payload = second.call("POST", "/api/v1/auth/register", {
+            "username": "switchb", "password": "qi123456", "invite": invite,
+            "deviceId": device_id, "deviceName": "主人机", "platform": "test",
+            "pubkey": pubkey,
+        })
+        self.assertEqual(payload["username"], "switchb")
+        second.token = payload["token"]
+        self.assertEqual(second.call("GET", "/api/v1/auth/me")["username"], "switchb")
+
+        # 公钥不一致时仍视为别的设备占用，拒绝。
+        third = Client(self.base)
+        taken = third.call("POST", "/api/v1/auth/login", {
+            "username": "switcha", "password": "qi123456",
+            "deviceId": device_id, "pubkey": "OTHER-PUBKEY-" + "C" * 40,
+        }, expect=409)
+        self.assertEqual(taken["error"]["code"], "device_taken")
+
+    def test_register_rolls_back_user_when_device_conflicts(self) -> None:
+        """设备被别的公钥占用时，注册要整体回滚，不能留下占名的孤儿账号。"""
+        client, device_id = self._master("rollbacka")
+        other = Client(self.base)
+        invite = self._new_invite()
+        other.call("POST", "/api/v1/auth/register", {
+            "username": "rollbackb", "password": "qi123456", "invite": invite,
+            "deviceId": device_id, "pubkey": "OTHER-PUBKEY-" + "D" * 40,
+        }, expect=409)
+        # 用户名没有被占住：换个 deviceId 就能用同一个名字注册成功。
+        retry = Client(self.base)
+        invite2 = self._new_invite()
+        payload = retry.call("POST", "/api/v1/auth/register", {
+            "username": "rollbackb", "password": "qi123456", "invite": invite2,
+            "deviceId": "rollbackb-device-0002", "pubkey": "B" * 40,
+        })
+        self.assertEqual(payload["username"], "rollbackb")
+
     def test_pairing_and_sas(self) -> None:
         master, puppy, master_id, puppy_id = self._paired()
         state = puppy.call("GET", "/api/v1/pairs/current")["pair"]

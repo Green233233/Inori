@@ -48,7 +48,27 @@ def _upsert_device(db: Database, user_id: int, device_id: str, name: str,
     if row["revoked_at"]:
         raise forbidden("device_revoked", "该设备已被注销")
     if row["user_id"] != user_id:
-        raise conflict("device_taken", "该设备已绑定其他账号")
+        # 同一台手机换账号是正常操作（退出登录后用自己的账号登录）。
+        # 判断依据是设备公钥：它由保存在的 Keystore 身份生成，只有同一个
+        # 安装才会有同一把公钥。公钥不同则视为另一台设备占用，仍然拒绝，
+        # 避免有人拿着猜到的 deviceId 抢走别人的设备记录。
+        if row["pubkey"] != pubkey:
+            raise conflict(
+                "device_taken",
+                "这台设备已被另一个账号占用。请在原账号里退出登录，"
+                "或清除应用数据后重新登录",
+            )
+        conn.execute(
+            "UPDATE devices SET user_id=?, name=?, platform=? WHERE id=?",
+            (user_id, name, platform, device_id),
+        )
+        db.audit(
+            "device_rebind",
+            actor_device=device_id,
+            detail=f"{row['user_id']}->{user_id}",
+            ip=None,
+        )
+        return
     conn.execute(
         "UPDATE devices SET name=?, platform=?, pubkey=? WHERE id=?",
         (name, platform, pubkey, device_id),
@@ -95,7 +115,10 @@ def register(db: Database, body: dict, ip: str) -> dict:
     conn.execute("BEGIN IMMEDIATE")
     try:
         if conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
-            raise conflict("username_taken", "账号已存在")
+            raise conflict(
+                "username_taken",
+                "这个账号已经存在。请切到「登录」用密码登录，不用再填邀请码",
+            )
 
         used = conn.execute(
             "SELECT * FROM invites WHERE code=?", (invite,)
@@ -123,13 +146,15 @@ def register(db: Database, body: dict, ip: str) -> dict:
                 "UPDATE invites SET used_at=?, used_by=? WHERE code=?",
                 (security.iso(), user_id, invite),
             )
+        # 设备绑定与会话必须在同一个事务里：否则一旦设备被别的账号占用，
+        # 用户行已经提交，就会留下一个「注册失败但用户名被占」的孤儿账号。
+        _upsert_device(db, user_id, device_id, device_name, platform, pubkey)
+        token = _issue_session(db, user_id, device_id)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
         raise
 
-    _upsert_device(db, user_id, device_id, device_name, platform, pubkey)
-    token = _issue_session(db, user_id, device_id)
     db.audit("register", actor_device=device_id, detail=username, ip=ip)
     return {"ok": True, "token": token, "username": username,
             "deviceId": device_id}

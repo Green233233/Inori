@@ -174,6 +174,12 @@ export function AuthScreen() {
           ) : null}
         </View>
 
+        {mode === 'login' ? (
+          <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
+            邀请码只用于注册新账号；已经有账号就直接用账号和密码登录，换手机也一样。
+          </Text>
+        ) : null}
+
         {error ? (
           <View
             style={[
