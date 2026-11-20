@@ -155,6 +155,32 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(payload["downloadUrl"].startswith("https://"))
         self.assertIsInstance(payload["force"], bool)
 
+    def test_update_download_url_env_override(self) -> None:
+        """网盘直链可以只靠环境变量切换，坏值要退回默认地址。"""
+        import importlib
+        import os
+
+        from app import update as update_mod
+
+        original = os.environ.get("INORINAL_APP_DOWNLOAD_URL")
+        try:
+            os.environ["INORINAL_APP_DOWNLOAD_URL"] = "https://pan.example.com/s/abc"
+            reloaded = importlib.reload(update_mod)
+            self.assertEqual(reloaded.DOWNLOAD_URL, "https://pan.example.com/s/abc")
+            self.assertEqual(
+                reloaded.payload()["downloadUrl"], "https://pan.example.com/s/abc"
+            )
+
+            os.environ["INORINAL_APP_DOWNLOAD_URL"] = "javascript:alert(1)"
+            reloaded = importlib.reload(update_mod)
+            self.assertEqual(reloaded.DOWNLOAD_URL, reloaded.DEFAULT_DOWNLOAD_URL)
+        finally:
+            if original is None:
+                os.environ.pop("INORINAL_APP_DOWNLOAD_URL", None)
+            else:
+                os.environ["INORINAL_APP_DOWNLOAD_URL"] = original
+            importlib.reload(update_mod)
+
     def test_register_requires_invite_and_valid_password(self) -> None:
         client = Client(self.base)
         weak = client.call("POST", "/api/v1/auth/register", {

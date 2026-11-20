@@ -6,11 +6,24 @@
 
 from __future__ import annotations
 
+import os
+
 from . import VERSION
 
 # 升级包地址：网盘分享链接或仓库 Release 页都行，客户端只负责用系统浏览器打开。
-# 换成新的网盘链接时只改这一行。
-DOWNLOAD_URL = "https://github.com/Green233233/Inorinal/releases/latest"
+# 两种换法：改这一行；或部署时设环境变量 INORINAL_APP_DOWNLOAD_URL（优先，免改码）。
+DEFAULT_DOWNLOAD_URL = "https://github.com/Green233233/Inorinal/releases/latest"
+
+
+def _download_url() -> str:
+    """优先读 ``INORINAL_APP_DOWNLOAD_URL``；只接受 http(s)，否则退回默认地址。"""
+    raw = (os.environ.get("INORINAL_APP_DOWNLOAD_URL") or "").strip()
+    if raw.startswith("https://") or raw.startswith("http://"):
+        return raw
+    return DEFAULT_DOWNLOAD_URL
+
+
+DOWNLOAD_URL = _download_url()
 
 # 本次可升级版本的描述。``force`` 为 True 时客户端不给「以后再说」。
 APP_UPDATE = {
