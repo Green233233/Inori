@@ -35,6 +35,7 @@ export function AuthScreen() {
   const [pin, setPin] = useState(state.pin);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordAgain, setPasswordAgain] = useState('');
   const [invite, setInvite] = useState('');
   const [localError, setLocalError] = useState('');
 
@@ -55,6 +56,10 @@ export function AuthScreen() {
   // 邀请码和绑定码是同一套 8 位字母表（服务端 security.random_pair_code()），
   // 长度不对就一定是打错了；8 位但服务端查不到，会由服务端回 invited_* 的
   // 具体原因（是绑定码 / 需要邀请码 / 已被使用）。
+  // 注册要输两遍密码：打错一位就再也登录不上，而账号名会被永久占用。
+  const passwordMismatch =
+    mode === 'register' && passwordAgain.length > 0 && password !== passwordAgain;
+
   const inviteWrongLength =
     mode === 'register' &&
     trimmedInvite.length > 0 &&
@@ -65,6 +70,10 @@ export function AuthScreen() {
     // 再点一次会以为自己又失败了。
     clearError();
     setLocalError('');
+    if (passwordMismatch) {
+      setLocalError('两次输入的密码不一样，再对一遍呀');
+      return;
+    }
     if (inviteWrongLength) {
       setLocalError('邀请码是 8 位字符。如果你手上是绑定码，请先用账号登录，再在「绑定」页填写');
       return;
@@ -87,6 +96,7 @@ export function AuthScreen() {
     setMode(next);
     clearError();
     setLocalError('');
+    setPasswordAgain('');
   };
   const shownError = localError || error;
 
@@ -204,6 +214,24 @@ export function AuthScreen() {
           />
           {mode === 'register' ? (
             <FormField
+              label="确认密码"
+              value={passwordAgain}
+              onChangeText={value => {
+                setPasswordAgain(value);
+                clearError();
+                setLocalError('');
+              }}
+              placeholder="再输一遍刚才的密码"
+              secureTextEntry
+              hint={
+                passwordMismatch
+                  ? '两次输入不一样哦'
+                  : '打错一位就登录不上了，所以这里再确认一遍'
+              }
+            />
+          ) : null}
+          {mode === 'register' ? (
+            <FormField
               label="邀请码（第一个账号可留空）"
               value={invite}
               onChangeText={value => {
@@ -240,7 +268,14 @@ export function AuthScreen() {
         <FlatButton
           label={submitLabel}
           onPress={submit}
-          disabled={busy || !username || !password || inviteWrongLength}
+          disabled={
+            busy ||
+            !username ||
+            !password ||
+            passwordMismatch ||
+            (mode === 'register' && passwordAgain.length === 0) ||
+            inviteWrongLength
+          }
           style={styles.primary}
         />
         <TextButton

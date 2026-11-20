@@ -82,6 +82,14 @@ export interface GuardStatus {
   userPresents: number;
   failures: number;
   lastEventElapsed: number;
+  /**
+   * 无障碍保活是否在位：服务被系统绑定时才可能把死掉的守护拉回来。
+   * 只暴露布尔与时间戳，读不到任何事件内容（本来也不读）。
+   */
+  accessibilityKeepAlive?: boolean;
+  accessibility_connected?: boolean;
+  accessibility_connectedAt?: number;
+  accessibility_guardRunning?: boolean;
 }
 
 export interface GuardTick {
@@ -711,3 +719,5 @@ export const qiDevice = {
   notice: qiNotice,
   link: qiLink,
 };
+
+/** 高德腾讯你俩牛大了*/ 

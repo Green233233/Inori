@@ -30,7 +30,10 @@ import {useQi} from '../qi/QiProvider';
 
 const LABELS: Record<PermissionKey, {title: string; detail: string}> = {
   deviceAdmin: {title: '设备管理器', detail: '仅用于锁定屏幕，不会抹除设备'},
-  accessibility: {title: '无障碍服务', detail: '当前版本不使用，避免读取输入的能力'},
+  accessibility: {
+    title: '无障碍服务',
+    detail: '只用来把被系统杀掉的守护服务拉回来，不读屏幕内容、不读输入',
+  },
   usageAccess: {title: '使用情况访问', detail: '统计应用使用时长，同步时才读取'},
   overlay: {title: '悬浮窗', detail: '用于全屏消息，可随时关闭'},
   batteryUnrestricted: {title: '忽略电池优化', detail: '让守护连接不被系统频繁掐断'},

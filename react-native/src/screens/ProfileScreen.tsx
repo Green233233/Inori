@@ -41,14 +41,14 @@ export function ProfileScreen({
 }) {
   const {colors, tokens} = useAppTheme();
   const {stats, refresh} = useJournalData();
-  const {role, state} = useQi();
+  const {role, state, openSetup} = useQi();
   const heroColor = role === 'PUPPY' ? colors.secondary : colors.primary;
   const roleLabel =
     role === 'MASTER' ? '主人端' : role === 'PUPPY' ? '小狗端' : '未联结';
   const displayName =
     state.displayName ||
     state.username ||
-    (role === 'MASTER' ? '主人' : role === 'PUPPY' ? '小狗' : '还没有联结');
+    (role === 'MASTER' ? '主人' : role === 'PUPPY' ? '小狗' : '还没有联结呢');
   const avatarUri = state.avatarImagePath
     ? state.avatarImagePath.startsWith('file://')
       ? state.avatarImagePath
@@ -65,9 +65,9 @@ export function ProfileScreen({
     setBusy(true);
     try {
       await exportBackup();
-      showToast('导出成功');
+      showToast('导出成功啦');
     } catch (error: any) {
-      showToast(`导出失败: ${error?.message ?? '未知错误'}`);
+      showToast(`导出失败QAQ: ${error?.message ?? '未知错误'}`);
     } finally {
       setBusy(false);
     }
@@ -83,7 +83,7 @@ export function ProfileScreen({
       showToast(importResultMessage(result), true);
       await refresh();
     } catch (error: any) {
-      showToast(`导入失败: ${error?.message ?? '未知错误'}`);
+      showToast(`导入失败QAQ: ${error?.message ?? '未知错误'}`);
     } finally {
       setBusy(false);
     }
@@ -124,7 +124,7 @@ export function ProfileScreen({
         showsVerticalScrollIndicator={false}>
         <Text style={[type.display, {color: colors.onSurface}]}>我的</Text>
         <Text style={[type.body, {color: colors.onSurfaceVariant, marginTop: 4}]}>
-          {roleLabel} · 一对一的联结，日记只是其中一页
+          {roleLabel} · 小狗与主人天生一对永远不分开！
         </Text>
 
         <ColorField color={heroColor} radius={22} style={styles.hero}>
@@ -169,7 +169,7 @@ export function ProfileScreen({
                   ? `${state.pair.ownerName} 与 ${state.pair.puppyName} · ${
                       state.pair.verified ? '绑定已校验' : '待校验'
                     }`
-                  : '还没有联结 · 在「我的身份与联结」里完成绑定'}
+                  : '还没有联结哦 · 可以在「我的身份与联结」里完成绑定'}
               </Text>
             </View>
           </View>
@@ -236,7 +236,23 @@ export function ProfileScreen({
             last={!onOpenAppearance && !onOpenQi}
           />
           {onOpenAppearance ? (
-            <MenuRow icon="moodHappy" label="装扮" onPress={onOpenAppearance} last />
+            <MenuRow
+              icon="moodHappy"
+              label="装扮"
+              onPress={onOpenAppearance}
+              divider={state.journalOnly ? withAlpha(colors.outline, 0.25) : undefined}
+              last={!state.journalOnly}
+            />
+          ) : null}
+          {state.journalOnly ? (
+            <MenuRow
+              icon="info"
+              label="登录 / 联结"
+              onPress={() => {
+                openSetup().catch(() => undefined);
+              }}
+              last
+            />
           ) : null}
         </SoftCard>
 

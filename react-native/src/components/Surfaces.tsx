@@ -15,11 +15,21 @@ const glow = require('../assets/glow.png');
 const frost = require('../assets/frost.png');
 
 /**
- * Near-black canvas with three saturated color fields. Static textures only:
- * no live blur, no animated gradients, cheap to keep on screen.
+ * Solid canvas. Dark mode is a flat #212121 field with no glow: the user asked
+ * for a pure colour background, and the tinted glow textures made it muddy.
+ * Light mode keeps the three soft colour fields. Static textures only: no live
+ * blur, no animated gradients, cheap to keep on screen.
  */
 export function AmbientBackground() {
   const {colors, isDark} = useAppTheme();
+  if (isDark) {
+    return (
+      <View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, {backgroundColor: colors.background}]}
+      />
+    );
+  }
   return (
     <View
       pointerEvents="none"
@@ -34,7 +44,7 @@ export function AmbientBackground() {
           height: 760,
           top: -340,
           left: -280,
-          opacity: isDark ? 0.24 : 0.035,
+          opacity: 0.035,
         }}
       />
       <Image
@@ -47,7 +57,7 @@ export function AmbientBackground() {
           height: 720,
           top: '22%',
           right: -320,
-          opacity: isDark ? 0.18 : 0.025,
+          opacity: 0.025,
         }}
       />
       <Image
@@ -60,7 +70,7 @@ export function AmbientBackground() {
           height: 560,
           bottom: -260,
           left: -180,
-          opacity: isDark ? 0.10 : 0.02,
+          opacity: 0.02,
         }}
       />
     </View>

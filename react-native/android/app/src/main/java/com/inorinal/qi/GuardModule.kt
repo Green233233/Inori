@@ -79,6 +79,12 @@ class GuardModule(reactContext: ReactApplicationContext) :
           ?: Tier.BALANCED.name.lowercase()
       )
       map.putInt("failures", failures)
+      // 保活兜底是否在位：无障碍服务被系统绑定时才可能把死掉的守护拉回来。
+      // 只暴露布尔与时间戳，不暴露任何事件内容（本来也读不到）。
+      map.putBoolean("accessibilityKeepAlive", QiAccessibilityService.isRunning())
+      QiAccessibilityService.snapshot(reactApplicationContext).forEach { (key, value) ->
+        if (key != "running") put(map, "accessibility_$key", value)
+      }
       // Monotonic, not wall-clock: useful for "how long ago was the last event"
       // and immune to the user changing the device time.
       map.putDouble("lastEventElapsed", PuppyGuardService.lastEventAt.toDouble())

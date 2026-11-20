@@ -1,5 +1,5 @@
 /**
- * Pop-glass color schemes inspired by Apple Music "New" (not Apple assets):
+ * Pop-glass color schemes inspired by Apple`s design language, but NOT SAMEEEEEEEE :-)
  * near-black canvas, editorial white type, bright album-art-like color blocks.
  * Three scheme enums are kept for settings compatibility; labels/surfaces are
  * re-themed. No warm cream/paper palette and no blue-purple tech gradients.
@@ -26,6 +26,11 @@ export interface ColorScheme {
   onError: string;
 }
 
+/**
+ *The theme are named as SAKURA, MINT, PERIWINKLE, SYSTEM. 
+ *The little said she like these 3 colors, so I named the theme as these colors.:)
+ */
+
 export type ColorStyleName = 'SAKURA' | 'MINT' | 'PERIWINKLE' | 'SYSTEM';
 export type ThemeModeName = 'LIGHT' | 'DARK' | 'SYSTEM';
 
@@ -51,26 +56,34 @@ const SAKURA_LIGHT: ColorScheme = {
   onError: '#FFFFFF',
 };
 
+// 深色统一用 #212121 纯色底（用户要求），只保留经典版的暖色强调色。
+const DARK_CANVAS = '#212121';
+const DARK_SURFACE = '#2A2A2A';
+const DARK_SURFACE_VARIANT = '#333333';
+const DARK_ON = '#F2F2F2';
+const DARK_ON_VARIANT = '#B8B8B8';
+const DARK_OUTLINE = '#4D4D4D';
+
 const SAKURA_DARK: ColorScheme = {
-  primary: '#FF2D55',
-  onPrimary: '#2A0008',
-  primaryContainer: '#5C1020',
-  onPrimaryContainer: '#FFD9DE',
-  secondary: '#32D7FF',
-  onSecondary: '#003A52',
-  secondaryContainer: '#0B3B57',
-  onSecondaryContainer: '#C9F2FF',
-  tertiary: '#C6FF3D',
-  onTertiary: '#1A2400',
-  background: '#050507',
-  onBackground: '#F5F5F7',
-  surface: '#121216',
-  onSurface: '#F5F5F7',
-  surfaceVariant: '#1C1C22',
-  onSurfaceVariant: '#A1A1AA',
-  outline: '#3A3A42',
-  error: '#FF453A',
-  onError: '#2A0000',
+  primary: '#FF8B9B',
+  onPrimary: '#3A0E16',
+  primaryContainer: '#762A35',
+  onPrimaryContainer: '#FFD5D8',
+  secondary: '#FFB266',
+  onSecondary: '#3A2008',
+  secondaryContainer: '#5C3A1B',
+  onSecondaryContainer: '#FFE3C4',
+  tertiary: '#5FD0BE',
+  onTertiary: '#0C2622',
+  background: DARK_CANVAS,
+  onBackground: DARK_ON,
+  surface: DARK_SURFACE,
+  onSurface: DARK_ON,
+  surfaceVariant: DARK_SURFACE_VARIANT,
+  onSurfaceVariant: DARK_ON_VARIANT,
+  outline: DARK_OUTLINE,
+  error: '#FFB4AB',
+  onError: '#690005',
 };
 
 const MINT_LIGHT: ColorScheme = {
@@ -96,25 +109,25 @@ const MINT_LIGHT: ColorScheme = {
 };
 
 const MINT_DARK: ColorScheme = {
-  primary: '#C6FF3D',
-  onPrimary: '#1A2400',
-  primaryContainer: '#33420A',
-  onPrimaryContainer: '#E6FFC2',
-  secondary: '#64D2FF',
-  onSecondary: '#003A52',
-  secondaryContainer: '#0B3B57',
-  onSecondaryContainer: '#C9F2FF',
-  tertiary: '#FFD60A',
-  onTertiary: '#241A00',
-  background: '#050805',
-  onBackground: '#F2F7EE',
-  surface: '#10150F',
-  onSurface: '#F2F7EE',
-  surfaceVariant: '#1B241A',
-  onSurfaceVariant: '#A5B5A5',
-  outline: '#354034',
-  error: '#FF453A',
-  onError: '#2A0000',
+  primary: '#6FE0C0',
+  onPrimary: '#063028',
+  primaryContainer: '#1C5548',
+  onPrimaryContainer: '#C9F7E8',
+  secondary: '#FF9B70',
+  onSecondary: '#3A1606',
+  secondaryContainer: '#5C2C18',
+  onSecondaryContainer: '#FFD9C7',
+  tertiary: '#F2C94C',
+  onTertiary: '#3A2A02',
+  background: DARK_CANVAS,
+  onBackground: DARK_ON,
+  surface: DARK_SURFACE,
+  onSurface: DARK_ON,
+  surfaceVariant: DARK_SURFACE_VARIANT,
+  onSurfaceVariant: DARK_ON_VARIANT,
+  outline: DARK_OUTLINE,
+  error: '#FFB4AB',
+  onError: '#690005',
 };
 
 const PERIWINKLE_LIGHT: ColorScheme = {
@@ -140,25 +153,25 @@ const PERIWINKLE_LIGHT: ColorScheme = {
 };
 
 const PERIWINKLE_DARK: ColorScheme = {
-  primary: '#4DA3FF',
-  onPrimary: '#001B3A',
-  primaryContainer: '#0B2A4A',
-  onPrimaryContainer: '#C9E3FF',
-  secondary: '#FF6482',
-  onSecondary: '#3A0010',
-  secondaryContainer: '#5C1024',
-  onSecondaryContainer: '#FFD9E0',
-  tertiary: '#C6FF3D',
-  onTertiary: '#1A2400',
-  background: '#04070C',
-  onBackground: '#F2F6FC',
-  surface: '#0E141C',
-  onSurface: '#F2F6FC',
-  surfaceVariant: '#17202C',
-  onSurfaceVariant: '#9AA7B8',
-  outline: '#354254',
-  error: '#FF453A',
-  onError: '#2A0000',
+  primary: '#F2A9C6',
+  onPrimary: '#3A0F22',
+  primaryContainer: '#6B2A47',
+  onPrimaryContainer: '#FFD6E5',
+  secondary: '#6FE0C0',
+  onSecondary: '#063028',
+  secondaryContainer: '#1C5548',
+  onSecondaryContainer: '#C9F7E8',
+  tertiary: '#F2C94C',
+  onTertiary: '#3A2A02',
+  background: DARK_CANVAS,
+  onBackground: DARK_ON,
+  surface: DARK_SURFACE,
+  onSurface: DARK_ON,
+  surfaceVariant: DARK_SURFACE_VARIANT,
+  onSurfaceVariant: DARK_ON_VARIANT,
+  outline: DARK_OUTLINE,
+  error: '#FFB4AB',
+  onError: '#690005',
 };
 
 export const SCHEMES: Record<
@@ -186,6 +199,29 @@ export const ACCENT = {
   darkGrey: '#111114',
   white: '#FFFFFF',
 };
+
+/** Hex -> RGB triple. Assumes a well-formed `#RRGGBB` string. */
+function parseHex(hex: string): [number, number, number] {
+  const clean = hex.replace('#', '');
+  return [
+    parseInt(clean.slice(0, 2), 16),
+    parseInt(clean.slice(2, 4), 16),
+    parseInt(clean.slice(4, 6), 16),
+  ];
+}
+
+/** Linear per-channel blend, used for the neutral dark surfaces. */
+export function mixColor(from: string, to: string, ratio: number): string {
+  const a = parseHex(from);
+  const b = parseHex(to);
+  const out = a.map((value, index) =>
+    Math.round(value + (b[index] - value) * ratio),
+  );
+  return `#${out
+    .map(channel => channel.toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase()}`;
+}
 
 /** Pick white or near-black text/icon for a solid accent block. */
 export function onAccentFor(hex: string): string {
@@ -231,18 +267,23 @@ export function buildSurfaces(
   isDark: boolean,
 ): SurfaceTokens {
   return {
-    raised: isDark ? colors.surfaceVariant : '#FFFFFF',
-    raisedAlt: isDark ? '#23232B' : '#F7F7FA',
-    sunken: isDark ? '#0B0B0E' : '#EDEDF2',
-    glass: withAlpha(isDark ? '#0C0C11' : '#FFFFFF', isDark ? 0.72 : 0.80),
-    glassStrong: withAlpha(isDark ? '#111116' : '#FFFFFF', isDark ? 0.97 : 0.98),
-    highlight: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.92)',
+    // 浅色沿用原来的玻璃/纸质层级；深色只保留中性灰阶，配合纯色 #212121 画布。
+    raised: isDark ? mixColor(colors.surface, '#FFFFFF', 0.05) : '#FFFFFF',
+    raisedAlt: isDark ? mixColor(colors.surface, '#000000', 0.18) : '#F7F7FA',
+    sunken: isDark ? mixColor(colors.background, '#000000', 0.18) : '#EDEDF2',
+    glass: withAlpha(isDark ? colors.background : '#FFFFFF', isDark ? 0.66 : 0.80),
+    glassStrong: withAlpha(
+      isDark ? colors.surface : '#FFFFFF',
+      isDark ? 0.94 : 0.98,
+    ),
+    highlight: isDark ? 'rgba(255,255,255,0.11)' : 'rgba(255,255,255,0.92)',
     highlightSoft: isDark
-      ? 'rgba(255,255,255,0.07)'
+      ? 'rgba(255,255,255,0.055)'
       : 'rgba(255,255,255,0.58)',
     shadow: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.12)',
     shadowSoft: isDark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.07)',
-    ambientA: withAlpha(colors.primary, isDark ? 0.16 : 0.10),
-    ambientB: withAlpha(colors.secondary, isDark ? 0.14 : 0.08),
+    // 深色要求「纯色底」，所以环境光晕在深色下完全关掉。
+    ambientA: isDark ? 'rgba(0,0,0,0)' : withAlpha(colors.primary, 0.10),
+    ambientB: isDark ? 'rgba(0,0,0,0)' : withAlpha(colors.secondary, 0.08),
   };
 }

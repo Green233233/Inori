@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">祈</string>
     <string name="qi_widget_description">显示你们两个人的联结状态</string>
+    <string name="qi_accessibility_description">只用来把守护连接拉回前台，不读取屏幕内容，不读取输入</string>
 </resources>

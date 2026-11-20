@@ -196,10 +196,14 @@ class PermissionCenterModule(reactContext: ReactApplicationContext) :
         .getOrDefault(false)
 
     /**
-     * Reads the system's enabled-services list and answers "is *this package*
-     * among them". We do not declare an AccessibilityService on purpose (it would
-     * mean broad input access we refuse to hold), so today this reports false;
-     * the parser stays correct the moment a narrow service ships.
+     * 只认我们那一个组件：`package/services.QiAccessibilityService`。
+     *
+     * 用精确匹配而不是包名前缀，是因为无障碍是「能读到别的应用窗口」的高危开关，
+     * 将来若同包再出现别的服务，这里的 true 必须是用户真的开了保活那一个。
+     *
+     * 这个服务本身的能力被 `res/xml/qi_accessibility.xml` 限死：只看自己应用的
+     * 窗口切换（`typeWindowStateChanged`），`canRetrieveWindowContent=false`，
+     * 没有按键过滤。它唯一做的事是把被系统杀掉的守护服务拉回来。
      */
     private fun accessibilityEnabled(context: Context): Boolean {
       val enabled =
@@ -214,8 +218,10 @@ class PermissionCenterModule(reactContext: ReactApplicationContext) :
           0
         ) == 1
       if (!masterOn) return false
-      val prefix = context.packageName + "/"
-      return enabled.split(':').any { it.startsWith(prefix) }
+      val expected = ComponentName(context, QiAccessibilityService::class.java)
+      val expectedId = expected.flattenToString()
+      val expectedShort = expected.flattenToShortString()
+      return enabled.split(':').any { it == expectedId || it == expectedShort }
     }
 
     private fun usageAccessGranted(context: Context): Boolean =
