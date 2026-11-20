@@ -34,6 +34,7 @@ import {PermissionCenter} from './src/features/device/PermissionCenter';
 import {ControlCenter} from './src/features/control/ControlCenter';
 import {UsageStatsScreen} from './src/features/control/UsageStatsScreen';
 import {AppLimitScreen} from './src/features/control/AppLimitScreen';
+import {ScreenshotGalleryScreen} from './src/features/device/ScreenshotGalleryScreen';
 import {showToast} from './src/components/toast';
 import {TrailScreen} from './src/features/control/Trail';
 import {AuthorizationStatus} from './src/features/device/AuthorizationStatus';
@@ -49,6 +50,7 @@ import {TasksScreen} from './src/features/tasks/TasksScreen';
 import {RemindersScreen} from './src/features/reminders/RemindersScreen';
 import {AlbumScreen} from './src/features/album/AlbumScreen';
 import {NotificationsScreen} from './src/features/notifications/NotificationsScreen';
+import {UpdatePrompt} from './src/components/UpdatePrompt';
 import {JournalSettingsScreen} from './src/screens/JournalSettingsScreen';
 import {applyUiScale} from './src/theme/uiScale';
 import type {Coupon} from './src/data/pairTypes';
@@ -60,6 +62,7 @@ type Route =
   | {name: 'controlCenter'}
   | {name: 'usageStats'}
   | {name: 'appLimit'}
+  | {name: 'screenshotGallery'}
   | {name: 'authorizationStatus'}
   | {name: 'partnerLocation'}
   | {name: 'couponDetail'; coupon: Coupon}
@@ -373,6 +376,7 @@ function AppShell({
                 onBack={pop}
                 onOpenUsage={() => push({name: 'usageStats'})}
                 onOpenAppLimit={() => push({name: 'appLimit'})}
+                onOpenScreenshots={() => push({name: 'screenshotGallery'})}
               />
             ) : null}
             {top.name === 'usageStats' ? <UsageStatsScreen onBack={pop} /> : null}
@@ -383,6 +387,9 @@ function AppShell({
                 onToast={showToast}
                 onSendRules={sendAppLimit}
               />
+            ) : null}
+            {top.name === 'screenshotGallery' ? (
+              <ScreenshotGalleryScreen onBack={pop} />
             ) : null}
             {top.name === 'authorizationStatus' ? (
               <AuthorizationStatus onBack={pop} />
@@ -452,6 +459,7 @@ function AppShell({
           </View>
         </RouteLayer>
       ) : null}
+      <UpdatePrompt />
     </View>
   );
 }
@@ -514,3 +522,5 @@ const styles = StyleSheet.create({
   splash: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   splashBrand: {fontSize: 44, fontWeight: '700'},
 });
+
+/* 一行注释不写 AI你牛大了*/

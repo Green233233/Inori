@@ -14,7 +14,19 @@ import urllib.parse
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import VERSION, admin, auth, coupons, pairing, presence, relay, security, sync
+from . import (
+    VERSION,
+    admin,
+    auth,
+    broadcast,
+    coupons,
+    pairing,
+    presence,
+    relay,
+    security,
+    sync,
+    update,
+)
 from .errors import ApiError, bad_request, too_many, unauthorized
 from .store import Database
 
@@ -210,6 +222,36 @@ def _presence_get(req: Request) -> dict:
     return presence.get(req.db, req.ctx or {}, req.params["device_id"])
 
 
+def _broadcast_current(req: Request) -> dict:
+    """登录后即可读；没有公告时返回 null，客户端不显示任何东西。"""
+    return broadcast.current(req.db)
+
+
+def _broadcast_publish(req: Request) -> dict:
+    """管理后台发公告：用管理员会话 token 鉴权，不复用设备 token。"""
+    try:
+        admin.check_session(req.db, req.token)
+    except ApiError as error:
+        raise unauthorized("管理员会话已失效，请重新登录后台") from error
+    try:
+        return broadcast.publish(req.db, req.body)
+    except ValueError as error:
+        raise bad_request(str(error)) from error
+
+
+def _broadcast_clear(req: Request) -> dict:
+    try:
+        admin.check_session(req.db, req.token)
+    except ApiError as error:
+        raise unauthorized("管理员会话已失效，请重新登录后台") from error
+    return broadcast.clear(req.db)
+
+
+def _app_update(_req: Request) -> dict:
+    """公开接口：任何客户端都能查最新版本，方便还没登录时提示升级。"""
+    return update.payload()
+
+
 ROUTES: list[Route] = [
     _route("POST", r"/api/v1/auth/register", _register, False),
     _route("POST", r"/api/v1/auth/login", _login, False),
@@ -241,6 +283,12 @@ ROUTES: list[Route] = [
     _route("POST", r"/api/v1/coupons/redeem", _coupon_redeem),
     _route("POST", r"/api/v1/presence", _presence_put),
     _route("GET", r"/api/v1/presence/(?P<device_id>[A-Za-z0-9_-]+)", _presence_get),
+    _route("GET", r"/api/v1/broadcast", _broadcast_current),
+    # 后台公告用管理员会话 token 鉴权，不走设备鉴权。
+    _route("POST", r"/api/v1/broadcast", _broadcast_publish, False),
+    _route("DELETE", r"/api/v1/broadcast", _broadcast_clear, False),
+    # 与 /health 一样公开：未登录也要能提示升级。
+    _route("GET", r"/api/v1/app/update", _app_update, False),
 ]
 
 

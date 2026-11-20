@@ -46,8 +46,13 @@ internal object PairRelayCrypto {
   /** `base64("qi/pair/" + pairId)`，与 `Crypto.ts` 的 pairSalt 完全一致。 */
   fun pairSalt(pairId: String): String = B64.encode("qi/pair/$pairId".toByteArray())
 
-  fun hasIdentity(context: Context): Boolean =
-    prefs(context).getString("identity.$DEVICE_IDENTITY", null) != null
+  /**
+   * 与 relay 信封同一把 AES-256-GCM 配对密钥，供需要自定义容器（例如截屏存档，
+   * 把明文 header 当 AAD）的本机模块复用。密钥派生/缓存仍全部留在本对象里，
+   * 调用方拿不到 ECDH 过程，也拿不到身份私钥。
+   */
+  fun pairKey(context: Context, pairId: String, peerPublicB64: String): SecretKey =
+    sharedKey(context, pairId, peerPublicB64)
 
   /**
    * 把 JSON 明文封成信封 JSON 字符串；失败抛异常，调用方负责回错误包。

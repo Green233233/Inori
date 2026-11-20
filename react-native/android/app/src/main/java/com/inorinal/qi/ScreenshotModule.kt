@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.Parcel
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.facebook.react.bridge.ActivityEventListener
@@ -324,19 +325,28 @@ class ScreenshotModule(reactContext: ReactApplicationContext) :
 
     val width = frame.width
     val height = frame.height
-    val base64 =
+    val jpeg =
       try {
         val output = ByteArrayOutputStream()
         frame.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output)
-        B64.encode(output.toByteArray())
+        output.toByteArray()
       } catch (error: Exception) {
         null
       } finally {
         frame.recycle()
       }
-    if (base64 == null) {
+    if (jpeg == null) {
       rejectCapture(promise, standing, "encode_failed", "图片编码失败")
       return
+    }
+    val base64 = B64.encode(jpeg)
+    val at = System.currentTimeMillis()
+    // 本机留一份加密档：主人端/小狗端各自的「截屏记录」列表都从这里读。
+    // 写盘失败（未配对、磁盘满）只是一条日志，绝不影响本次截屏、限速与通知。
+    try {
+      ScreenshotStore.autoSave(reactApplicationContext, jpeg, at, width, height)
+    } catch (error: Exception) {
+      Log.w("QiScreenshot", "gallery save skipped: " + PairRelayCrypto.describeFailure(error))
     }
 
     val result = Arguments.createMap()
@@ -344,8 +354,8 @@ class ScreenshotModule(reactContext: ReactApplicationContext) :
     result.putString("base64", base64)
     result.putInt("width", width)
     result.putInt("height", height)
-    result.putInt("bytes", (base64.length * 3) / 4)
-    result.putDouble("at", System.currentTimeMillis().toDouble())
+    result.putInt("bytes", jpeg.size)
+    result.putDouble("at", at.toDouble())
     result.putBoolean("standing", standing)
     result.putInt("usedThisHour", pruneTimes())
     promise.resolve(result)
@@ -469,10 +479,11 @@ class ScreenshotModule(reactContext: ReactApplicationContext) :
           NotificationChannel(
             CHANNEL_CAPTURE,
             "祈 · 屏幕被查看提醒",
-            NotificationManager.IMPORTANCE_HIGH
+            NotificationManager.IMPORTANCE_DEFAULT
           ).apply {
-            description = "每次屏幕被抓取时提醒你，不可关闭"
-            enableVibration(true)
+            description = "每次屏幕被抓取时提醒你，不可关闭（静音）"
+            enableVibration(false)
+            setSound(null, null)
           }
         )
       }
@@ -482,8 +493,9 @@ class ScreenshotModule(reactContext: ReactApplicationContext) :
           .setSmallIcon(android.R.drawable.ic_menu_view)
           .setContentTitle("主人刚刚查看了你的屏幕")
           .setContentText("$now · 本次查看已写入审计日志，可在设置里核对")
-          .setPriority(NotificationCompat.PRIORITY_HIGH)
+          .setPriority(NotificationCompat.PRIORITY_DEFAULT)
           .setCategory(NotificationCompat.CATEGORY_EVENT)
+          .setSilent(true)
           .setAutoCancel(true)
           .setContentIntent(openAppIntent())
           .build()
@@ -597,7 +609,7 @@ class ScreenshotModule(reactContext: ReactApplicationContext) :
     private const val PREF_TOKEN = "standingToken"
     private const val PREF_TIMES = "captureTimes"
 
-    private const val CHANNEL_CAPTURE = "qi.capture"
+    private const val CHANNEL_CAPTURE = "qi.capture.v2"
     private const val NOTIFICATION_ID_CAPTURE = 0x7102
 
     private const val REQUEST_CONSENT = 0x7110

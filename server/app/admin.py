@@ -619,6 +619,11 @@ def login(db: Database, body: dict, ip: str) -> dict:
     }
 
 
+def check_session(db: Database, token: str | None) -> sqlite3.Row:
+    """给其它模块复用的管理员鉴权（失败抛 unauthorized）。"""
+    return _session(db, token)
+
+
 def _session(db: Database, token: str | None) -> sqlite3.Row:
     if not token:
         raise unauthorized("admin_unauthorized", "请先登录管理员账户")

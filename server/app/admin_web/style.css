@@ -1085,3 +1085,13 @@ dialog.modal::backdrop { background: rgba(0, 0, 0, 0.72); }
     transition-duration: 0.001ms !important;
   }
 }
+
+.broadcast-current {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--surface-2, rgba(127,127,127,0.10));
+  white-space: pre-line;
+  line-height: 1.6;
+  word-break: break-word;
+}

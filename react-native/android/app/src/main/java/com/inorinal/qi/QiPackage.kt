@@ -28,7 +28,9 @@ class QiPackage : ReactPackage {
       // 小狗端常驻「联动」通道：App 不在前台时也能收到新任务/券（见 QiLinkService）。
       LinkServiceModule(reactContext),
       // 应用限制：主人下发名单，小狗端前台检测 + 全屏拦截（见 AppLimitWatcher）。
-      AppLimitModule(reactContext)
+      AppLimitModule(reactContext),
+      // 截屏记录：本机加密存档的列表/解密查看/删除（见 ScreenshotStore）。
+      ScreenshotGalleryModule(reactContext)
     )
 
   override fun createViewManagers(

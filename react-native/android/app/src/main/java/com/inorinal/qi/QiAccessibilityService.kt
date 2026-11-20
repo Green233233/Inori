@@ -106,6 +106,17 @@ class QiAccessibilityService : AccessibilityService() {
      */
     fun isRunning(): Boolean = instance != null
 
+    /**
+     * 回到桌面。应用限制的拦截卡被点掉后用它把用户从被禁应用里带出来，
+     * 不然用户还停在那个应用的画面上，看不出「其实已经被关掉了」。
+     * 无障碍没开就返回 false，调用方退化成只关遮罩。
+     */
+    fun goHome(): Boolean {
+      val service = instance ?: return false
+      return runCatching { service.performGlobalAction(GLOBAL_ACTION_HOME) }
+        .getOrDefault(false)
+    }
+
     /** 给权限中心 / 原生 status 用的只读快照。 */
     fun snapshot(context: Context): Map<String, Any?> {
       val store = prefs(context)

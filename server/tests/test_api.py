@@ -143,6 +143,18 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["version"], VERSION)
 
+    def test_app_update_is_public(self) -> None:
+        """检查更新不需要登录：冷启动时还没 token 也要能拿到版本。"""
+        client = Client(self.base)
+        payload = client.call("GET", "/api/v1/app/update")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["version"], VERSION)
+        self.assertIsInstance(payload["versionCode"], int)
+        self.assertGreater(payload["versionCode"], 0)
+        self.assertTrue(payload["notes"].strip())
+        self.assertTrue(payload["downloadUrl"].startswith("https://"))
+        self.assertIsInstance(payload["force"], bool)
+
     def test_register_requires_invite_and_valid_password(self) -> None:
         client = Client(self.base)
         weak = client.call("POST", "/api/v1/auth/register", {

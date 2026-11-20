@@ -25,17 +25,20 @@ import com.inorinal.R
  *  - 没有任何定时器、没有前台服务：只在真有事的时候发一条。
  */
 object NoticeCenter {
-  const val CHANNEL = "qi.notice"
+  // v2：祈发出的通知一律静音（用户要求「不响铃声，避免打扰」）。
+  // 渠道一旦创建就无法改声音，所以换新 id 让系统按静音设置重新建。
+  const val CHANNEL = "qi.notice.v2"
   private const val GROUP = "qi.notice.group"
 
   fun channel(context: Context): String {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-      val channel = NotificationChannel(CHANNEL, "祈 · 消息", NotificationManager.IMPORTANCE_HIGH).apply {
-        description = "任务、和好券与定时规则的通知"
+      val channel = NotificationChannel(CHANNEL, "祈 · 消息", NotificationManager.IMPORTANCE_DEFAULT).apply {
+        description = "任务、和好券与定时规则的通知（静音，不响铃不振动）"
         enableLights(true)
         lightColor = Color.parseColor("#FF5C8A")
-        enableVibration(true)
+        enableVibration(false)
+        setSound(null, null)
         setShowBadge(true)
       }
       manager.createNotificationChannel(channel)
@@ -64,12 +67,11 @@ object NoticeCenter {
       .setContentIntent(content)
       .setGroup(GROUP)
       .setCategory(if (fullscreen) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_MESSAGE)
-      .setPriority(if (fullscreen) NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_HIGH)
+      .setPriority(if (fullscreen) NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_DEFAULT)
+      .setSilent(true)
     if (fullscreen) {
       // 系统可能在免打扰/锁屏策略下降级成 heads-up；这里不做任何绕过。
       builder.setFullScreenIntent(content, true)
-    } else {
-      builder.setDefaults(NotificationCompat.DEFAULT_ALL)
     }
     (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
       .notify(id.hashCode(), builder.build())

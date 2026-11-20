@@ -32,6 +32,7 @@
     overview: ["概览", "服务器运行状态与账户概况"],
     accounts: ["账户", "浏览、创建、封禁与导出账户"],
     audit: ["操作日志", "管理员与账户相关操作记录"],
+    broadcast: ["公告", "写一句话，所有客户端主页都会显示"],
     system: ["系统", "版本、登录保护与存储信息"],
     settings: ["设置", "管理员、密码与外观"]
   };
@@ -299,6 +300,7 @@
     if (view === "accounts") loadAccounts();
     if (view === "audit") loadAudit();
     if (view === "system") loadSystem();
+    if (view === "broadcast") loadBroadcast();
     if (view === "settings") loadSettings();
   }
 
@@ -938,6 +940,67 @@
     sessionLost("已退出登录");
   }
 
+  /* ---------------- 公告 ---------------- */
+  async function loadBroadcast() {
+    try {
+      var data = await api("/broadcast");
+      renderBroadcast(data.broadcast);
+    } catch (err) {
+      if (err.status !== 401 && err.status !== 403) {
+        showBanner("读取公告失败：" + err.message);
+      }
+    }
+  }
+
+  function renderBroadcast(item) {
+    var box = $("broadcast-current");
+    var pill = $("broadcast-state");
+    if (!item) {
+      box.textContent = "当前没有公告。";
+      box.className = "empty";
+      pill.textContent = "未发布";
+      pill.className = "pill pill-muted";
+      return;
+    }
+    box.className = "broadcast-current";
+    box.textContent = item.text + "\n· " + formatDateTime(item.expiresAt) + " 到期";
+    pill.textContent = "生效中";
+    pill.className = "pill pill-ok";
+  }
+
+  async function onBroadcastSubmit(event) {
+    event.preventDefault();
+    var text = $("broadcast-text").value.trim();
+    if (!text) {
+      showBanner("公告内容是空的");
+      return;
+    }
+    var hours = Number($("broadcast-hours").value) || 72;
+    var button = event.target.querySelector("button[type=submit]");
+    button.disabled = true;
+    try {
+      await api("/broadcast", { method: "POST", body: { text: text, hours: hours } });
+      $("broadcast-text").value = "";
+      showBanner("公告已发布");
+      await loadBroadcast();
+    } catch (err) {
+      showBanner("发布失败：" + err.message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function onBroadcastClear() {
+    if (!window.confirm("确定清空公告？所有客户端主页马上就不会再显示它。")) return;
+    try {
+      await api("/broadcast", { method: "DELETE" });
+      showBanner("已清空公告");
+      await loadBroadcast();
+    } catch (err) {
+      showBanner("清空失败：" + err.message);
+    }
+  }
+
   /* ---------------- 概览 ---------------- */
   async function loadOverview(options) {
     options = options || {};
@@ -1555,6 +1618,8 @@
     });
 
     $("registration-toggle").addEventListener("change", onRegistrationToggle);
+    $("broadcast-form").addEventListener("submit", onBroadcastSubmit);
+    $("broadcast-clear").addEventListener("click", onBroadcastClear);
 
     $("add-admin-btn").addEventListener("click", openAddAdminModal);
     $("settings-password-form").addEventListener("submit", onSettingsPassword);

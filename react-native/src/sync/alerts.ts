@@ -63,7 +63,12 @@ async function post(id: string, title: string, body: string): Promise<void> {
   }
 }
 
-/** 主人下达新任务 / 小狗报备了任务。 */
+/**
+ * 主人下达新任务 / 小狗报备了任务。
+ *
+ * v0.6.8 起任务不再弹通知：它属于「其余功能」，只在任务页和审计里留痕，
+ * 免得每天被任务提醒吵醒。这里保留游标推进，避免历史任务在升级后又冒出来。
+ */
 async function scanTasks(role: Role): Promise<number> {
   const state = await loadState();
   const seen = new Set(state.tasks);
@@ -80,10 +85,7 @@ async function scanTasks(role: Role): Promise<number> {
       continue;
     }
     void mine;
-    const title = role === 'PUPPY' ? '主人给你派了任务' : '小狗报备了任务';
-    await post(`task:${task.id}:${task.status}`, title, task.title);
     seen.add(`${task.id}:${task.status}`);
-    fresh += 1;
   }
   if (fresh > 0) {
     await saveState({...state, tasks: Array.from(seen).slice(-MAX_SEEN)});
@@ -113,7 +115,7 @@ async function scanCoupons(role: Role): Promise<number> {
     if (!fromPeer) {
       continue;
     }
-    const title = coupon.type === 'reward' ? '小狗给你发了一张奖励券' : '主人给你签发了一张券';
+    const title = coupon.type === 'reward' ? '小狗给你发了一张奖励券哦' : '主人给你签发了一张券哦';
     await post(`coupon:${coupon.code}`, title, `${coupon.typeLabel} · ${coupon.code}`);
     seen.add(coupon.code);
     fresh += 1;
@@ -137,14 +139,10 @@ function relayNotice(
 ): {title: string; body: string} | null {
   const when = item.createdAtDisplay ? ` · ${item.createdAtDisplay}` : '';
   switch (item.kind) {
-    case 'task.verdict':
-      return role === 'PUPPY'
-        ? {title: '任务有结果了', body: `主人看过你提交的内容${when}`}
-        : {title: '任务有结果了', body: `小狗提交的任务有更新${when}`};
     case 'reward.grant':
       return role === 'PUPPY'
-        ? {title: '收到一张奖励券', body: `打开「和好券」看看主人给了什么${when}`}
-        : {title: '小狗给你发了奖励券', body: `打开「和好券」看看${when}`};
+        ? {title: '收到一张奖励券哦', body: `打开「和好券」看看主人给了什么叭${when}`}
+        : {title: '小狗给你发了奖励券哦', body: `打开「和好券」看看呀${when}`};
     default:
       return null;
   }

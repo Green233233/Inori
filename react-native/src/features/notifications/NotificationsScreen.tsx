@@ -3,7 +3,7 @@
  *
  * 拉取走端到端加密的命令通道；本机历史不落服务器，清空只影响这台设备。
  */
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {RefreshControl, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useAppTheme} from '../../theme/AppThemeProvider';
@@ -42,11 +42,21 @@ export function NotificationsScreen({onBack}: {onBack: () => void}) {
   const [items, setItems] = useState<NotificationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [confirmClear, setConfirmClear] = useState(false);
+  // v0.6.8：只认 pairId。pair 对象每次 refreshPair 都会换新，若直接进依赖数组，
+  // 这个 effect 会在每次 relay 心跳后重跑，看起来就是「通知转发一直在刷新」。
+  const pairId = pair?.pairId;
+  const inFlightRef = useRef(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const refresh = useCallback(async (options?: {silent?: boolean}) => {
+    if (inFlightRef.current) {
+      return;
+    }
+    inFlightRef.current = true;
+    if (!options?.silent) {
+      setLoading(true);
+    }
     try {
-      if (isMaster && pair) {
+      if (isMaster && pairId) {
         const drained = await runCommand('notifications.drain', {limit: 100});
         const events = Array.isArray(drained?.data)
           ? (drained.data as NotificationRecord[])
@@ -59,13 +69,15 @@ export function NotificationsScreen({onBack}: {onBack: () => void}) {
       showToast(error?.message ?? '拉取失败');
       setItems(await loadNotifications());
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
-  }, [isMaster, pair, runCommand]);
+  }, [isMaster, pairId, runCommand]);
 
   useEffect(() => {
-    refresh().catch(() => undefined);
-  }, [refresh]);
+    // 首屏拉一次即可；后续靠下拉/按钮，不再跟着 pair 身份重跑。
+    refresh({silent: true}).catch(() => undefined);
+  }, [isMaster, pairId, refresh]);
 
   return (
     <View style={styles.root}>

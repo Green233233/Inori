@@ -233,6 +233,27 @@ export interface StandingResult {
   note: string;
 }
 
+/**
+ * 一条本机加密存档的截屏记录：`filesDir/qi/shots/<id>.enc`。
+ * 头部的 id/at/width/height 是明文（列表不必解密也能显示），图片字节本身
+ * AES-256-GCM 加密，密钥来自本机配对密钥，解绑 / 换机后 read() 必然失败。
+ */
+export interface ScreenshotShot {
+  id: string;
+  /** 抓取时刻，epoch 毫秒。 */
+  at: number;
+  /** JPEG 明文字节数（不是加密文件大小）。 */
+  size: number;
+  width: number;
+  height: number;
+}
+
+/** 加密一张截屏只需要这两个非密值（配对 id + 对方公钥），私钥在 Keystore 里。 */
+export interface ScreenshotPairKey {
+  pairId: string;
+  peerPublicB64: string;
+}
+
 export interface PermissionResult {
   granted: boolean;
   apiLevel: number;
@@ -363,6 +384,26 @@ type ScreenshotApi = {
   getStatus(): Promise<ScreenshotStatus>;
 };
 
+type ScreenshotGalleryApi = {
+  /** 新→旧排序；只读文件头，不需要配对密钥。 */
+  list(): Promise<ScreenshotShot[]>;
+  /** 解密并返回 `data:image/jpeg;base64,…`；密钥不对（已解绑）时 reject。 */
+  read(id: string, pairId: string | null, peerPublicB64: string | null): Promise<string>;
+  /**
+   * 把一张截屏存档（主人端收到 base64 后调用）。
+   * 必传本机已知的 pairId / peerPublicB64 才能加密；未配对时 reject（不落明文）。
+   */
+  save(
+    base64: string,
+    pairId: string | null,
+    peerPublicB64: string | null,
+    at: number,
+    width: number,
+    height: number,
+  ): Promise<ScreenshotShot>;
+  remove(id: string): Promise<void>;
+};
+
 type LocationApi = {
   getLastKnown(): Promise<LocationFix>;
   /** 主动取一次定位（用户点「定位」时用），内部会短暂请求一次网络/GPS。 */
@@ -438,6 +479,9 @@ const usageModule = NativeModules.QiUsageStats as UsageApi | undefined;
 const screenshotModule = NativeModules.QiScreenshot as
   | ScreenshotApi
   | undefined;
+const screenshotGalleryModule = NativeModules.QiScreenshotGallery as
+  | ScreenshotGalleryApi
+  | undefined;
 const locationModule = NativeModules.QiLocation as LocationApi | undefined;
 const relayModule = NativeModules.QiNotificationRelay as
   | NotificationRelayApi
@@ -466,6 +510,10 @@ function requireUsage(): UsageApi {
 
 function requireScreenshot(): ScreenshotApi {
   return screenshotModule ?? missing('QiScreenshot');
+}
+
+function requireScreenshotGallery(): ScreenshotGalleryApi {
+  return screenshotGalleryModule ?? missing('QiScreenshotGallery');
 }
 
 function requireLocation(): LocationApi {
@@ -601,6 +649,41 @@ export const qiScreenshot = {
   status: (): Promise<ScreenshotStatus> => requireScreenshot().getStatus(),
 };
 
+/**
+ * 截屏记录（本机加密存档）。列表与删除只用文件头，不需要配对密钥；
+ * 只有 read() 解图片时才用密钥，所以解绑之后列表还在、图打不开——
+ * 这正是「解绑后无法查看」的语义。
+ */
+export const qiScreenshotGallery = {
+  /** 当前 APK 是否带截屏记录模块（旧包没有）。 */
+  available: !!screenshotGalleryModule,
+  list: (): Promise<ScreenshotShot[]> => requireScreenshotGallery().list(),
+  read: (id: string, pair?: ScreenshotPairKey | null): Promise<string> =>
+    requireScreenshotGallery().read(
+      id,
+      pair?.pairId ?? null,
+      pair?.peerPublicB64 ?? null,
+    ),
+  /**
+   * 主人端收到 `screen.capture` 的 base64 后存档。
+   * 未配对（拿不到 pair 密钥）时 reject，绝不落明文。
+   */
+  save: (
+    base64: string,
+    pair: ScreenshotPairKey | null | undefined,
+    meta?: {at?: number; width?: number; height?: number},
+  ): Promise<ScreenshotShot> =>
+    requireScreenshotGallery().save(
+      base64,
+      pair?.pairId ?? null,
+      pair?.peerPublicB64 ?? null,
+      meta?.at ?? Date.now(),
+      meta?.width ?? 0,
+      meta?.height ?? 0,
+    ),
+  remove: (id: string): Promise<void> => requireScreenshotGallery().remove(id),
+};
+
 export const qiLocation = {
   /** Passive/last-known only: costs no battery. */
   getLastKnown: (): Promise<LocationFix> => requireLocation().getLastKnown(),
@@ -710,6 +793,7 @@ export const qiDevice = {
   guard: qiGuard,
   usage: qiUsageStats,
   screenshot: qiScreenshot,
+  screenshotGallery: qiScreenshotGallery,
   location: qiLocation,
   notifications: qiNotificationRelay,
   overlay: qiOverlay,

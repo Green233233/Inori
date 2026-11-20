@@ -6,7 +6,7 @@
  * 下发由主代理接到 relay（kind `app.limit`）后完成；`onSendRules` 是留给它的
  * 唯一出口，未接线时页面只保留本地编辑结果并如实提示。
  */
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   Pressable,
   ScrollView,
@@ -21,6 +21,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {SoftCard} from '../../components/Surfaces';
 import {TopBar} from '../../components/TopBar';
 import {FlatButton} from '../../components/Ui';
+import {qiDevice} from '../../native/QiDevice';
 import {qiLimits} from '../../native/QiLimits';
 import type {AppLimitEntry, AppLimitRules} from '../../native/QiLimits';
 import {useAppTheme} from '../../theme/AppThemeProvider';
@@ -45,6 +46,9 @@ export function AppLimitScreen({
   const [draft, setDraft] = useState('');
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [apps, setApps] = useState<AppLimitEntry[]>([]);
+  const [loadingApps, setLoadingApps] = useState(true);
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -63,6 +67,54 @@ export function AppLimitScreen({
     return () => {
       alive = false;
     };
+  }, []);
+
+  // 完整可启动应用列表：主人在自己手机上挑，选完只把包名下发。
+  useEffect(() => {
+    let alive = true;
+    qiDevice.usage
+      .installedApps()
+      .then(result => {
+        if (!alive) {
+          return;
+        }
+        setApps(
+          result.apps.map(app => ({pkg: app.pkg, label: app.label || app.pkg})),
+        );
+      })
+      .catch(() => {
+        if (alive) {
+          setApps([]);
+        }
+      })
+      .finally(() => {
+        if (alive) {
+          setLoadingApps(false);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const visibleApps = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) {
+      return apps;
+    }
+    return apps.filter(
+      app =>
+        app.label.toLowerCase().includes(keyword) ||
+        app.pkg.toLowerCase().includes(keyword),
+    );
+  }, [apps, query]);
+
+  const toggleApp = useCallback((app: AppLimitEntry) => {
+    setEntries(prev =>
+      prev.some(entry => entry.pkg === app.pkg)
+        ? prev.filter(entry => entry.pkg !== app.pkg)
+        : [...prev, app],
+    );
   }, []);
 
   const add = useCallback(async () => {
@@ -184,38 +236,121 @@ export function AppLimitScreen({
           选择要禁止的应用
         </Text>
         <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
-          暂时需要手动输入包名添加（例如 com.tencent.mm），下发给 {partnerName}{' '}
-          后由它的手机执行拦截。
+          下面是小狗手机上能打开的应用，点右侧开关即可加入名单；下发给{' '}
+          {partnerName} 后由它的手机执行拦截。
         </Text>
 
-        <View style={styles.addRow}>
-          <TextInput
-            accessibilityLabel="要禁止的应用包名"
-            value={draft}
-            onChangeText={setDraft}
-            placeholder="com.example.app"
-            placeholderTextColor={colors.onSurfaceVariant}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="done"
-            onSubmitEditing={add}
-            style={[
-              styles.input,
-              {color: colors.onSurface, borderColor: colors.outline},
-            ]}
-          />
-          <FlatButton
-            label={adding ? '添加中…' : '添加'}
-            onPress={add}
-            disabled={adding || !draft.trim()}
-            style={styles.addButton}
-          />
-        </View>
+        <TextInput
+          accessibilityLabel="搜索应用"
+          value={query}
+          onChangeText={setQuery}
+          placeholder="搜应用名或包名"
+          placeholderTextColor={colors.onSurfaceVariant}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          style={[
+            styles.search,
+            {color: colors.onSurface, borderColor: colors.outline},
+          ]}
+        />
 
         <SoftCard style={styles.cardSpacing}>
+          {loadingApps ? (
+            <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
+              正在读取应用列表…
+            </Text>
+          ) : visibleApps.length === 0 ? (
+            <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
+              {apps.length === 0
+                ? '没读到应用列表；可以在下面直接填包名加入。'
+                : `没有匹配「${query.trim()}」的应用。`}
+            </Text>
+          ) : (
+            visibleApps.map((app, index) => {
+              const checked = entries.some(entry => entry.pkg === app.pkg);
+              return (
+                <View
+                  key={app.pkg}
+                  style={[
+                    styles.entryRow,
+                    index > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.outline,
+                    },
+                  ]}>
+                  <View style={styles.rowText}>
+                    <Text
+                      numberOfLines={1}
+                      style={[type.bodyStrong, {color: colors.onSurface}]}>
+                      {app.label}
+                    </Text>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        type.caption,
+                        styles.rowCaption,
+                        {color: colors.onSurfaceVariant},
+                      ]}>
+                      {app.pkg}
+                    </Text>
+                  </View>
+                  <Switch
+                    accessibilityLabel={`限制 ${app.label}`}
+                    value={checked}
+                    onValueChange={() => toggleApp(app)}
+                    trackColor={{true: colors.primary, false: colors.outline}}
+                  />
+                </View>
+              );
+            })
+          )}
+        </SoftCard>
+
+        <SoftCard style={styles.cardSpacing}>
+          <View style={styles.row}>
+            <View style={styles.rowText}>
+              <Text style={[type.bodyStrong, {color: colors.onSurface}]}>
+                已选 {entries.length} 个
+              </Text>
+              <Text
+                style={[
+                  type.caption,
+                  styles.rowCaption,
+                  {color: colors.onSurfaceVariant},
+                ]}>
+                名单里的应用在小狗手机上被打开时会被全屏提示挡住。
+              </Text>
+            </View>
+          </View>
+          {(
+            <View style={styles.addRow}>
+              <TextInput
+                accessibilityLabel="手动补充包名"
+                value={draft}
+                onChangeText={setDraft}
+                placeholder="也可以直接填包名，如 com.tencent.mm"
+                placeholderTextColor={colors.onSurfaceVariant}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="done"
+                onSubmitEditing={add}
+                style={[
+                  styles.input,
+                  {color: colors.onSurface, borderColor: colors.outline},
+                ]}
+              />
+              <FlatButton
+                label={adding ? '添加中…' : '添加'}
+                onPress={add}
+                disabled={adding || !draft.trim()}
+                style={styles.addButton}
+              />
+            </View>
+          )}
           {entries.length === 0 ? (
             <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
-              还没有添加应用。
+              还没有选应用；上面搜索后打开开关就行。
             </Text>
           ) : (
             entries.map((entry, index) => (
@@ -286,6 +421,14 @@ const styles = StyleSheet.create({
   rowText: {flex: 1, paddingRight: 12},
   rowCaption: {marginTop: 3},
   addRow: {flexDirection: 'row', alignItems: 'center', marginTop: 12},
+  search: {
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
   input: {
     flex: 1,
     borderRadius: 12,

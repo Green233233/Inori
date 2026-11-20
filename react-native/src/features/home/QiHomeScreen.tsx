@@ -15,6 +15,7 @@ import {FlatButton, Pill} from '../../components/Ui';
 import {showToast} from '../../components/toast';
 import {useQi} from '../qi/QiProvider';
 import {qiDevicePermissions} from '../../native/QiDevice';
+import {type BroadcastItem, fetchBroadcast} from '../../api/broadcast';
 
 export function QiHomeScreen({
   onOpenJournal,
@@ -68,6 +69,25 @@ export function QiHomeScreen({
       .catch(() => showToast('权限中心暂时打不开，请到「我的 → 权限管控中心」'));
   }, [onOpenPermissionCenter]);
 
+  /**
+   * 管理后台发的公告：只显示在标题下面一行，不弹窗、不打断。
+   * 拉不到就当没有，不提示错误。
+   */
+  const [broadcast, setBroadcast] = React.useState<BroadcastItem | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    fetchBroadcast()
+      .then(item => {
+        if (alive) {
+          setBroadcast(item);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const lastSync = lastSyncAt
     ? new Date(lastSyncAt).toLocaleTimeString('zh-CN', {
         hour: '2-digit',
@@ -90,6 +110,13 @@ export function QiHomeScreen({
           ? ` · ${myName || state.username || '你'}`
           : ' · 先在「我的 → 我的身份与联结」里完成绑定'}
       </Text>
+      {broadcast ? (
+        <Text
+          numberOfLines={2}
+          style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 6}]}>
+          📣 {broadcast.text}
+        </Text>
+      ) : null}
 
       <ColorField color={accent} radius={22} style={styles.hero}>
         <View style={styles.heroRow}>

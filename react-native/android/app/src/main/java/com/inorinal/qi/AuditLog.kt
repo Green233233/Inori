@@ -25,6 +25,18 @@ object AuditLog {
   /** Keeps filesDir bounded without needing a cleanup service. */
   private const val MAX_BYTES = 2L * 1024L * 1024L
 
+  /**
+   * 只保留最近 24 小时的审计记录。
+   *
+   * 「只留一天」是产品承诺（避免长期占空间），代价是链从保留的第一条重新
+   * 起算：剪切前面几条会让后面每条的 prevHash 都对不上，所以这里选择
+   * **整段重写并重新串链**，保证留存的记录依然可以 [verifyChain] 通过。
+   */
+  private const val RETENTION_MS = 24L * 60L * 60L * 1000L
+  private const val PRUNE_INTERVAL_MS = 60L * 60L * 1000L
+  private const val PREFS = "qi.audit"
+  private const val PREF_PRUNED_AT = "prunedAt"
+
   private val lock = Any()
 
   fun qiDir(context: Context): File =
@@ -41,6 +53,7 @@ object AuditLog {
   fun append(context: Context, type: String, detail: String): Pair<Long, String> =
     synchronized(lock) {
       val target = file(context)
+      pruneIfDue(context, target)
       rotateIfNeeded(target)
       val (previousSeq, previousHash) = tail(target)
       val record =
@@ -116,6 +129,59 @@ object AuditLog {
   }
 
   data class ChainResult(val valid: Boolean, val brokenAt: Int, val count: Int)
+
+  /**
+   * 24 小时之外的数据直接清掉，重写文件并重新串链。
+   *
+   * 节流到每小时最多一次：`append` 是热路径（每条命令/每次截屏都会写），
+   * 每次都读全文太贵，而「多留一小时」对用户没有实际差别。
+   */
+  private fun pruneIfDue(context: Context, target: File) {
+    if (!target.exists()) return
+    val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    val now = System.currentTimeMillis()
+    if (now - prefs.getLong(PREF_PRUNED_AT, 0L) < PRUNE_INTERVAL_MS) return
+    prefs.edit().putLong(PREF_PRUNED_AT, now).apply()
+    val cutoff = now - RETENTION_MS
+    val kept =
+      readAll(target).filter { record -> record.optLong("at", 0L) >= cutoff }
+    if (kept.size == readAll(target).size) return
+    rewrite(target, kept)
+  }
+
+  /** Re-chains the surviving records from genesis so verification still holds. */
+  private fun rewrite(target: File, records: List<JSONObject>) {
+    var previousHash = GENESIS
+    val lines = ArrayList<String>(records.size)
+    records.forEachIndexed { index, old ->
+      val seq = index + 1L
+      val at = old.optLong("at", 0L)
+      val type = old.optString("type", "")
+      val detail = old.optString("detail", "")
+      val record =
+        JSONObject()
+          .put("seq", seq)
+          .put("at", at)
+          .put("type", type)
+          .put("detail", detail)
+          .put("prevHash", previousHash)
+      val hash = hashOf(seq, at, type, detail, previousHash)
+      record.put("hash", hash)
+      previousHash = hash
+      lines.add(record.toString())
+    }
+    val temp = File(target.parentFile, "$FILE_NAME.tmp")
+    temp.writeText(if (lines.isEmpty()) "" else lines.joinToString("\n") + "\n")
+    if (target.exists() && !target.delete()) return
+    temp.renameTo(target)
+  }
+
+  private fun readAll(target: File): List<JSONObject> {
+    if (!target.exists()) return emptyList()
+    return target.readLines().mapNotNull { line ->
+      if (line.isBlank()) null else runCatching { JSONObject(line) }.getOrNull()
+    }
+  }
 
   private fun rotateIfNeeded(target: File) {
     if (!target.exists() || target.length() <= MAX_BYTES) return

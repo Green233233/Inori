@@ -742,7 +742,12 @@ export function QiProvider({children}: {children: React.ReactNode}) {
               await handleAppLimit(current.pair, item).catch(() => undefined);
             }
           }
-          if (page.items.length > 0) {
+          // v0.6.8：只有「对方真的做了事」才刷新配对与任务。
+          // command.reply 是自己刚发出去的命令的回包（比如通知转发页拉一次 drain），
+          // 如果它也触发 refreshPair，pair 对象换新 → 依赖 pair 的页面 effect 重跑 →
+          // 再发命令 → 再回包，就成了永远刷不完的死循环。
+          const meaningful = page.items.some(item => item.kind !== 'command.reply');
+          if (meaningful) {
             await refreshPair().catch(() => undefined);
             // 对方有新动作：顺手拉一次任务并弹通知（长轮询本身就是心跳，不额外起定时器）。
             const latest = await loadQiState();

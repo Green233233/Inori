@@ -15,6 +15,7 @@ import {ColorField, SoftCard} from '../../components/Surfaces';
 import {FlatButton, AppSheet} from '../../components/Ui';
 import {TopBar} from '../../components/TopBar';
 import {showToast} from '../../components/toast';
+import {qiScreenshotGallery} from '../../native/QiDevice';
 import {useQi} from '../qi/QiProvider';
 
 type SheetKind = 'capture' | 'guard' | null;
@@ -24,10 +25,12 @@ export function ControlCenter({
   onBack,
   onOpenUsage,
   onOpenAppLimit,
+  onOpenScreenshots,
 }: {
   onBack: () => void;
   onOpenUsage: () => void;
   onOpenAppLimit: () => void;
+  onOpenScreenshots: () => void;
 }) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -88,6 +91,16 @@ export function ControlCenter({
         if (data?.base64) {
           setCapture(data);
           setSheet('capture');
+          // 本机留档：加密后落在手机上，服务器拿不到明文
+          qiScreenshotGallery
+            .save(
+              data.base64,
+              pair?.pairId && pair.peerPubkey
+                ? {pairId: pair.pairId, peerPublicB64: pair.peerPubkey}
+                : null,
+              {at: data.at, width: data.width, height: data.height},
+            )
+            .catch(() => undefined);
         }
       },
     },
@@ -212,6 +225,14 @@ export function ControlCenter({
             <Text style={[type.body, {color: colors.onSurface}]}>今日屏幕时间</Text>
             <Text style={[type.bodyStrong, {color: colors.primary}]}>看使用时长 →</Text>
           </View>
+          <SoftCard
+            radius={0}
+            onPress={onOpenScreenshots}
+            accessibilityLabel="截屏记录"
+            style={styles.dataRowPlain}>
+            <Text style={[type.body, {color: colors.onSurface}]}>截屏记录</Text>
+            <Text style={[type.bodyStrong, {color: colors.primary}]}>查看 →</Text>
+          </SoftCard>
           {hint ? (
             <Text style={[type.caption, {color: colors.error, marginTop: 8}]}>
               {hint}
@@ -317,6 +338,13 @@ const styles = StyleSheet.create({
   sectionTitle: {marginTop: 24, marginBottom: 10},
   grid: {flexDirection: 'row', flexWrap: 'wrap', gap: 10},
   tile: {width: '48%', padding: 16, minHeight: 118},
+  dataRowPlain: {
+    marginTop: 10,
+    paddingTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   dataCard: {padding: 16},
   dataRow: {
     flexDirection: 'row',

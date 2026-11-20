@@ -373,6 +373,23 @@ internal object BlockedOverlay {
                 setOnClickListener {
                     dismissedPkg = pkg
                     removeView()
+                    // v0.6.8：点掉拦截卡就等于「这只应用这次别用了」——先回桌面，
+                    // 再把它从后台收掉。只用 removeView 的话用户仍然停在被禁应用里，
+                    // 看起来像没生效。killBackgroundProcesses 不需要 root，
+                    // 被禁应用此刻通常在前台/刚退到后台，能被系统回收。
+                    val wentHome = QiAccessibilityService.goHome()
+                    runCatching {
+                        val am =
+                            context.getSystemService(Context.ACTIVITY_SERVICE)
+                                as? android.app.ActivityManager
+                        am?.killBackgroundProcesses(pkg)
+                    }
+                    AuditLogModule.write(
+                        "app.limit.closed",
+                        "已关闭被禁应用（$label）" +
+                            if (wentHome) "" else " · 无障碍未开启，仅回到桌面",
+                        context
+                    )
                 }
             }
 

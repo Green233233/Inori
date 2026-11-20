@@ -16,8 +16,10 @@ import {TopBar} from '../components/TopBar';
 import {OutlinedButton} from '../components/Ui';
 import {ColorField} from '../components/Surfaces';
 import {showToast} from '../components/toast';
+import {UpdateSheet} from '../components/UpdatePrompt';
 import {useReducedMotion} from '../motion/useReducedMotion';
 import {APP_NAME, DEDICATION, VERSION_NAME} from '../config';
+import {checkForUpdate, type UpdateCheckResult} from '../api/appUpdate';
 
 interface Particle {
   id: number;
@@ -39,6 +41,8 @@ export function AboutScreen({
   const {width, height} = useWindowDimensions();
   const reduced = useReducedMotion();
   const [particles, setParticles] = useState<Particle[]>([]);
+  const [checking, setChecking] = useState(false);
+  const [update, setUpdate] = useState<UpdateCheckResult | null>(null);
   const taps = useRef(0);
 
   const spawnParticles = () => {
@@ -72,6 +76,27 @@ export function AboutScreen({
     if (taps.current >= 5) {
       taps.current = 0;
       spawnParticles();
+    }
+  };
+
+  const onCheckUpdate = async () => {
+    if (checking) {
+      return;
+    }
+    setChecking(true);
+    try {
+      const next = await checkForUpdate();
+      if (!next) {
+        showToast('网络不太好，稍后再试');
+        return;
+      }
+      if (!next.hasUpdate) {
+        showToast('已经是最新版本');
+        return;
+      }
+      setUpdate(next);
+    } finally {
+      setChecking(false);
     }
   };
 
@@ -129,9 +154,9 @@ export function AboutScreen({
             textColor={colors.onSurface}
           />
           <OutlinedButton
-            label="检查更新"
+            label={checking ? '检查中…' : '检查更新'}
             icon="refresh"
-            onPress={() => showToast('当前已是最新版本')}
+            onPress={onCheckUpdate}
             textColor={colors.onSurface}
           />
         </View>
@@ -171,6 +196,12 @@ export function AboutScreen({
           </Animated.View>
         ))}
       </View>
+
+      <UpdateSheet
+        visible={update !== null}
+        update={update}
+        onClose={() => setUpdate(null)}
+      />
     </View>
   );
 }

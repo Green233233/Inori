@@ -352,7 +352,7 @@ class QiLinkService : Service() {
     if (id.isEmpty() || kind !in NATIVE_COMMAND_KINDS) return false
     if (!running.get()) return false
     try {
-      commandExecutor.execute { runNativeCommand(pair, seq, id, kind, token) }
+      commandExecutor.execute { runNativeCommand(pair, seq, id, kind, request, token) }
     } catch (error: Exception) {
       Log.w(TAG, "command_dispatch_failed ${error.javaClass.simpleName}")
       return false
@@ -366,6 +366,7 @@ class QiLinkService : Service() {
     seq: Long,
     id: String,
     kind: String,
+    request: JSONObject,
     token: String
   ) {
     val self = Thread.currentThread()
@@ -383,14 +384,16 @@ class QiLinkService : Service() {
     try {
       val reply = JSONObject().put("id", id)
       try {
-        val data = executeReadOnlyCommand(kind)
+        val data = executeReadOnlyCommand(kind, request)
         reply.put("ok", true).put("data", data)
+        AuditLogModule.write("command.$kind", "主人下令 · 已执行", this)
         if (kind == KIND_LOCATION_GET) notifyLocationViewed(data)
       } catch (error: Exception) {
         lastCommandError = error.javaClass.simpleName
         // 只记 kind 与异常类名：命令参数与坐标不进日志。
         Log.w(TAG, "command_failed kind=$kind ${error.javaClass.simpleName}")
         reply.put("ok", false).put("error", commandErrorMessage(kind, error))
+        AuditLogModule.write("command.$kind", "主人下令 · 失败（${error.javaClass.simpleName}）", this)
       }
       reply.put("at", System.currentTimeMillis())
       val envelope = PairRelayCrypto.seal(this, pair.first, pair.second, reply.toString())
@@ -415,7 +418,7 @@ class QiLinkService : Service() {
     }
   }
 
-  private fun executeReadOnlyCommand(kind: String): Any =
+  private fun executeReadOnlyCommand(kind: String, request: JSONObject): Any =
     when (kind) {
       KIND_LOCATION_GET -> {
         if (!QiLocationEngine.hasPermission(this)) {
@@ -431,8 +434,50 @@ class QiLinkService : Service() {
       }
       KIND_PERMISSIONS_SNAPSHOT -> permissionSnapshotJson()
       KIND_GUARD_LOCK -> lockDeviceNow()
+      KIND_OVERLAY_SHOW -> showFullscreenMessage(request)
+      KIND_NOTIFICATIONS_DRAIN -> drainNotifications(request.optJSONObject("args")?.optInt("limit", 50) ?: 50)
       else -> throw IllegalArgumentException("未知命令：$kind")
     }
+
+  /**
+   * 通知转发：把监听服务写下的队列交给主人，读完就清空。
+   *
+   * 和 JS 侧 `qiDevice.notifications.drain(limit)` 同一个语义，只是不需要小狗
+   * 先把祈打开——通知积压往往就是他没打开的时候攒下的。
+   */
+  private fun drainNotifications(limit: Int): JSONArray {
+    val file = NotificationRelayService.queueFile(this)
+    if (!file.exists()) return JSONArray()
+    val lines = runCatching { file.readLines() }.getOrDefault(emptyList())
+    if (lines.isEmpty()) return JSONArray()
+    val take = limit.coerceIn(1, MAX_DRAIN_LIMIT)
+    val picked = lines.takeLast(take)
+    val kept = if (lines.size > take) lines.dropLast(take) else emptyList()
+    runCatching {
+      if (kept.isEmpty()) file.delete() else file.writeText(kept.joinToString("\n", postfix = "\n"))
+    }
+    val array = JSONArray()
+    for (line in picked) {
+      runCatching { array.put(JSONObject(line)) }
+    }
+    return array
+  }
+
+  /**
+   * 全屏消息：主人的一句话直接盖在小狗屏幕上，不需要他先打开祈。
+   *
+   * 没有悬浮窗权限时明确报错，让主人知道是权限问题而不是「小狗没理我」。
+   */
+  private fun showFullscreenMessage(request: JSONObject): Any {
+    val args = request.optJSONObject("args") ?: JSONObject()
+    val message = args.optString("message", "").trim()
+    if (message.isEmpty()) throw IllegalArgumentException("消息不能为空")
+    val timeout = args.optInt("timeoutMs", QiFullscreenMessage.DEFAULT_DURATION_MS)
+    if (!QiFullscreenMessage.show(this, message, timeout)) {
+      throw IllegalStateException("小狗还没有开启悬浮窗权限")
+    }
+    return JSONObject().put("shownAt", System.currentTimeMillis())
+  }
 
   /**
    * 远程锁屏。设备管理器只持有 force-lock，所以这里能做的就只是把屏幕锁上；
@@ -470,9 +515,17 @@ class QiLinkService : Service() {
     val place = data as? JSONObject ?: return
     if (!place.optBoolean("ok", false)) return
     if (!place.has("lat") || !place.has("lng")) return
+    // Android 13 及以下：主人取一次位置只留审计，不打扰小狗。
+    if (Build.VERSION.SDK_INT < 34) return
     if (!canPostNotification()) return
     runCatching {
-      NoticeCenter.post(this, NOTICE_LOCATION_VIEWED, "祈 · 位置", "小狗刚刚查看了你的位置", false)
+      NoticeCenter.post(
+        this,
+        NOTICE_LOCATION_VIEWED,
+        "主人想看看你在哪儿",
+        "Android 14 起需要你自己点一下确认：打开「祈」→ 权限管控中心 → 定位",
+        false
+      )
     }.onFailure { Log.w(TAG, "notice_failed ${it.javaClass.simpleName}") }
   }
 
@@ -712,9 +765,9 @@ class QiLinkService : Service() {
     val (title, body) =
       when (kind) {
         KIND_TASK_CREATE -> "主人给你派了新任务" to "打开「祈」看看今天要做什么$whenText"
-        KIND_TASK_VERDICT -> "任务有结果了" to "主人看过你提交的内容$whenText"
         KIND_REWARD_GRANT -> "收到一张奖励券" to "打开「和好券」看看主人给了什么$whenText"
-        KIND_COMMAND_SEND -> "主人发来一条指令" to "打开「祈」后就会执行$whenText"
+        // 任务、指令、查看屏幕时长等一律静默执行，只写审计；通知只留给
+        // 「券 / 截屏 / Android 14+ 定位」这三类用户明确要求提醒的事。
         else -> return
       }
     runCatching { NoticeCenter.post(this, noticeId(seq), title, body, false) }
@@ -766,10 +819,25 @@ class QiLinkService : Service() {
     private const val KIND_PERMISSIONS_SNAPSHOT = "permissions.snapshot"
     private const val KIND_APP_LIMIT = "app.limit"
     private const val KIND_GUARD_LOCK = "guard.lock"
+    private const val KIND_OVERLAY_SHOW = "overlay.show"
+    private const val KIND_NOTIFICATIONS_DRAIN = "notifications.drain"
 
-    /** 只有这三个只读命令值得原生抢在 JS 前面执行。 */
+    /** 一次最多交回 200 条，避免主人端表格被刷爆。 */
+    private const val MAX_DRAIN_LIMIT = 200
+
+    /**
+     * 这些命令必须由常驻服务自己执行：小狗端很可能没打开祈，JS 的 relay 循环
+     * 那时是停的，等 JS 执行等于「主人点了没反应」。
+     */
     private val NATIVE_COMMAND_KINDS =
-      setOf(KIND_LOCATION_GET, KIND_USAGE_STATS, KIND_PERMISSIONS_SNAPSHOT, KIND_GUARD_LOCK)
+      setOf(
+        KIND_LOCATION_GET,
+        KIND_USAGE_STATS,
+        KIND_PERMISSIONS_SNAPSHOT,
+        KIND_GUARD_LOCK,
+        KIND_OVERLAY_SHOW,
+        KIND_NOTIFICATIONS_DRAIN
+      )
 
     /** 与 JS 侧 `notifyLocationViewed` 用同一个 id，重复时是「更新」。 */
     private const val NOTICE_LOCATION_VIEWED = "qi.location.viewed"
