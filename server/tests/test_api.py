@@ -265,6 +265,81 @@ class ApiTest(unittest.TestCase):
         second = puppy.call("POST", "/api/v1/pairs", {
             "ownerName": "再绑一次"}, expect=409)
         self.assertEqual(second["error"]["code"], "already_paired")
+        # 提示必须说清「和谁绑过、下一步去哪」，而不是一句死路。
+        message = second["error"]["message"]
+        self.assertIn("我的身份与联结", message)
+        self.assertIn("绑定好了", message)
+
+    def test_join_twice_explains_unverified_state(self) -> None:
+        """重复加入时要说清「已经绑过了、只是没校验」，而不是让用户无路可走。"""
+        master, _ = self._master("jointwice")
+        created = master.call("POST", "/api/v1/pairs", {"ownerName": "主人A"})
+        code = created["bindingCode"]
+        puppy = Client(self.base)
+        invite = self._new_invite()
+        registered = puppy.call("POST", "/api/v1/auth/register", {
+            "username": "jointwicep", "password": "qi123456", "invite": invite,
+            "deviceId": "jointwice-puppy-0001", "pubkey": "P" * 40,
+        })
+        puppy.token = registered["token"]
+        joined = puppy.call("POST", "/api/v1/pairs/join", {
+            "code": code, "puppyName": "小狗A"})
+        self.assertFalse(joined["pair"]["verified"])
+        again = puppy.call("POST", "/api/v1/pairs/join", {
+            "code": code, "puppyName": "小狗A"}, expect=409)
+        self.assertEqual(again["error"]["code"], "already_paired")
+        message = again["error"]["message"]
+        self.assertIn("主人A", message)
+        self.assertIn("安全校验", message)
+
+    def test_binding_code_rejected_as_invite(self) -> None:
+        """绑定码和邀请码是同一套 8 位字母表，填错位置时要说清怎么走。
+
+        光比格式分不出来，只能查 pairs.code_hash：拿一个还在有效期内的绑定码去注册，
+        服务端要回 invite_is_pair_code，并提示「先登录，再到绑定页填写」。
+        """
+        master, _ = self._master("bindcode")
+        created = master.call("POST", "/api/v1/pairs", {"ownerName": "主人B"})
+        code = created["bindingCode"]
+        client = Client(self.base)
+        failure = client.call("POST", "/api/v1/auth/register", {
+            "username": "bindcodeinvite", "password": "qi123456", "invite": code,
+            "deviceId": "bindcode-device-0001", "pubkey": "C" * 40,
+        }, expect=400)
+        self.assertEqual(failure["error"]["code"], "invite_is_pair_code")
+        message = failure["error"]["message"]
+        self.assertIn("绑定码", message)
+        self.assertIn("邀请码只用于创建新账号", message)
+
+    def test_unpair_reports_already_unpaired(self) -> None:
+        """解绑两次不该报错：第二次要回 alreadyUnpaired，界面才好说「对方先解了」。
+
+        以前第二次直接 404，客户端又把它当失败，用户会以为没解开而反复点。
+        """
+        master, puppy, _, _ = self._paired()
+        first = master.call("DELETE", "/api/v1/pairs", {})
+        self.assertFalse(first.get("alreadyUnpaired", False))
+        second = master.call("DELETE", "/api/v1/pairs", {})
+        self.assertTrue(second["alreadyUnpaired"])
+        # 小狗端也一样：解绑是幂等的，不区分谁先动手。
+        third = puppy.call("DELETE", "/api/v1/pairs", {})
+        self.assertTrue(third["alreadyUnpaired"])
+
+    def test_session_expired_is_401(self) -> None:
+        """token 失效必须是 401，客户端据此清会话回登录页。
+
+        若服务端在这里回 403/404，客户端只会显示「请求失败」，人还停在主界面，
+        每次操作都失败却看不出要重新登录。
+        """
+        inviter = Client(self.base)
+        inviter.call("GET", "/api/v1/pairs/current", expect=401)
+        master, _ = self._master("expired")
+        master.token = "not-a-real-token"
+        expired = master.call("GET", "/api/v1/pairs/current", expect=401)
+        self.assertEqual(expired["error"]["code"], "unauthorized")
+        write = master.call("POST", "/api/v1/relay/send", {
+            "kind": "command.send", "ciphertext": "x"}, expect=401)
+        self.assertEqual(write["error"]["code"], "unauthorized")
 
     def test_relay_roundtrip_and_ack(self) -> None:
         master, puppy, master_id, _ = self._paired()

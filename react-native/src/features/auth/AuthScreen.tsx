@@ -19,8 +19,16 @@ type Mode = 'login' | 'register';
 export function AuthScreen() {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
-  const {state, busy, error, configureServer, login, register, chooseJournalOnly} =
-    useQi();
+  const {
+    state,
+    busy,
+    error,
+    clearError,
+    configureServer,
+    login,
+    register,
+    chooseJournalOnly,
+  } = useQi();
   const [mode, setMode] = useState<Mode>('login');
   const [serverOpen, setServerOpen] = useState(false);
   const [serverUrl, setServerUrl] = useState(state.serverUrl);
@@ -28,6 +36,7 @@ export function AuthScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [invite, setInvite] = useState('');
+  const [localError, setLocalError] = useState('');
 
   const submitLabel = useMemo(
     () => (mode === 'login' ? '登录' : '创建账号'),
@@ -42,7 +51,24 @@ export function AuthScreen() {
     }
   }, [serverUrl]);
 
+  const trimmedInvite = invite.trim();
+  // 邀请码和绑定码是同一套 8 位字母表（服务端 security.random_pair_code()），
+  // 长度不对就一定是打错了；8 位但服务端查不到，会由服务端回 invited_* 的
+  // 具体原因（是绑定码 / 需要邀请码 / 已被使用）。
+  const inviteWrongLength =
+    mode === 'register' &&
+    trimmedInvite.length > 0 &&
+    trimmedInvite.length !== 8;
+
   const submit = () => {
+    // 上一轮的错误（尤其是「这个账号已经存在」）如果不清掉，用户改完字段
+    // 再点一次会以为自己又失败了。
+    clearError();
+    setLocalError('');
+    if (inviteWrongLength) {
+      setLocalError('邀请码是 8 位字符。如果你手上是绑定码，请先用账号登录，再在「绑定」页填写');
+      return;
+    }
     const task = async () => {
       const normalized = serverUrl.trim().replace(/\/+$/, '');
       if (normalized !== state.serverUrl || pin.trim() !== state.pin) {
@@ -56,6 +82,13 @@ export function AuthScreen() {
     };
     task().catch(() => undefined);
   };
+
+  const switchMode = (next: Mode) => {
+    setMode(next);
+    clearError();
+    setLocalError('');
+  };
+  const shownError = localError || error;
 
   return (
     <View style={styles.root}>
@@ -120,7 +153,7 @@ export function AuthScreen() {
                 accessibilityRole="tab"
                 accessibilityState={{selected: active}}
                 accessibilityLabel={item === 'login' ? '登录' : '注册'}
-                onPress={() => setMode(item)}
+                onPress={() => switchMode(item)}
                 style={[
                   styles.segmentItem,
                   active && {
@@ -150,26 +183,38 @@ export function AuthScreen() {
           <FormField
             label="账号"
             value={username}
-            onChangeText={setUsername}
+            onChangeText={value => {
+              setUsername(value);
+              clearError();
+              setLocalError('');
+            }}
             placeholder="小写字母 / 数字 / 下划线"
             autoCapitalize="none"
           />
           <FormField
             label="密码"
             value={password}
-            onChangeText={setPassword}
+            onChangeText={value => {
+              setPassword(value);
+              clearError();
+              setLocalError('');
+            }}
             placeholder="至少 8 位，含字母与数字"
             secureTextEntry
           />
           {mode === 'register' ? (
             <FormField
-              label="邀请码（新服务器可留空）"
+              label="邀请码（第一个账号可留空）"
               value={invite}
-              onChangeText={setInvite}
+              onChangeText={value => {
+                setInvite(value);
+                clearError();
+                setLocalError('');
+              }}
               placeholder="服务器签发的 8 位邀请码"
               autoCapitalize="characters"
               maxLength={8}
-              hint="服务器上第一个账号不需要邀请码；之后由服务器主人生成邀请码，或让主人开启开放注册"
+              hint="绑定码不要填在这里：绑定码是登录后到「绑定」页用的。第一个账号不需要邀请码，之后由服务器主人生成，或让主人开启开放注册"
             />
           ) : null}
         </View>
@@ -180,20 +225,22 @@ export function AuthScreen() {
           </Text>
         ) : null}
 
-        {error ? (
+        {shownError ? (
           <View
             style={[
               styles.errorBox,
               {backgroundColor: withAlpha(colors.error, 0.12)},
             ]}>
-            <Text style={[type.caption, {color: colors.error}]}>{error}</Text>
+            <Text style={[type.caption, {color: colors.error}]}>
+              {shownError}
+            </Text>
           </View>
         ) : null}
 
         <FlatButton
           label={submitLabel}
           onPress={submit}
-          disabled={busy || !username || !password}
+          disabled={busy || !username || !password || inviteWrongLength}
           style={styles.primary}
         />
         <TextButton

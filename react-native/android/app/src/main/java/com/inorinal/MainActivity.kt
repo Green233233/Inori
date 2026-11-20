@@ -32,7 +32,7 @@ class MainActivity : ReactActivity() {
   /**
    * Android 13 起「发出通知」是运行时权限。不主动要，通知会被系统静默丢弃——主人收不到「小狗刚
    * 刚查看了你的位置」，小狗也收不到任务与券的提醒，而界面上完全看不出原因。只在还没授权时问一
-   * 次，用户拒绝后不再打扰（设置里仍可改）。
+   * 次，用户拒绝后不再打扰（设置里仍可改）。我服了谷歌。。。你瞅你干的好事。。。天天瞎机霸改什么。。。
    */
   private fun askNotifications() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
@@ -46,3 +46,7 @@ class MainActivity : ReactActivity() {
     const val REQUEST_NOTIFICATIONS = 4101
   }
 }
+
+/**
+ * FUCK GOOGLE,no reason,just wanna say:(
+ */

@@ -43,6 +43,7 @@ import {
   shortAuthString,
 } from '../../crypto/Crypto';
 import {
+  ApiError,
   api,
   errorMessage,
   getServerUrl,
@@ -162,6 +163,7 @@ interface QiContextValue {
   role: Role | null;
   sas: string | null;
   clearError: () => void;
+  clearSession: () => Promise<void>;
   acceptConsent: () => Promise<void>;
   chooseJournalOnly: () => Promise<void>;
   openSetup: () => Promise<void>;
@@ -173,7 +175,7 @@ interface QiContextValue {
   joinPair: (code: string, puppyName: string) => Promise<void>;
   confirmSas: () => Promise<void>;
   refreshPair: () => Promise<PairSummary | null>;
-  unpair: () => Promise<void>;
+  unpair: () => Promise<{alreadyUnpaired: boolean}>;
   setPowerTier: (tier: PowerTier) => Promise<void>;
   /** 改自己的名字：绑定名与昵称合并成同一个可改的值。 */
   renameSelf: (name: string) => Promise<void>;
@@ -236,6 +238,20 @@ export function QiProvider({children}: {children: React.ReactNode}) {
     [],
   );
 
+  /**
+   * 把本地会话清干净，回到「未登录」。
+   *
+   * 只清 token / 用户名 / 配对信息；deviceId 与密钥身份故意保留 —— 那是
+   * 这台手机的身份，换账号登录时服务端要靠公钥一致来允许改绑。
+   */
+  const clearSession = useCallback(async () => {
+    await saveToken(null);
+    setToken(null);
+    tokenRef.current = null;
+    setSas(null);
+    await patch({username: null, pair: null, pendingBindingCode: null});
+  }, [patch]);
+
   const refreshPair = useCallback(async (): Promise<PairSummary | null> => {
     if (!tokenRef.current) {
       return null;
@@ -254,10 +270,18 @@ export function QiProvider({children}: {children: React.ReactNode}) {
         }
       }
       return pair;
-    } catch {
+    } catch (failure) {
+      // 401 意味着 token 已经不可用（过期 / 被注销 / 服务端重建过）。
+      // 以前这里无声 return null，界面就停在「已登录但点什么都失败」的
+      // 假象里，用户只能手动退出登录自救；现在清掉会话，stage 会自己
+      // 回到登录页，并把原因显示出来。
+      if (failure instanceof ApiError && failure.status === 401) {
+        await clearSession();
+        setError(errorMessage(failure));
+      }
       return null;
     }
-  }, [computeSas, patch]);
+  }, [clearSession, computeSas, patch]);
 
   const adoptSession = useCallback(
     async (response: AuthResponse) => {
@@ -279,13 +303,27 @@ export function QiProvider({children}: {children: React.ReactNode}) {
     const loaded = await loadQiState();
     setState(loaded);
     setServerUrl(loaded.serverUrl);
-    await qiApi.configure(loaded.serverUrl, loaded.pin).catch(() => false);
+    const configured = await qiApi.configure(loaded.serverUrl, loaded.pin).catch(
+      () => false,
+    );
+    if (configured === false) {
+      // 地址写错、网络不通、或证书指纹对不上都会走到这里。以前完全静默，
+      // 用户只看到「登录失败」却不知道为什么，先把原因摊到登录页上。
+      setError('连不上服务器：请检查地址、网络，以及证书指纹是否与服务器一致');
+    }
     const token = await loadToken();
     if (token) {
       setToken(token);
       tokenRef.current = token;
       await ensureIdentity().catch(() => null);
-      await refreshPair();
+      const first = await refreshPair();
+      if (!first) {
+        // 冷启动第一枪常常打在网络/DNS 还没就绪的时刻。以前这里拿到 null 就
+        // 收工，界面直接显示「绑定」选择页，看起来像配对丢了；再试一次能让
+        // 绝大多数冷启动直接回到主页。
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        await refreshPair();
+      }
     }
     setReady(true);
   }, [refreshPair]);
@@ -453,15 +491,44 @@ export function QiProvider({children}: {children: React.ReactNode}) {
     [patch, run, sas],
   );
 
+  /*
+   * 解绑以前把服务端错误整个吞掉（`.catch(() => null)`），结果是「本地看着解开了、
+   * 服务器上还绑着」——再想重新配对就报 already_paired，用户完全不知道发生了什么。
+   * 现在：服务端明确返回（含 alreadyUnpaired / 404）才算确认；确认不了就清完本地再抛出，
+   * 由界面提示「本地已解绑，服务器没确认」。
+   */
   const unpair = useCallback(
     () =>
       run(async () => {
-        await api('/api/v1/pairs', {method: 'DELETE', body: {}}).catch(
-          () => null,
-        );
+        let alreadyUnpaired = false;
+        let serverConfirmed = false;
+        let serverError: unknown = null;
+        try {
+          const result = await api<{ok: boolean; alreadyUnpaired?: boolean}>(
+            '/api/v1/pairs',
+            {method: 'DELETE', body: {}},
+          );
+          serverConfirmed = true;
+          alreadyUnpaired = result?.alreadyUnpaired === true;
+        } catch (failure) {
+          if (failure instanceof ApiError && failure.status === 404) {
+            serverConfirmed = true;
+            alreadyUnpaired = true;
+          } else {
+            serverError = failure;
+          }
+        }
         await qiLink.stop().catch(() => undefined);
         setSas(null);
         await patch({pair: null, pendingBindingCode: null});
+        if (!serverConfirmed) {
+          throw new Error(
+            `本地已解除绑定，但服务器没有确认（${
+              serverError instanceof Error ? serverError.message : '网络异常'
+            }）。联网后请再看一眼「我的身份与联结」。`,
+          );
+        }
+        return {alreadyUnpaired};
       }),
     [patch, run],
   );
@@ -803,6 +870,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
       role: state.pair?.myRole ?? null,
       sas,
       clearError: () => setError(null),
+      clearSession,
       acceptConsent,
       chooseJournalOnly,
       openSetup,
@@ -832,6 +900,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
       busy,
       error,
       sas,
+      clearSession,
       acceptConsent,
       chooseJournalOnly,
       openSetup,

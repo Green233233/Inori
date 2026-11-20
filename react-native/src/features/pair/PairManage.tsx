@@ -98,6 +98,21 @@ export function PairManage({onBack}: {onBack: () => void}) {
           />
         </SoftCard>
 
+        {pair?.peerDeviceMissing ? (
+          <SoftCard radius={16} style={[styles.card, styles.warnCard]}>
+            <Text style={[type.bodyStrong, {color: colors.error}]}>
+              对方设备已注销
+            </Text>
+            <Text
+              style={[
+                type.caption,
+                {color: colors.onSurfaceVariant, lineHeight: 19, marginTop: 6},
+              ]}>
+              对方换了手机或清掉了应用数据，这台设备上的绑定已经失效。建议解除绑定后重新走一次配对。
+            </Text>
+          </SoftCard>
+        ) : null}
+
         <Text
           style={[
             type.caption,
@@ -140,7 +155,9 @@ export function PairManage({onBack}: {onBack: () => void}) {
         onConfirm={() => {
           setConfirmUnpair(false);
           unpair()
-            .then(() => showToast('已解除绑定'))
+            .then(({alreadyUnpaired}) =>
+              showToast(alreadyUnpaired ? '对方已经解绑了，本地也已清理' : '已解除绑定'),
+            )
             .catch((error: any) => showToast(error?.message ?? '解绑失败'));
         }}
       />
@@ -196,6 +213,7 @@ const styles = StyleSheet.create({
   heroSub: {color: 'rgba(255,255,255,0.85)', marginTop: 4},
   sectionTitle: {marginTop: 22, marginBottom: 10},
   card: {paddingHorizontal: 16, paddingVertical: 4, marginBottom: 14},
+  warnCard: {paddingVertical: 14, marginTop: -4},
   row: {
     flexDirection: 'row',
     alignItems: 'center',

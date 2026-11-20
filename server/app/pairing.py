@@ -77,6 +77,9 @@ def summary(db: Database, pair_row: sqlite3.Row, my_device: str) -> dict:
         "peerDeviceId": None if pending else peer_id,
         "peerPubkey": peer_device["pubkey"] if peer_device is not None else None,
         "peerPlatform": peer_device["platform"] if peer_device is not None else None,
+        # 对方账号还在、但设备记录已经不在了（换机后旧设备注销 / 服务器数据被清理）：
+        # 客户端据此提示「对方设备已注销，绑定已失效」，避免一直显示「等待对方确认」。
+        "peerDeviceMissing": (not pending) and peer_device is None,
         "verified": bool(pair_row["verified_at"]),
         "createdAt": pair_row["created_at"],
         "unpairedAt": pair_row["unpaired_at"],
@@ -90,6 +93,28 @@ def summary(db: Database, pair_row: sqlite3.Row, my_device: str) -> dict:
 def current(db: Database, ctx: dict) -> dict:
     row = _active_pair_for_device(db, ctx["deviceId"])
     return {"ok": True, "pair": summary(db, row, ctx["deviceId"]) if row else None}
+
+
+def _already_paired_message(db: Database, pair_row: sqlite3.Row, device_id: str) -> str:
+    """告诉用户「和谁、卡在哪一步、接下来点哪里」，而不是一句死路。
+
+    这次线上反馈的现象是：第一次加入其实已经成功，但响应被中间层压成了 gzip、
+    客户端解析失败，用户以为没成功又点了一次，于是只看到「你已经在一个绑定关系里」，
+    无处可去。所以这里必须把对方的名字和下一步动作写清楚。
+    """
+    row = pair_row
+    mine_is_master = row["master_device"] == device_id
+    owner = (row["owner_name"] or "对方").strip() or "对方"
+    puppy = (row["puppy_name"] or "对方").strip() or "对方"
+    partner = puppy if mine_is_master else owner
+    if row["verified_at"]:
+        return f"你已经和「{partner}」绑定好了。要换人请先在「我的 → 我的身份与联结」里解除绑定"
+    if str(row["puppy_device"]).startswith(PENDING_PREFIX):
+        return f"你正在等「{puppy}」用绑定码加入。不需要再点一次，可以到「我的 → 我的身份与联结」查看进度"
+    return (
+        f"你已经和「{partner}」绑定过了，只是还没做安全校验。"
+        "请到「我的 → 我的身份与联结」继续校验，或者先解除绑定再重新加入"
+    )
 
 
 def create(db: Database, ctx: dict, body: dict) -> dict:
@@ -122,7 +147,10 @@ def create(db: Database, ctx: dict, body: dict) -> dict:
             "codeExpiresAt": row["code_expires_at"],
         }
     if existing is not None:
-        raise conflict("already_paired", "你已经在一个绑定关系里")
+        raise conflict(
+            "already_paired",
+            _already_paired_message(db, existing, ctx["deviceId"]),
+        )
 
     code = security.random_pair_code()
     pair_id = security.random_id("pair_")
@@ -146,8 +174,12 @@ def create(db: Database, ctx: dict, body: dict) -> dict:
 
 
 def join(db: Database, ctx: dict, body: dict) -> dict:
-    if _active_pair_for_device(db, ctx["deviceId"]) is not None:
-        raise conflict("already_paired", "你已经在一个绑定关系里")
+    existing = _active_pair_for_device(db, ctx["deviceId"])
+    if existing is not None:
+        raise conflict(
+            "already_paired",
+            _already_paired_message(db, existing, ctx["deviceId"]),
+        )
     code = security.normalize_pair_code(body.get("code") or "")
     if len(code) != 8:
         raise bad_request("invalid_code", "绑定码是 8 位字符")
@@ -218,7 +250,10 @@ def update(db: Database, ctx: dict, body: dict) -> dict:
 def unpair(db: Database, ctx: dict, body: dict) -> dict:
     row = _active_pair_for_device(db, ctx["deviceId"])
     if row is None:
-        raise not_found("pair_not_found", "尚未绑定")
+        # 对方已经先解开、或者本机其实早就解开了：这不是错误，客户端应当
+        # 当成「现在确实没有绑定」处理。返回 200 而不是 404，避免界面上
+        # 弹一个「解除失败」但其实已经解开了。
+        return {"ok": True, "alreadyUnpaired": True, "unpairedAt": None}
     peer = (row["puppy_device"] if row["master_device"] == ctx["deviceId"]
             else row["master_device"])
     now = security.iso()

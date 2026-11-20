@@ -26,6 +26,11 @@ export interface PairSummary {
   peerLastSeen: string | null;
   peerBattery: number | null;
   peerPowerTier: PowerTier | null;
+  /**
+   * 对方账号还在、但设备记录已经不在了（换机后旧设备被注销）。
+   * 旧服务器不返回该字段，所以是可选的。
+   */
+  peerDeviceMissing?: boolean;
 }
 
 /**

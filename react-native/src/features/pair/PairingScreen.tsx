@@ -13,6 +13,7 @@ import {SoftCard} from '../../components/Surfaces';
 import {FlatButton, TextButton} from '../../components/Ui';
 import {useQi} from '../qi/QiProvider';
 import {FormField} from '../qi/FormField';
+import {isPairCodeComplete, normalizePairCode} from './pairCode';
 
 type Mode = 'choose' | 'master' | 'puppy';
 
@@ -36,21 +37,67 @@ export function PairingScreen() {
   const [ownerName, setOwnerName] = useState('');
   const [puppyName, setPuppyName] = useState('小不点儿');
   const [code, setCode] = useState('');
+  const [pollMisses, setPollMisses] = useState(0);
+
+  // 未校验的双方都要轮询：主人等对方加入，小狗等对方（主人）回到这一页确认。
+  // 原来只在「主人 + 还没人加入」时轮询，导致小狗端加入后主人确认完，
+  // 小狗端界面永远停在「等待校验」，只能杀进程重进。
+  const needPoll = !!pair && !pair.verified;
+
+  // 已经有未校验的配对（比如杀进程重进、或对方刚加入）时，直接落到自己的角色页，
+  // 否则会停在「你是主人还是小狗」的选择页，让人以为配对丢了。
+  const pairRole = pair?.myRole;
+  useEffect(() => {
+    if (!pair || pair.verified || !pairRole) {
+      return;
+    }
+    setMode(current =>
+      current === 'choose' ? (pairRole === 'MASTER' ? 'master' : 'puppy') : current,
+    );
+  }, [pair, pairRole]);
+
+  const pollOnce = React.useCallback(async () => {
+    const next = await refreshPair();
+    setPollMisses(count => (next ? 0 : count + 1));
+    return next;
+  }, [refreshPair]);
+
+  useEffect(() => {
+    if (!needPoll) {
+      setPollMisses(0);
+      return;
+    }
+    let alive = true;
+    const timer = setInterval(() => {
+      refreshPair()
+        .then(next => {
+          if (!alive) {
+            return;
+          }
+          setPollMisses(count => (next ? 0 : count + 1));
+        })
+        .catch(() => {
+          if (alive) {
+            setPollMisses(count => count + 1);
+          }
+        });
+    }, 2500);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [needPoll, refreshPair]);
 
   const waitingForPeer =
     mode === 'master' && !!pair && !pair.peerPubkey && !sas;
 
-  useEffect(() => {
-    if (!waitingForPeer) {
-      return;
-    }
-    const timer = setInterval(() => {
-      refreshPair().catch(() => undefined);
-    }, 2500);
-    return () => clearInterval(timer);
-  }, [waitingForPeer, refreshPair]);
-
   const sasPending = !!pair && !!sas && !pair.verified;
+
+  // 已经加入（有对方公钥）却还没有 SAS：可能是本地算码失败，或者刷新前
+  // 还没拿到配对详情。给一个明确的「正在核对」态 + 手动刷新，别留白屏。
+  const sasMissing = !!pair && !!pair.peerPubkey && !pair.verified && !sas;
+
+  const pollStalled = needPoll && pollMisses >= 3;
 
   return (
     <View style={styles.root}>
@@ -106,9 +153,16 @@ export function PairingScreen() {
             </Text>
             <View style={styles.waitRow}>
               <Text style={[type.body, {color: colors.onSurfaceVariant}]}>
-                等待小狗端加入…
+                {pollStalled ? '暂时没连上服务器，正在重试…' : '等待小狗端加入…'}
               </Text>
             </View>
+            <TextButton
+              label="刷新状态"
+              onPress={() => {
+                pollOnce().catch(() => undefined);
+              }}
+              style={styles.secondary}
+            />
             <TextButton
               label="取消绑定"
               onPress={() => {
@@ -119,7 +173,36 @@ export function PairingScreen() {
           </SoftCard>
         ) : null}
 
-        {!sasPending && !waitingForPeer && mode === 'choose' ? (
+        {!sasPending && !waitingForPeer && sasMissing ? (
+          <SoftCard radius={20} style={styles.sasCard}>
+            <Text style={[type.section, {color: colors.onSurface}]}>
+              正在核对安全校验码…
+            </Text>
+            <Text style={[type.body, styles.sasHint, {color: colors.onSurfaceVariant}]}>
+              双方已经连上，正在本地算出六位校验码。
+              {pollStalled
+                ? '目前没连上服务器，可以先点下面的「刷新状态」。'
+                : '如果一直停在这里，点一下「刷新状态」。'}
+            </Text>
+            <FlatButton
+              label="刷新状态"
+              onPress={() => {
+                pollOnce().catch(() => undefined);
+              }}
+              disabled={busy}
+              style={styles.primary}
+            />
+            <TextButton
+              label="退出重来"
+              onPress={() => {
+                unpair().catch(() => undefined);
+              }}
+              style={styles.secondary}
+            />
+          </SoftCard>
+        ) : null}
+
+        {!sasPending && !waitingForPeer && !sasMissing && mode === 'choose' ? (
           <>
             <Text style={[type.body, styles.hint, {color: colors.onSurfaceVariant}]}>
               一个人是主人，一个人是小狗。绑定后两端各自拥有独立的四个板块。
@@ -134,10 +217,17 @@ export function PairingScreen() {
               description="决定授权什么、随时撤回；接收任务与券，也可以查看主人共享的状态。"
               onPress={() => setMode('puppy')}
             />
+            <TextButton
+              label="已经绑定过？刷新绑定状态"
+              onPress={() => {
+                pollOnce().catch(() => undefined);
+              }}
+              style={styles.secondary}
+            />
           </>
         ) : null}
 
-        {!sasPending && !waitingForPeer && mode === 'master' ? (
+        {!sasPending && !waitingForPeer && !sasMissing && mode === 'master' ? (
           <SoftCard radius={18} style={styles.formCard}>
             <FormField label="主人的名字" value={ownerName} onChangeText={setOwnerName} placeholder="例如：我" />
             <FormField label="小狗的名字" value={puppyName} onChangeText={setPuppyName} placeholder="例如：小不点儿" />
@@ -155,23 +245,26 @@ export function PairingScreen() {
           </SoftCard>
         ) : null}
 
-        {!sasPending && !waitingForPeer && mode === 'puppy' ? (
+        {!sasPending && !waitingForPeer && !sasMissing && mode === 'puppy' ? (
           <SoftCard radius={18} style={styles.formCard}>
             <FormField
               label="绑定码"
               value={code}
-              onChangeText={text => setCode(text.toUpperCase())}
+              onChangeText={text => setCode(normalizePairCode(text))}
               placeholder="8 位字符"
               autoCapitalize="characters"
               maxLength={8}
+              hint="从主人那边复制过来即可，空格和短横线会自动去掉"
             />
             <FormField label="小狗的名字" value={puppyName} onChangeText={setPuppyName} />
             <FlatButton
               label="加入绑定"
               onPress={() => {
-                joinPair(code, puppyName || '小狗').catch(() => undefined);
+                joinPair(normalizePairCode(code), puppyName || '小狗').catch(
+                  () => undefined,
+                );
               }}
-              disabled={busy || code.length !== 8}
+              disabled={busy || !isPairCodeComplete(code)}
               style={styles.primary}
             />
             <TextButton label="返回" onPress={() => setMode('choose')} style={styles.secondary} />

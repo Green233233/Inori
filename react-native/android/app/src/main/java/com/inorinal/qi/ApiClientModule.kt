@@ -102,7 +102,11 @@ class ApiClientModule(reactContext: ReactApplicationContext) :
       connection.readTimeout = timeoutMs.coerceIn(1_000, 60_000)
       connection.setRequestProperty("Accept", "application/json")
       connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-      connection.setRequestProperty("Accept-Encoding", "gzip")
+      // 千万不要自己写 Accept-Encoding: gzip。
+      // HttpURLConnection 自己加这个头时会顺带用 GZIPInputStream 解压；一旦我们
+      // 手动设置，它就把「压缩过的字节」原样交出来，JS 侧 JSON.parse 失败，界面
+      // 上只会看到「服务器返回了无法解析的数据」——而 Caddy 配了 encode gzip，
+      // 凡是超过阈值的响应（例如绑定、长轮询）都会被压缩，于是时好时坏。
       if (!token.isNullOrEmpty()) {
         connection.setRequestProperty("Authorization", "Bearer $token")
       }

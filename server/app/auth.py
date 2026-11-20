@@ -95,6 +95,24 @@ def _open_registration() -> bool:
     return os.environ.get("INORINAL_OPEN_REGISTRATION", "").strip() == "1"
 
 
+def _is_active_pair_code(conn, code: str) -> bool:
+    """这个码是不是某条还在等对方加入的绑定码。
+
+    绑定码和邀请码用同一套 8 位字母表（`security.random_pair_code()`），
+    光看格式分不出来。用户把绑定码填进注册页的邀请码框是最常见的困惑，
+    所以 invite 查不到时再回查一次 pairs，好给出「这是绑定码」的定向提示，
+    而不是「这台服务器需要邀请码」这种答非所问的话。
+    """
+    if not code:
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM pairs WHERE code_hash=? AND unpaired_at IS NULL"
+        " AND code_expires_at > ?",
+        (security.hash_pair_code(code), security.iso()),
+    ).fetchone()
+    return row is not None
+
+
 def register(db: Database, body: dict, ip: str) -> dict:
     username = str(body.get("username") or "").strip().lower()
     password = str(body.get("password") or "")
@@ -128,6 +146,12 @@ def register(db: Database, body: dict, ip: str) -> dict:
             # 服务器刚部署时的第一个账号不需要邀请码；开放注册模式下都放行。
             pass
         elif used is None:
+            if _is_active_pair_code(conn, invite):
+                raise bad_request(
+                    "invite_is_pair_code",
+                    "这是绑定码，不是邀请码：请先用账号登录，再在「绑定」页填写。"
+                    "邀请码只用于创建新账号，绑定码用于把两台手机连起来",
+                )
             raise forbidden(
                 "invite_required",
                 "这台服务器需要邀请码。请让服务器主人在服务器上生成一个"
