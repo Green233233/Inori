@@ -30,3 +30,6 @@ local.properties
 react-native/node_modules/
 __pycache__/
 *.pyc
+
+# 本地分发的构建产物，不入库
+/dist/
