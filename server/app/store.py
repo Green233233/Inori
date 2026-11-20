@@ -191,6 +191,17 @@ CREATE TABLE IF NOT EXISTS admin_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- 后台外观偏好按管理员保存；自定义背景文件落在数据目录，库里只记文件名。
+CREATE TABLE IF NOT EXISTS admin_preferences (
+  admin_id INTEGER PRIMARY KEY,
+  theme_mode TEXT NOT NULL DEFAULT 'dark',
+  background TEXT NOT NULL DEFAULT 'bing',
+  solid_color TEXT NOT NULL DEFAULT '#121212',
+  blur INTEGER NOT NULL DEFAULT 6,
+  custom_file TEXT,
+  updated_at TEXT
+);
 """
 
 

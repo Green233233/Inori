@@ -1,4 +1,4 @@
-# 祈 · 账户管理后台（admin v0.1.1）
+# 祈 · 账户管理后台（admin v0.1.2）
 
 面向服务器主人的网页管理台，直接读写 `inorinal` 服务端同一份 SQLite（`/var/lib/inorinal/qi.sqlite3`），
 不另跑进程、不占额外端口：所有页面与接口都挂在现有服务的 `/admin` 下。
@@ -12,7 +12,7 @@
 - 本机调试：<http://127.0.0.1:8095/admin/>
 
 登录页每天会从 Bing 拉取一张壁纸并缓存在服务器本地；拉取失败时回退到最近一张缓存，
-不影响登录。左栏是产品介绍，右栏是登录卡片。
+不影响登录。桌面端左栏是产品介绍，右栏是登录卡片；窄屏自动隐藏介绍并让卡片居中。
 
 ## 登录与密码
 
@@ -24,9 +24,9 @@
 | 登录保护 | 同一 IP 1 小时内输错 10 次 → 该 IP 锁定 1 小时，锁定期间即使密码正确也拒绝 |
 | 改密保护 | 已登录后连续 5 次旧密码错误 → 该账号改密入口锁定 15 分钟 |
 | 超长输入 | 用户名最多 64 字符、密码最多 256 字符，超出直接拒绝，不进入哈希与数据库 |
-| 会话 | Bearer token，12 小时；存在 `sessionStorage`，关闭标签页即失效 |
+| 会话 | Bearer token，12 小时；存在 `sessionStorage`，关闭标签页即失效；改密会注销该管理员其它会话 |
 
-管理员表与会话表：`admins`、`admin_sessions`；失败记录与封禁：`admin_login_attempts`、`admin_ip_bans`。
+管理员表与会话表：`admins`、`admin_sessions`；失败记录与封禁：`admin_login_attempts`、`admin_ip_bans`；外观偏好：`admin_preferences`。
 
 ### 忘记密码 / 重置为出厂状态
 
@@ -65,9 +65,19 @@ PY
   关闭后新账户只能由后台创建或使用邀请码。
 - **导出 Excel**：真正的 `.xlsx`（标准库 `zipfile` 生成），11 列，含冻结首行与筛选；文件名
   `qi-accounts-YYYYMMDD-HHMM.xlsx`。不再导出「绑定对象」与「角色」两列，这两项仍可在页面查看。
+- **设置 / 管理员**：`设置`页可查看全部后台管理员、创建新管理员（新账号首次登录必须改密），
+  也可修改当前管理员密码；所有管理员权限相同。
+- **主题与背景**：每个管理员独立保存外观偏好。
+  - 主题：深色 / 浅色 / 跟随系统。
+  - 背景：纯色（自选 `#RRGGBB`）、Bing 每日壁纸、自行上传（JPEG / PNG / WebP，≤4MB）。
+  - 模糊：0–30px，仅作用于背景，不影响文字与控件。
+  - 深色模式下背景自动覆盖一层深色护眼遮罩；浅色模式使用浅色遮罩。
+  - 自定义背景存于 `<data_dir>/admin-cache/themes/admin-<id>.<ext>`，数据库只保存文件名；
+    通过带 Bearer 的接口读取，不使用公开静态路径。
 - **审计**：所有管理动作写 `audit`：`admin_login`、`admin_locked`、`admin_password_changed`、
   `admin_create_account`、`admin_ban_account`、`admin_unban_account`、`admin_delete_account`、
-  `admin_registration`。
+  `admin_registration`、`admin_create_admin`、`admin_theme_updated`、`admin_background_upload`、
+  `admin_background_deleted`。
 
 ## 统计口径
 
@@ -81,7 +91,7 @@ PY
 
 - 后台只通过 HTTPS 暴露；Caddy 对 `http://124.221.102.236/admin*` 返回 `308`，应用本身只监听 `127.0.0.1:8095`。
 - 管理接口全部要求 `Authorization: Bearer <token>`，不使用 Cookie，因此不存在 CSRF。
-- 页面与接口响应带 CSP（`script-src 'self'`）、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、
+- 页面与接口响应带 CSP（`script-src 'self'`，`img-src` 额外允许 `blob:` 供自定义背景预览）、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、
   `Strict-Transport-Security`、`Permissions-Policy` 与 `Cross-Origin-Resource-Policy: same-origin`。
 - 静态资源白名单仅 `index.html / style.css / app.js / favicon.svg`，拒绝路径穿越。
 - 反代只信任来自 `127.0.0.1` 的 `X-Forwarded-For`，并取**最后一跳**，防止客户端伪造来源 IP。
@@ -99,16 +109,19 @@ server/app/admin.py          管理接口、统计、xlsx 导出
 server/app/settings.py       DB 设置读写（open_registration）
 server/app/admin_web/        前端静态文件（白名单）
 server/app/store.py          admins / admin_sessions / admin_login_attempts /
-                             admin_ip_bans / server_stats / admin_settings + users.ban_*
+                             admin_ip_bans / server_stats / admin_settings /
+                             admin_preferences + users.ban_*
 server/app/auth.py           account_problem()：封禁 / 停用拦截
 server/app/server.py         /admin、/admin/assets/*、/admin/api/* 与字节统计埋点
 ```
 
 ## 部署 / 更新
 
-沿用 `server/deploy/install.sh` 或仓库内 `.tmp-dev/deploy-server.py`（paramiko + tar 同步到
-`/opt/inorinal/app`，然后 `systemctl restart inorinal`）。服务启动时自动建表、补列并种下默认管理员，
-不需要手工迁移。
+沿用 `server/deploy/install.sh` 或仓库内 paramiko 同步脚本（上传到 `/opt/inorinal/app`，
+然后 `systemctl restart inorinal`）。服务启动时自动建表、补列并种下默认管理员，不需要手工迁移。
+
+> 若仓库里同时存在与服务端无关的未发布改动（例如 `server/app/__init__.py` 的版本号），
+> 定向部署时只同步后台相关文件，避免把未发布的版本号带上生产。
 
 IP 直达依赖 Caddy 的两个 IP 站点块（`/etc/caddy/Caddyfile`）：
 
@@ -139,5 +152,7 @@ HTTP 块只负责把 `/admin*` 308 到 HTTPS，根路径仍然反代给既有站
 python -m py_compile server/app/admin.py server/app/server.py server/app/auth.py \
   server/app/store.py server/app/settings.py
 python server/tests/test_api.py
-python .tmp-dev/admin_e2e.py   # 53 项管理后台端到端断言
+python .tmp-dev/admin_e2e.py            # 53 项管理后台端到端断言
+python .tmp-dev/admin_settings_check.py  # 设置页 / 管理员 / 主题 / 背景
+python .tmp-dev/admin_mobile_check.py    # 390px 移动端布局
 ```

@@ -1,4 +1,4 @@
-"""祈 · 账户管理后台（v0.1.1）。
+"""祈 · 账户管理后台（v0.1.2）。
 
 纯标准库实现：管理员认证、账户管理、服务统计、Excel 导出。与 App 的
 普通账号/令牌完全分离——管理员会话只存在 admin_sessions，密码用同一套
@@ -15,6 +15,7 @@ scrypt 哈希。所有接口都挂在 `/admin/api/*` 下，静态页面由 `admi
 
 from __future__ import annotations
 
+import base64
 import datetime as _dt
 import io
 import json
@@ -33,7 +34,7 @@ from . import VERSION, security, settings
 from .errors import ApiError, bad_request, conflict, forbidden, not_found, too_many, unauthorized
 from .store import Database
 
-ADMIN_VERSION = "0.1.1"
+ADMIN_VERSION = "0.1.2"
 API_PREFIX = "/admin/api"
 
 DEFAULT_ADMIN = "admin"
@@ -75,6 +76,14 @@ _BG_MAX_BYTES = 8 * 1024 * 1024
 _BG_FAIL_SECONDS = 300
 _bg_lock = threading.Lock()
 _bg_fail_until = 0.0
+
+THEME_MODES = {"dark", "light", "system"}
+THEME_BACKGROUNDS = {"solid", "bing", "upload"}
+THEME_MAX_BLUR = 30
+MAX_BACKGROUND_BYTES = 4 * 1024 * 1024
+MAX_BACKGROUND_BODY = 6 * 1024 * 1024
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_ADMIN_USERNAME_RE = re.compile(r"^[a-z0-9_]{3,32}$")
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +241,159 @@ def login_background(db: Database) -> FileResponse:
 
 
 # ---------------------------------------------------------------------------
+# 管理员外观偏好
+# ---------------------------------------------------------------------------
+def _theme_folder(db: Database) -> str:
+    return os.path.join(_bg_folder(db), "themes")
+
+
+def _theme_row(db: Database, admin_id: int) -> sqlite3.Row:
+    row = db.conn.execute(
+        "SELECT * FROM admin_preferences WHERE admin_id=?", (admin_id,)
+    ).fetchone()
+    if row is None:
+        db.conn.execute(
+            "INSERT OR IGNORE INTO admin_preferences(admin_id, updated_at)"
+            " VALUES(?,?)",
+            (admin_id, security.iso()),
+        )
+        row = db.conn.execute(
+            "SELECT * FROM admin_preferences WHERE admin_id=?", (admin_id,)
+        ).fetchone()
+    return row
+
+
+def _theme_payload(row: sqlite3.Row) -> dict:
+    return {
+        "mode": row["theme_mode"],
+        "background": row["background"],
+        "solidColor": row["solid_color"],
+        "blur": int(row["blur"] or 0),
+        "hasCustomBackground": bool(row["custom_file"]),
+    }
+
+
+def get_theme(db: Database, session: sqlite3.Row) -> dict:
+    row = _theme_row(db, int(session["admin_id"]))
+    return {"ok": True, "theme": _theme_payload(row)}
+
+
+def update_theme(db: Database, session: sqlite3.Row, body: dict, ip: str) -> dict:
+    admin_id = int(session["admin_id"])
+    current = _theme_row(db, admin_id)
+    mode = str(body.get("mode") or current["theme_mode"])
+    background = str(body.get("background") or current["background"])
+    solid = str(body.get("solidColor") or current["solid_color"])
+    raw_blur = body.get("blur", current["blur"])
+    if mode not in THEME_MODES:
+        raise bad_request("invalid_theme_mode", "主题模式不合法")
+    if background not in THEME_BACKGROUNDS:
+        raise bad_request("invalid_background", "背景类型不合法")
+    if not _HEX_COLOR_RE.match(solid):
+        raise bad_request("invalid_solid_color", "纯色背景必须是 #RRGGBB")
+    if isinstance(raw_blur, bool):
+        raise bad_request("invalid_blur", "模糊程度不合法")
+    try:
+        blur = int(raw_blur)
+    except (TypeError, ValueError):
+        raise bad_request("invalid_blur", "模糊程度不合法")
+    if blur < 0 or blur > THEME_MAX_BLUR:
+        raise bad_request("invalid_blur", "模糊程度需在 0–30 之间")
+    if background == "upload" and not current["custom_file"]:
+        raise bad_request("background_missing", "请先上传一张背景图片")
+    db.conn.execute(
+        "UPDATE admin_preferences SET theme_mode=?, background=?,"
+        " solid_color=?, blur=?, updated_at=? WHERE admin_id=?",
+        (mode, background, solid.lower(), blur, security.iso(), admin_id),
+    )
+    db.audit("admin_theme_updated", detail=f"{mode}/{background}", ip=ip)
+    return {"ok": True, "theme": _theme_payload(_theme_row(db, admin_id))}
+
+
+def upload_theme_background(db: Database, session: sqlite3.Row, body: dict,
+                            ip: str) -> dict:
+    admin_id = int(session["admin_id"])
+    raw = body.get("data")
+    if not isinstance(raw, str) or not raw.strip():
+        raise bad_request("missing_image", "请选择一张图片")
+    payload = raw.strip()
+    if payload.startswith("data:"):
+        comma = payload.find(",")
+        if comma < 0:
+            raise bad_request("invalid_image", "图片数据不合法")
+        payload = payload[comma + 1:]
+    try:
+        data = base64.b64decode(payload, validate=True)
+    except Exception:
+        raise bad_request("invalid_image", "图片数据不合法")
+    if len(data) > MAX_BACKGROUND_BYTES:
+        raise ApiError(413, "background_too_large", "背景图片不能超过 4MB")
+    mime = _image_type(data)
+    if mime is None:
+        raise bad_request("invalid_image", "仅支持 JPEG、PNG 或 WebP 图片")
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[mime]
+    folder = _theme_folder(db)
+    filename = f"admin-{admin_id}.{ext}"
+    path = os.path.join(folder, filename)
+    try:
+        os.makedirs(folder, exist_ok=True)
+        temporary = path + ".tmp"
+        with open(temporary, "wb") as handle:
+            handle.write(data)
+        os.replace(temporary, path)
+        for other in ("jpg", "png", "webp"):
+            stale = os.path.join(folder, f"admin-{admin_id}.{other}")
+            if other != ext and os.path.exists(stale):
+                try:
+                    os.remove(stale)
+                except OSError:
+                    pass
+    except OSError:
+        raise ApiError(500, "background_store_failed", "背景图片保存失败")
+    db.conn.execute(
+        "UPDATE admin_preferences SET background='upload', custom_file=?,"
+        " updated_at=? WHERE admin_id=?",
+        (filename, security.iso(), admin_id),
+    )
+    db.audit("admin_background_upload", ip=ip)
+    return {"ok": True, "theme": _theme_payload(_theme_row(db, admin_id))}
+
+
+def theme_background(db: Database, session: sqlite3.Row) -> FileResponse:
+    row = _theme_row(db, int(session["admin_id"]))
+    filename = row["custom_file"]
+    if not filename or os.path.basename(filename) != filename:
+        raise not_found("background_not_found", "尚未上传背景图片")
+    path = os.path.join(_theme_folder(db), filename)
+    data = _read_bytes(path)
+    if not data:
+        raise not_found("background_not_found", "背景图片不存在")
+    return FileResponse(
+        data, _image_type(data) or "application/octet-stream",
+        {"Cache-Control": "private, no-store"},
+    )
+
+
+def delete_theme_background(db: Database, session: sqlite3.Row, ip: str) -> dict:
+    admin_id = int(session["admin_id"])
+    row = _theme_row(db, admin_id)
+    filename = row["custom_file"]
+    if filename:
+        path = os.path.join(_theme_folder(db), filename)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    db.conn.execute(
+        "UPDATE admin_preferences SET custom_file=NULL, background='bing',"
+        " updated_at=? WHERE admin_id=?",
+        (security.iso(), admin_id),
+    )
+    db.audit("admin_background_deleted", ip=ip)
+    return {"ok": True, "theme": _theme_payload(_theme_row(db, admin_id))}
+
+
+# ---------------------------------------------------------------------------
 # 时间小工具
 # ---------------------------------------------------------------------------
 def _cst_day(moment: _dt.datetime | None = None) -> str:
@@ -274,6 +436,79 @@ def ensure_seed(db: Database) -> None:
     now = security.iso()
     db.conn.execute("DELETE FROM admin_sessions WHERE expires_at<=?", (now,))
     db.conn.execute("DELETE FROM admin_ip_bans WHERE blocked_until<=?", (now,))
+
+
+def list_admins(db: Database, session: sqlite3.Row) -> dict:
+    rows = db.conn.execute(
+        "SELECT a.id, a.username, a.created_at, a.password_changed_at,"
+        " a.must_change_password,"
+        " (SELECT MAX(at) FROM audit WHERE action='admin_login'"
+        "   AND detail=a.username) AS last_login"
+        " FROM admins a ORDER BY a.id"
+    ).fetchall()
+    current = int(session["admin_id"])
+    return {
+        "ok": True,
+        "items": [
+            {
+                "id": int(row["id"]),
+                "username": row["username"],
+                "createdAt": row["created_at"],
+                "createdAtLocal": _local(row["created_at"]),
+                "passwordChangedAt": row["password_changed_at"],
+                "mustChangePassword": bool(row["must_change_password"]),
+                "lastLogin": row["last_login"],
+                "lastLoginLocal": _local(row["last_login"]),
+                "isSelf": int(row["id"]) == current,
+            }
+            for row in rows
+        ],
+    }
+
+
+def create_admin(db: Database, body: dict, ip: str) -> dict:
+    username = str(body.get("username") or "").strip().lower()
+    password = str(body.get("password") or "")
+    if not _ADMIN_USERNAME_RE.match(username):
+        raise bad_request(
+            "invalid_username", "管理员账号需为 3–32 位小写字母、数字或下划线"
+        )
+    if len(password) > _MAX_PASSWORD:
+        raise bad_request("invalid_password", "密码长度不合法")
+    problem = security.password_problem(password)
+    if problem:
+        raise bad_request("weak_password", problem)
+    if password == DEFAULT_PASSWORD:
+        raise bad_request("weak_password", "不能使用默认密码")
+    try:
+        with db.conn:
+            db.conn.execute(
+                "INSERT INTO admins(username, password_hash, created_at,"
+                " must_change_password) VALUES(?,?,?,1)",
+                (username, security.hash_password(password), security.iso()),
+            )
+            db.audit("admin_create_admin", detail=username, ip=ip)
+    except sqlite3.IntegrityError:
+        raise conflict("admin_username_taken", "该管理员账号已存在")
+    row = db.conn.execute(
+        "SELECT id, username, created_at, password_changed_at,"
+        " must_change_password FROM admins WHERE username=?",
+        (username,),
+    ).fetchone()
+    return {
+        "ok": True,
+        "item": {
+            "id": int(row["id"]),
+            "username": row["username"],
+            "createdAt": row["created_at"],
+            "createdAtLocal": _local(row["created_at"]),
+            "passwordChangedAt": row["password_changed_at"],
+            "mustChangePassword": bool(row["must_change_password"]),
+            "lastLogin": None,
+            "lastLoginLocal": None,
+            "isSelf": False,
+        },
+    }
 
 
 def _active_lock(db: Database, ip: str) -> str | None:
@@ -375,10 +610,12 @@ def login(db: Database, body: dict, ip: str) -> dict:
     return {
         "ok": True,
         "token": token,
+        "id": int(row["id"]),
         "username": row["username"],
         "mustChangePassword": bool(row["must_change_password"]),
         "expiresAt": expires,
         "adminVersion": ADMIN_VERSION,
+        "theme": _theme_payload(_theme_row(db, int(row["id"]))),
     }
 
 
@@ -469,6 +706,7 @@ def logout(db: Database, token: str) -> dict:
 def _me(db: Database, session: sqlite3.Row) -> dict:
     return {
         "ok": True,
+        "id": int(session["admin_id"]),
         "username": session["username"],
         "mustChangePassword": bool(session["must_change_password"]),
         "adminVersion": ADMIN_VERSION,
@@ -478,6 +716,7 @@ def _me(db: Database, session: sqlite3.Row) -> dict:
             "windowMinutes": FAIL_WINDOW_SECONDS // 60,
             "lockMinutes": LOCK_SECONDS // 60,
         },
+        "theme": _theme_payload(_theme_row(db, int(session["admin_id"]))),
     }
 
 
@@ -1307,6 +1546,20 @@ def dispatch(db: Database, method: str, path: str, query: dict, body: dict,
         return change_password(db, token or "", body, ip)
     if route == "/logout" and method == "POST":
         return logout(db, token or "")
+    if route == "/admins" and method == "GET":
+        return list_admins(db, session)
+    if route == "/admins" and method == "POST":
+        return create_admin(db, body, ip)
+    if route == "/theme" and method == "GET":
+        return get_theme(db, session)
+    if route == "/theme" and method == "PUT":
+        return update_theme(db, session, body, ip)
+    if route == "/theme/background" and method == "POST":
+        return upload_theme_background(db, session, body, ip)
+    if route == "/theme/background" and method == "GET":
+        return theme_background(db, session)
+    if route == "/theme/background" and method == "DELETE":
+        return delete_theme_background(db, session, ip)
     if route == "/overview" and method == "GET":
         return overview(db)
     if route == "/accounts" and method == "GET":
@@ -1337,7 +1590,8 @@ def dispatch(db: Database, method: str, path: str, query: dict, body: dict,
         return unban_account(db, int(matched.group(1)), ip)
 
     if route in {"/me", "/change-password", "/logout", "/overview", "/accounts",
-                 "/accounts/export", "/settings", "/settings/registration", "/audit"}:
+                 "/accounts/export", "/settings", "/settings/registration", "/audit",
+                 "/admins", "/theme", "/theme/background"}:
         raise ApiError(405, "method_not_allowed", "方法不允许")
     if re.fullmatch(r"/accounts/\d+", route) or re.fullmatch(
             r"/accounts/\d+/(ban|unban)", route):

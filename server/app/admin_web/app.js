@@ -6,6 +6,7 @@
 
   var API = "/admin/api";
   var TOKEN_KEY = "qi.admin.token";
+  var THEME_CACHE_KEY = "qi.admin.theme";
   var PAGE_SIZE = 20;
 
   var state = {
@@ -14,6 +15,11 @@
     view: "overview",
     overview: null,
     accounts: { items: [], total: 0, page: 1, pages: 1, q: "", status: "all" },
+    theme: null,
+    themeSaveSeq: 0,
+    wallpaperVersion: 0,
+    wallpaperKey: "",
+    wallpaperUrl: null,
     busy: false,
     refreshing: false,
     autoTimer: null,
@@ -26,7 +32,8 @@
     overview: ["概览", "服务器运行状态与账户概况"],
     accounts: ["账户", "浏览、创建、封禁与导出账户"],
     audit: ["操作日志", "管理员与账户相关操作记录"],
-    system: ["系统", "版本、登录保护与存储信息"]
+    system: ["系统", "版本、登录保护与存储信息"],
+    settings: ["设置", "管理员、密码与外观"]
   };
 
   var ACTION_LABELS = {
@@ -41,6 +48,10 @@
     admin_unban_account: "解封账户",
     admin_delete_account: "删除账户",
     admin_registration: "注册开关",
+    admin_create_admin: "创建管理员",
+    admin_theme_updated: "更新外观",
+    admin_background_upload: "上传背景",
+    admin_background_deleted: "移除背景",
     login: "账户登录",
     login_failed: "账户登录失败",
     login_blocked: "封禁登录拦截",
@@ -288,18 +299,508 @@
     if (view === "accounts") loadAccounts();
     if (view === "audit") loadAudit();
     if (view === "system") loadSystem();
+    if (view === "settings") loadSettings();
   }
 
   function enterApp(me) {
     state.me = me || state.me;
     if (!state.me) return;
     hideAllScreens();
+    state.wallpaperKey = "";
+    applyTheme(state.me.theme || themeDefaults(), { cache: true });
+    syncThemeControls(state.theme);
     $("app-view").hidden = false;
     setText("admin-name", state.me.username || "admin");
     var avatar = document.querySelector(".avatar");
     if (avatar) avatar.textContent = String(state.me.username || "A").slice(0, 1).toUpperCase();
     switchView("overview");
     startAutoRefresh();
+  }
+
+  /* ---------------- 主题与背景 ---------------- */
+  function themeDefaults() {
+    return {
+      mode: "dark",
+      background: "bing",
+      solidColor: "#121212",
+      blur: 6,
+      hasCustomBackground: false
+    };
+  }
+
+  function normalizeTheme(theme) {
+    var base = themeDefaults();
+    if (!theme || typeof theme !== "object") return base;
+    if (theme.mode === "dark" || theme.mode === "light" || theme.mode === "system") base.mode = theme.mode;
+    if (theme.background === "solid" || theme.background === "bing" || theme.background === "upload") {
+      base.background = theme.background;
+    }
+    if (/^#[0-9a-fA-F]{6}$/.test(String(theme.solidColor || ""))) base.solidColor = String(theme.solidColor);
+    var blur = Number(theme.blur);
+    if (Number.isFinite(blur)) base.blur = Math.max(0, Math.min(30, Math.round(blur)));
+    base.hasCustomBackground = !!theme.hasCustomBackground;
+    return base;
+  }
+
+  function readThemeCache() {
+    try {
+      var raw = localStorage.getItem(THEME_CACHE_KEY);
+      return raw ? normalizeTheme(JSON.parse(raw)) : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function writeThemeCache(theme) {
+    try { localStorage.setItem(THEME_CACHE_KEY, JSON.stringify(theme)); } catch (err) { /* ignore */ }
+  }
+
+  function systemPrefersDark() {
+    try { return window.matchMedia("(prefers-color-scheme: dark)").matches; }
+    catch (err) { return true; }
+  }
+
+  function resolvedDark(theme) {
+    if (theme.mode === "light") return false;
+    if (theme.mode === "dark") return true;
+    return systemPrefersDark();
+  }
+
+  function setThemeState(message) {
+    var node = $("theme-state");
+    if (node) node.textContent = message;
+  }
+
+  function releaseWallpaperUrl() {
+    if (state.wallpaperUrl) {
+      try { URL.revokeObjectURL(state.wallpaperUrl); } catch (err) { /* ignore */ }
+      state.wallpaperUrl = null;
+    }
+  }
+
+  function setWallpaperSource(src) {
+    var img = $("app-wallpaper-img");
+    if (!img) return;
+    img.hidden = false;
+    img.src = src;
+  }
+
+  async function loadCustomWallpaper(key) {
+    if (!state.token) return;
+    try {
+      var response = await fetch(API + "/theme/background", {
+        headers: { Authorization: "Bearer " + state.token },
+        cache: "no-store"
+      });
+      if (response.status === 401) {
+        sessionLost("登录已过期，请重新登录");
+        return;
+      }
+      if (!response.ok) throw new Error("background_unavailable");
+      var blob = await response.blob();
+      if (state.wallpaperKey !== key) return;
+      releaseWallpaperUrl();
+      state.wallpaperUrl = URL.createObjectURL(blob);
+      setWallpaperSource(state.wallpaperUrl);
+    } catch (err) {
+      var wrap = $("app-wallpaper");
+      if (wrap) wrap.hidden = true;
+    }
+  }
+
+  function renderWallpaper(theme) {
+    var wrap = $("app-wallpaper");
+    var img = $("app-wallpaper-img");
+    if (!wrap || !img) return;
+    if (theme.background === "solid") {
+      // 纯色只在深色主题下压暗过亮的颜色；深色纯色保持原样。
+      wrap.hidden = false;
+      wrap.classList.add("is-solid");
+      wrap.classList.toggle("is-solid-scrim", resolvedDark(theme) && solidLuminance(theme.solidColor) > 0.32);
+      img.style.visibility = "hidden";
+      img.removeAttribute("src");
+      state.wallpaperKey = "";
+      releaseWallpaperUrl();
+      return;
+    }
+    wrap.classList.remove("is-solid", "is-solid-scrim");
+    img.style.visibility = "";
+    if (theme.background === "bing") {
+      wrap.hidden = false;
+      var day = new Date().toISOString().slice(0, 10);
+      var bingKey = "bing:" + day;
+      if (state.wallpaperKey !== bingKey) {
+        state.wallpaperKey = bingKey;
+        releaseWallpaperUrl();
+        setWallpaperSource("/admin/api/login-background?d=" + day);
+      }
+      return;
+    }
+    if (theme.background === "upload") {
+      if (!theme.hasCustomBackground) {
+        wrap.hidden = true;
+        return;
+      }
+      wrap.hidden = false;
+      var uploadKey = "upload:" + state.wallpaperVersion;
+      if (state.wallpaperKey !== uploadKey) {
+        state.wallpaperKey = uploadKey;
+        loadCustomWallpaper(uploadKey);
+      }
+      return;
+    }
+    wrap.hidden = true;
+  }
+
+  function solidLuminance(color) {
+    var hex = String(color || "").replace("#", "");
+    if (hex.length !== 6) return 0;
+    var r = parseInt(hex.slice(0, 2), 16) / 255;
+    var g = parseInt(hex.slice(2, 4), 16) / 255;
+    var b = parseInt(hex.slice(4, 6), 16) / 255;
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+
+  function applyTheme(theme, options) {
+    options = options || {};
+    theme = normalizeTheme(theme);
+    state.theme = theme;
+    var dark = resolvedDark(theme);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    document.documentElement.dataset.canvas = theme.background;
+    document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", dark ? "#121212" : "#f4f5f7");
+    if (theme.background === "solid") {
+      document.documentElement.style.setProperty("--bg", theme.solidColor);
+      document.documentElement.style.setProperty("--bg-deep", theme.solidColor);
+    } else {
+      document.documentElement.style.removeProperty("--bg");
+      document.documentElement.style.removeProperty("--bg-deep");
+    }
+    document.documentElement.style.setProperty("--wallpaper-blur", theme.blur + "px");
+    renderWallpaper(theme);
+    if (options.cache) writeThemeCache(theme);
+  }
+
+  function syncThemeControls(theme) {
+    theme = normalizeTheme(theme);
+    $$("#theme-mode .segmented-item").forEach(function (button) {
+      var active = button.dataset.mode === theme.mode;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    $$('#background-choices input[name="theme-background"]').forEach(function (input) {
+      input.checked = input.value === theme.background;
+    });
+    var color = $("solid-color");
+    if (color) color.value = theme.solidColor;
+    var swatch = $("solid-swatch");
+    if (swatch) swatch.style.background = theme.solidColor;
+    var blur = $("blur-range");
+    if (blur) blur.value = String(theme.blur);
+    var blurValue = $("blur-value");
+    if (blurValue) blurValue.textContent = theme.blur + "px";
+    var remove = $("remove-background");
+    if (remove) remove.disabled = !theme.hasCustomBackground;
+    var fileName = $("background-file-name");
+    if (fileName && !fileName.dataset.uploaded) {
+      fileName.textContent = theme.hasCustomBackground ? "已上传自定义背景" : "未选择文件";
+    }
+  }
+
+  async function saveTheme(patch) {
+    if (!state.theme) return;
+    var previous = normalizeTheme(state.theme);
+    var next = normalizeTheme(Object.assign({}, previous, patch));
+    var seq = ++state.themeSaveSeq;
+    applyTheme(next, { cache: true });
+    syncThemeControls(next);
+    setThemeState("保存中…");
+    try {
+      var data = await api("/theme", {
+        method: "PUT",
+        body: {
+          mode: next.mode,
+          background: next.background,
+          solidColor: next.solidColor,
+          blur: next.blur
+        }
+      });
+      if (seq !== state.themeSaveSeq) return;
+      state.me.theme = data.theme;
+      applyTheme(data.theme, { cache: true });
+      syncThemeControls(data.theme);
+      setThemeState("已保存");
+    } catch (err) {
+      if (seq !== state.themeSaveSeq) return;
+      applyTheme(previous, { cache: true });
+      syncThemeControls(previous);
+      setThemeState("保存失败");
+      toast(err.message, true);
+    }
+  }
+
+  function watchSystemTheme() {
+    try {
+      var media = window.matchMedia("(prefers-color-scheme: dark)");
+      var handler = function () {
+        if (state.theme && state.theme.mode === "system") applyTheme(state.theme, {});
+      };
+      if (media.addEventListener) media.addEventListener("change", handler);
+      else if (media.addListener) media.addListener(handler);
+    } catch (err) { /* ignore */ }
+  }
+
+  function onThemeModeClick(event) {
+    var button = event.target.closest(".segmented-item[data-mode]");
+    if (!button) return;
+    saveTheme({ mode: button.dataset.mode });
+  }
+
+  function onBackgroundChoice(event) {
+    var input = event.target;
+    if (!input.matches('input[name="theme-background"]')) return;
+    if (input.value === "upload" && !(state.theme && state.theme.hasCustomBackground)) {
+      syncThemeControls(state.theme);
+      $("background-file").click();
+      return;
+    }
+    saveTheme({ background: input.value });
+  }
+
+  function onSolidColorInput(event) {
+    var color = event.target.value;
+    var swatch = $("solid-swatch");
+    if (swatch) swatch.style.background = color;
+    if (state.theme && state.theme.background === "solid") {
+      document.documentElement.style.setProperty("--bg", color);
+      document.documentElement.style.setProperty("--bg-deep", color);
+    }
+  }
+
+  function onSolidColorChange(event) {
+    saveTheme({ solidColor: event.target.value });
+  }
+
+  function onBlurInput(event) {
+    var value = Number(event.target.value);
+    document.documentElement.style.setProperty("--wallpaper-blur", value + "px");
+    setText("blur-value", value + "px");
+  }
+
+  function onBlurChange(event) {
+    saveTheme({ blur: Number(event.target.value) });
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(String(reader.result || "")); };
+      reader.onerror = function () { reject(new Error("读取图片失败")); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function onBackgroundFile(event) {
+    var input = event.target;
+    var file = input.files && input.files[0];
+    if (!file) return;
+    var allowed = ["image/jpeg", "image/png", "image/webp"];
+    if (allowed.indexOf(file.type) < 0) {
+      toast("仅支持 JPEG、PNG 或 WebP 图片", true);
+      input.value = "";
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      toast("背景图片不能超过 4MB", true);
+      input.value = "";
+      return;
+    }
+    setThemeState("上传中…");
+    try {
+      var data = await readFileAsDataUrl(file);
+      var result = await api("/theme/background", { method: "POST", body: { data: data } });
+      state.wallpaperVersion += 1;
+      state.me.theme = result.theme;
+      applyTheme(result.theme, { cache: true });
+      syncThemeControls(result.theme);
+      $("background-file-name").textContent = file.name;
+      $("background-file-name").dataset.uploaded = "1";
+      setThemeState("已保存");
+      toast("背景已更新");
+    } catch (err) {
+      setThemeState("上传失败");
+      toast(err.message, true);
+    } finally {
+      input.value = "";
+    }
+  }
+
+  function removeBackground() {
+    if (!state.theme || !state.theme.hasCustomBackground) return;
+    openModal({
+      title: "移除自定义背景",
+      role: "alertdialog",
+      body: '<p class="modal-note">移除后背景会切回 Bing 每日壁纸，已上传的图片文件会被删除。</p>',
+      actions: [
+        { label: "取消", onClick: function (ctx) { ctx.close(); } },
+        {
+          label: "移除",
+          className: "btn-danger",
+          onClick: async function (ctx) {
+            ctx.setBusy(true);
+            try {
+              var result = await api("/theme/background", { method: "DELETE" });
+              state.wallpaperVersion += 1;
+              state.me.theme = result.theme;
+              applyTheme(result.theme, { cache: true });
+              syncThemeControls(result.theme);
+              delete $("background-file-name").dataset.uploaded;
+              $("background-file-name").textContent = "未选择文件";
+              setThemeState("已保存");
+              toast("自定义背景已移除");
+              ctx.close();
+            } catch (err) {
+              toast(err.message, true);
+            } finally {
+              ctx.setBusy(false);
+            }
+          }
+        }
+      ]
+    });
+  }
+
+  /* ---------------- 设置页 ---------------- */
+  async function loadSettings() {
+    try {
+      var results = await Promise.all([api("/admins"), api("/theme")]);
+      renderAdmins(results[0].items || []);
+      state.me.theme = results[1].theme;
+      applyTheme(results[1].theme, { cache: true });
+      syncThemeControls(results[1].theme);
+      setThemeState("已保存");
+    } catch (err) {
+      if (err.status !== 401 && err.status !== 403) {
+        showBanner("读取设置失败：" + err.message);
+      }
+    }
+  }
+
+  function renderAdmins(items) {
+    var body = $("admins-body");
+    if (!body) return;
+    body.innerHTML = items.map(function (item) {
+      var self = item.isSelf ? ' <span class="pill pill-ok">当前</span>' : "";
+      var status = item.mustChangePassword
+        ? '<span class="pill pill-warn">待改密</span>'
+        : '<span class="pill pill-ok">正常</span>';
+      var last = item.lastLoginLocal ? esc(item.lastLoginLocal) : "从未登录";
+      return "<tr>" +
+        '<td data-label="账号"><strong>' + esc(item.username) + "</strong>" + self + "</td>" +
+        '<td data-label="创建时间" class="muted">' + esc(item.createdAtLocal || "–") + "</td>" +
+        '<td data-label="最近登录" class="muted">' + last + "</td>" +
+        '<td data-label="状态">' + status + "</td>" +
+        "</tr>";
+    }).join("");
+    $("admins-empty").hidden = items.length > 0;
+  }
+
+  function openAddAdminModal() {
+    openModal({
+      title: "创建管理员",
+      body:
+        '<label class="field"><span>管理员账号</span>' +
+        '<input id="new-admin-username" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="3–32 位小写字母、数字或下划线"></label>' +
+        '<label class="field"><span>初始密码</span>' +
+        '<input id="new-admin-password" type="password" autocomplete="new-password"></label>' +
+        '<label class="field"><span>确认密码</span>' +
+        '<input id="new-admin-confirm" type="password" autocomplete="new-password"></label>' +
+        '<p id="new-admin-error" class="form-error" role="alert" hidden></p>' +
+        '<p class="modal-note">新管理员首次登录必须修改密码；所有管理员权限相同。</p>',
+      actions: [
+        { label: "取消", onClick: function (ctx) { ctx.close(); } },
+        {
+          label: "创建",
+          className: "btn-primary",
+          onClick: async function (ctx) {
+            var username = ctx.root.querySelector("#new-admin-username").value.trim().toLowerCase();
+            var password = ctx.root.querySelector("#new-admin-password").value;
+            var confirm = ctx.root.querySelector("#new-admin-confirm").value;
+            var error = ctx.root.querySelector("#new-admin-error");
+            var problem = "";
+            if (!/^[a-z0-9_]{3,32}$/.test(username)) {
+              problem = "账号需为 3–32 位小写字母、数字或下划线。";
+            } else {
+              problem = passwordProblem(password);
+            }
+            if (!problem && password !== confirm) problem = "两次输入的密码不一致。";
+            if (problem) {
+              error.textContent = problem;
+              error.hidden = false;
+              return;
+            }
+            error.hidden = true;
+            ctx.setBusy(true);
+            try {
+              await api("/admins", { method: "POST", body: { username: username, password: password } });
+              ctx.close();
+              toast("管理员已创建，首次登录需改密");
+              loadSettings();
+            } catch (err) {
+              error.textContent = err.message;
+              error.hidden = false;
+            } finally {
+              ctx.setBusy(false);
+            }
+          }
+        }
+      ]
+    });
+  }
+
+  async function onSettingsPassword(event) {
+    event.preventDefault();
+    var form = $("settings-password-form");
+    var button = form.querySelector('button[type="submit"]');
+    var error = $("settings-password-error");
+    var oldPassword = $("settings-old-password").value;
+    var newPassword = $("settings-new-password").value;
+    var confirm = $("settings-confirm-password").value;
+    error.hidden = true;
+    var problem = passwordProblem(newPassword);
+    if (problem) {
+      error.textContent = problem;
+      error.hidden = false;
+      return;
+    }
+    if (newPassword !== confirm) {
+      error.textContent = "两次输入的新密码不一致。";
+      error.hidden = false;
+      return;
+    }
+    if (newPassword === oldPassword) {
+      error.textContent = "新密码不能与当前密码相同。";
+      error.hidden = false;
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "更新中…";
+    try {
+      await api("/change-password", {
+        method: "POST",
+        body: { oldPassword: oldPassword, newPassword: newPassword }
+      });
+      form.reset();
+      toast("密码已更新");
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      button.disabled = false;
+      button.textContent = "更新密码";
+    }
   }
 
   /* ---------------- 登录 / 改密 ---------------- */
@@ -1041,6 +1542,7 @@
       if (state.view === "overview") loadOverview();
       else if (state.view === "accounts") loadAccounts();
       else if (state.view === "audit") loadAudit();
+      else if (state.view === "settings") loadSettings();
       else loadSystem();
     });
 
@@ -1053,6 +1555,20 @@
     });
 
     $("registration-toggle").addEventListener("change", onRegistrationToggle);
+
+    $("add-admin-btn").addEventListener("click", openAddAdminModal);
+    $("settings-password-form").addEventListener("submit", onSettingsPassword);
+    $("theme-mode").addEventListener("click", onThemeModeClick);
+    $("background-choices").addEventListener("change", onBackgroundChoice);
+    $("solid-color").addEventListener("input", onSolidColorInput);
+    $("solid-color").addEventListener("change", onSolidColorChange);
+    $("blur-range").addEventListener("input", onBlurInput);
+    $("blur-range").addEventListener("change", onBlurChange);
+    $("background-file").addEventListener("change", onBackgroundFile);
+    $("remove-background").addEventListener("click", removeBackground);
+    $("app-wallpaper-img").addEventListener("error", function () {
+      $("app-wallpaper").hidden = true;
+    });
 
     $("account-search").addEventListener("input", function (event) {
       if (state.searchTimer) clearTimeout(state.searchTimer);
@@ -1123,11 +1639,14 @@
   async function boot() {
     bind();
     var token = storageGet();
+    state.token = token || null;
+    var cachedTheme = readThemeCache();
+    if (cachedTheme) applyTheme(cachedTheme, {});
+    watchSystemTheme();
     if (!token) {
       showLogin("");
       return;
     }
-    state.token = token;
     try {
       var me = await api("/me");
       state.me = me;

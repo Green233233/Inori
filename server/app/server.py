@@ -257,16 +257,17 @@ class QiHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         LOG.debug("%s - %s", self.address_string(), fmt % args)
 
-    def _read_body(self) -> dict:
+    def _read_body(self, limit: int | None = None) -> dict:
         # 服务端只接受定长 JSON；分块传输会让 BaseHTTPRequestHandler 的
         # Content-Length 解析产生请求走私歧义，直接拒绝。
         if self.headers.get("Transfer-Encoding"):
             raise bad_request("invalid_transfer_encoding", "不支持分块传输")
+        max_bytes = limit or MAX_BODY_BYTES
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             raise bad_request("invalid_length", "Content-Length 不合法")
-        if length > MAX_BODY_BYTES:
+        if length > max_bytes:
             raise ApiError(413, "payload_too_large", "请求体过大")
         if length <= 0:
             return {}
@@ -418,7 +419,7 @@ class QiHandler(BaseHTTPRequestHandler):
     # -- admin ----------------------------------------------------------
     _ADMIN_CSP = (
         "default-src 'self'; base-uri 'none'; form-action 'self';"
-        " frame-ancestors 'none'; img-src 'self' data:;"
+        " frame-ancestors 'none'; img-src 'self' data: blob:;"
         " style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
     )
 
@@ -461,7 +462,9 @@ class QiHandler(BaseHTTPRequestHandler):
             self._send_bytes(200, body, content_type, self._admin_static_headers())
             return
         if path.startswith(admin.API_PREFIX):
-            body = (self._read_body()
+            body_limit = (admin.MAX_BACKGROUND_BODY
+                          if path.endswith("/theme/background") else MAX_BODY_BYTES)
+            body = (self._read_body(body_limit)
                     if method in ("POST", "PUT", "PATCH", "DELETE") else {})
             result = admin.dispatch(
                 self.db, method, path, self._query(), body,

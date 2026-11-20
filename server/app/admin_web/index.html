@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#121212">
   <meta name="robots" content="noindex, nofollow">
   <title>祈 · 账户管理后台</title>
@@ -34,7 +34,7 @@
         <span class="brand-mark">祈</span>
         <div>
           <h1>账户管理后台</h1>
-          <p>Inori Console · v0.1.1</p>
+          <p>Inori Console · v0.1.2</p>
         </div>
       </div>
       <form id="login-form" class="stack" autocomplete="on" novalidate>
@@ -87,12 +87,16 @@
 
   <!-- 后台 -->
   <div id="app-view" class="app-shell" hidden>
+    <div id="app-wallpaper" class="app-wallpaper" aria-hidden="true" hidden>
+      <img id="app-wallpaper-img" alt="" decoding="async">
+      <span class="app-scrim"></span>
+    </div>
     <aside class="sidebar">
       <div class="brand brand-small">
         <span class="brand-mark">祈</span>
         <div>
           <h1>管理后台</h1>
-          <p>v0.1.1</p>
+          <p>v0.1.2</p>
         </div>
       </div>
       <nav class="nav" aria-label="主导航">
@@ -100,6 +104,7 @@
         <button class="nav-item" data-view="accounts" type="button">账户</button>
         <button class="nav-item" data-view="audit" type="button">操作日志</button>
         <button class="nav-item" data-view="system" type="button">系统</button>
+        <button class="nav-item" data-view="settings" type="button">设置</button>
       </nav>
       <div class="sidebar-foot">
         <div class="who">
@@ -320,6 +325,110 @@
           <p class="prose">封禁会立刻踢掉该账户的全部登录；限时封禁到期后自动恢复，永久封禁需要手动解封。</p>
           <p class="prose">请求数与带宽来自本服务进程的统计与 <code>/proc/net/dev</code>，每 5 秒落库一次。</p>
         </article>
+      </section>
+
+      <!-- 设置 -->
+      <section id="view-settings" class="view" hidden>
+        <div class="settings-grid">
+          <article class="panel">
+            <header class="panel-head">
+              <h3>管理员账号</h3>
+              <button id="add-admin-btn" class="btn btn-ghost btn-sm" type="button">创建管理员</button>
+            </header>
+            <div class="table-wrap">
+              <table class="table settings-table">
+                <thead>
+                  <tr>
+                    <th>账号</th>
+                    <th>创建时间</th>
+                    <th>最近登录</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody id="admins-body"></tbody>
+              </table>
+              <p id="admins-empty" class="empty" hidden>还没有其他管理员。</p>
+            </div>
+            <p class="modal-note">新管理员首次登录必须修改密码。所有管理员权限相同。</p>
+          </article>
+
+          <article class="panel">
+            <header class="panel-head"><h3>修改我的密码</h3></header>
+            <form id="settings-password-form" class="stack" autocomplete="off" novalidate>
+              <label class="field">
+                <span>当前密码</span>
+                <input id="settings-old-password" type="password" autocomplete="current-password" required>
+              </label>
+              <label class="field">
+                <span>新密码</span>
+                <input id="settings-new-password" type="password" autocomplete="new-password" required>
+              </label>
+              <label class="field">
+                <span>确认新密码</span>
+                <input id="settings-confirm-password" type="password" autocomplete="new-password" required>
+              </label>
+              <p id="settings-password-error" class="form-error" role="alert" hidden></p>
+              <button class="btn btn-primary" type="submit">更新密码</button>
+            </form>
+            <p class="modal-note">更新成功后，其它设备上的管理员会话会立即失效。</p>
+          </article>
+
+          <article class="panel panel-wide" id="appearance-panel">
+            <header class="panel-head">
+              <h3>外观</h3>
+              <span id="theme-state" class="muted">已保存</span>
+            </header>
+
+            <div class="settings-sub">
+              <h4>主题模式</h4>
+              <div id="theme-mode" class="segmented" role="group" aria-label="主题模式">
+                <button class="segmented-item" data-mode="dark" type="button" aria-pressed="false">深色</button>
+                <button class="segmented-item" data-mode="light" type="button" aria-pressed="false">浅色</button>
+                <button class="segmented-item" data-mode="system" type="button" aria-pressed="false">跟随系统</button>
+              </div>
+            </div>
+
+            <div class="settings-sub">
+              <h4>背景</h4>
+              <div id="background-choices" class="theme-choices">
+                <label class="theme-choice">
+                  <input type="radio" name="theme-background" value="solid">
+                  <span class="choice-swatch swatch-solid" id="solid-swatch" aria-hidden="true"></span>
+                  <span class="choice-text"><strong>纯色</strong><small>最轻量，适合长时间使用</small></span>
+                </label>
+                <label class="theme-choice">
+                  <input type="radio" name="theme-background" value="bing">
+                  <span class="choice-swatch swatch-bing" aria-hidden="true"></span>
+                  <span class="choice-text"><strong>Bing 壁纸</strong><small>每天自动更新一张风景图</small></span>
+                </label>
+                <label class="theme-choice">
+                  <input type="radio" name="theme-background" value="upload">
+                  <span class="choice-swatch swatch-upload" aria-hidden="true"></span>
+                  <span class="choice-text"><strong>自己上传</strong><small>JPEG / PNG / WebP，最大 4MB</small></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="settings-sub appearance-controls">
+              <label class="field">
+                <span>纯色背景</span>
+                <input id="solid-color" type="color" value="#121212">
+              </label>
+              <label class="field">
+                <span>背景模糊 <output id="blur-value" for="blur-range">6px</output></span>
+                <input id="blur-range" type="range" min="0" max="30" step="1" value="6">
+              </label>
+            </div>
+
+            <div class="settings-sub upload-row">
+              <label class="btn btn-ghost btn-sm" for="background-file">选择图片</label>
+              <input id="background-file" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+              <span id="background-file-name" class="muted">未选择文件</span>
+              <button id="remove-background" class="btn btn-danger-quiet btn-sm" type="button">移除自定义背景</button>
+            </div>
+            <p class="modal-note">深色模式下，壁纸会自动覆盖一层深色护眼遮罩；模糊程度只影响背景，不影响文字与控件。</p>
+          </article>
+        </div>
       </section>
     </div>
   </div>
