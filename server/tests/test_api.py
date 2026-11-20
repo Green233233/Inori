@@ -22,7 +22,7 @@ import urllib.request
 SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SERVER_DIR)
 
-from app import security  # noqa: E402
+from app import VERSION, security  # noqa: E402
 from app.store import Database  # noqa: E402
 
 
@@ -141,7 +141,7 @@ class ApiTest(unittest.TestCase):
         client = Client(self.base)
         payload = client.call("GET", "/health")
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["version"], "0.6.0")
+        self.assertEqual(payload["version"], VERSION)
 
     def test_register_requires_invite_and_valid_password(self) -> None:
         client = Client(self.base)
@@ -155,6 +155,46 @@ class ApiTest(unittest.TestCase):
             "deviceId": "noinv-device-0001", "pubkey": "N" * 40,
         }, expect=403)
         self.assertEqual(no_invite["error"]["code"], "invite_required")
+
+    def test_open_registration_switch(self) -> None:
+        """开放注册（INORINAL_OPEN_REGISTRATION=1）时不需要邀请码。
+
+        开关在服务端进程启动时读取，所以要单独起一台服务器验证。
+        """
+        port = free_port()
+        base = f"http://127.0.0.1:{port}"
+        env = dict(os.environ, QI_LOG_LEVEL="WARNING",
+                   QI_RATE_LIMIT_DISABLED="1", INORINAL_OPEN_REGISTRATION="1")
+        proc = subprocess.Popen(
+            [sys.executable, os.path.join(SERVER_DIR, "run.py"),
+             "--host", "127.0.0.1", "--port", str(port),
+             "--data-dir", tempfile.mkdtemp(prefix="qi-open-")],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+        )
+        try:
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                try:
+                    with urllib.request.urlopen(base + "/health", timeout=2) as response:
+                        if response.status == 200:
+                            break
+                except Exception:
+                    time.sleep(0.15)
+            else:
+                raise RuntimeError("server did not start")
+
+            client = Client(base)
+            payload = client.call("POST", "/api/v1/auth/register", {
+                "username": "openreg", "password": "qi123456", "invite": "",
+                "deviceId": "openreg-device-0001", "pubkey": "O" * 40,
+            })
+            self.assertEqual(payload["username"], "openreg")
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
     def test_login_and_me(self) -> None:
         client, device_id = self._master("loginuser")

@@ -86,6 +86,19 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
 export function errorMessage(error: unknown, fallback = '操作失败'): string {
   if (error instanceof ApiError) {
     if (error.code === 'network_error' || error.status === 0) {
+      // 原生层把所有传输失败都归成 network_error；证书指纹不匹配是最常见的
+      // 真机故障（模拟器装了自签证书、手机没有），必须把原因说出来，否则
+      // 用户只会看到「无法连接服务器」而无从下手。
+      const detail = error.message ?? '';
+      if (detail.includes('证书指纹')) {
+        return '服务器证书指纹不匹配：请核对服务器地址，并在「证书指纹」里填写服务器证书的 SHA-256';
+      }
+      if (detail.includes('证书')) {
+        return '服务器证书不可用：请确认地址与端口，并填写证书指纹';
+      }
+      if (detail.includes('timed out') || detail.includes('timeout')) {
+        return '连接服务器超时：请确认地址、端口与网络（有些网络会拦截非常用端口）';
+      }
       return '无法连接服务器，请检查地址与网络';
     }
     return error.message;

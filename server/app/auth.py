@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
 from . import security
@@ -65,6 +66,15 @@ def _issue_session(db: Database, user_id: int, device_id: str) -> str:
     return token
 
 
+def _open_registration() -> bool:
+    """允许任何人注册（自建服务器常用：主人自己填地址即可加入）。
+
+    默认关闭；`INORINAL_OPEN_REGISTRATION=1` 时打开。配对仍然需要对方的
+    绑定码，所以开放注册只影响「能不能创建身份」，不影响数据隔离。
+    """
+    return os.environ.get("INORINAL_OPEN_REGISTRATION", "").strip() == "1"
+
+
 def register(db: Database, body: dict, ip: str) -> dict:
     username = str(body.get("username") or "").strip().lower()
     password = str(body.get("password") or "")
@@ -84,25 +94,35 @@ def register(db: Database, body: dict, ip: str) -> dict:
     conn = db.conn
     conn.execute("BEGIN IMMEDIATE")
     try:
-        used = conn.execute(
-            "SELECT * FROM invites WHERE code=?", (invite,)
-        ).fetchone()
-        if used is None:
-            raise forbidden("invite_required", "需要有效邀请码")
-        if used["used_at"]:
-            raise forbidden("invite_used", "邀请码已被使用")
         if conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
             raise conflict("username_taken", "账号已存在")
+
+        used = conn.execute(
+            "SELECT * FROM invites WHERE code=?", (invite,)
+        ).fetchone() if invite else None
+        first_user = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 0
+        if first_user or _open_registration():
+            # 服务器刚部署时的第一个账号不需要邀请码；开放注册模式下都放行。
+            pass
+        elif used is None:
+            raise forbidden(
+                "invite_required",
+                "这台服务器需要邀请码。请让服务器主人在服务器上生成一个"
+                "（tools/issue_invite.py），或让主人在服务器开启开放注册",
+            )
+        elif used["used_at"]:
+            raise forbidden("invite_used", "邀请码已被使用，请向服务器主人再要一个")
 
         cursor = conn.execute(
             "INSERT INTO users(username, password_hash, created_at) VALUES(?,?,?)",
             (username, security.hash_password(password), security.iso()),
         )
         user_id = int(cursor.lastrowid)
-        conn.execute(
-            "UPDATE invites SET used_at=?, used_by=? WHERE code=?",
-            (security.iso(), user_id, invite),
-        )
+        if used is not None and not used["used_at"]:
+            conn.execute(
+                "UPDATE invites SET used_at=?, used_by=? WHERE code=?",
+                (security.iso(), user_id, invite),
+            )
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")

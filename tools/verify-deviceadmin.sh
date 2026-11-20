@@ -26,7 +26,7 @@
 
 set -u
 
-PKG="com.green.inorinal"
+PKG="com.green.inori"
 RECEIVER="$PKG/com.inorinal.qi.QiDeviceAdminReceiver"
 
 # Repo root (this script lives in tools/). Used only to resolve source anchors at

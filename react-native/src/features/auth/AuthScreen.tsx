@@ -163,12 +163,13 @@ export function AuthScreen() {
           />
           {mode === 'register' ? (
             <FormField
-              label="邀请码"
+              label="邀请码（新服务器可留空）"
               value={invite}
               onChangeText={setInvite}
               placeholder="服务器签发的 8 位邀请码"
               autoCapitalize="characters"
               maxLength={8}
+              hint="服务器上第一个账号不需要邀请码；之后由服务器主人生成邀请码，或让主人开启开放注册"
             />
           ) : null}
         </View>
