@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#212121">
+  <meta name="robots" content="noindex, nofollow">
+  <title>祈 · 账户管理后台</title>
+  <link rel="icon" href="/admin/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin/assets/style.css">
+</head>
+<body>
+
+  <!-- 登录 -->
+  <main id="login-view" class="auth-screen" hidden>
+    <section class="auth-card">
+      <div class="brand">
+        <span class="brand-mark">祈</span>
+        <div>
+          <h1>账户管理后台</h1>
+          <p>Inori Console · v0.1.0</p>
+        </div>
+      </div>
+      <form id="login-form" class="stack" autocomplete="on" novalidate>
+        <label class="field">
+          <span>管理员账号</span>
+          <input id="login-username" name="username" value="admin"
+                 autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        </label>
+        <label class="field">
+          <span>密码</span>
+          <input id="login-password" name="password" type="password"
+                 autocomplete="current-password" required>
+        </label>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+        <button class="btn btn-primary btn-block" type="submit">进入后台</button>
+        <p class="auth-foot">仅限管理员访问 · 同 IP 连续 10 次密码错误锁定 1 小时</p>
+      </form>
+    </section>
+  </main>
+
+  <!-- 首次改密 -->
+  <main id="password-view" class="auth-screen" hidden>
+    <section class="auth-card">
+      <div class="brand">
+        <span class="brand-mark">祈</span>
+        <div>
+          <h1>设置新密码</h1>
+          <p>首次登录必须修改默认密码</p>
+        </div>
+      </div>
+      <p class="notice">新密码至少 8 位，需同时包含字母与数字（或符号），且不能与默认密码相同。</p>
+      <form id="password-form" class="stack" autocomplete="off" novalidate>
+        <label class="field">
+          <span>当前密码</span>
+          <input id="old-password" type="password" autocomplete="current-password" required>
+        </label>
+        <label class="field">
+          <span>新密码</span>
+          <input id="new-password" type="password" autocomplete="new-password" required>
+        </label>
+        <label class="field">
+          <span>确认新密码</span>
+          <input id="confirm-password" type="password" autocomplete="new-password" required>
+        </label>
+        <p id="password-error" class="form-error" role="alert" hidden></p>
+        <button class="btn btn-primary btn-block" type="submit">保存并进入后台</button>
+      </form>
+    </section>
+  </main>
+
+  <!-- 后台 -->
+  <div id="app-view" class="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="brand brand-small">
+        <span class="brand-mark">祈</span>
+        <div>
+          <h1>管理后台</h1>
+          <p>v0.1.0</p>
+        </div>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-item is-active" data-view="overview" type="button">概览</button>
+        <button class="nav-item" data-view="accounts" type="button">账户</button>
+        <button class="nav-item" data-view="audit" type="button">操作日志</button>
+        <button class="nav-item" data-view="system" type="button">系统</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="who">
+          <span class="avatar" aria-hidden="true">A</span>
+          <div>
+            <strong id="admin-name">admin</strong>
+            <span>管理员</span>
+          </div>
+        </div>
+        <button id="logout-btn" class="btn btn-ghost btn-sm" type="button">退出</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div>
+          <h2 id="view-title">概览</h2>
+          <p id="view-sub">服务器运行状态与账户概况</p>
+        </div>
+        <div class="topbar-actions">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span id="refresh-hint" class="muted">每 15 秒自动刷新</span>
+          <button id="refresh-btn" class="btn btn-ghost btn-sm" type="button">刷新</button>
+        </div>
+      </header>
+
+      <div id="banner" class="banner" role="status" hidden></div>
+
+      <!-- 概览 -->
+      <section id="view-overview" class="view">
+        <div class="stat-grid">
+          <article class="stat">
+            <span class="stat-label">账户总数</span>
+            <strong id="stat-accounts">–</strong>
+            <span id="stat-created-today" class="stat-foot">今日新增 –</span>
+          </article>
+          <article class="stat">
+            <span class="stat-label">封禁中</span>
+            <strong id="stat-banned">–</strong>
+            <span class="stat-foot">永久与限时封禁合计</span>
+          </article>
+          <article class="stat">
+            <span class="stat-label">在线设备</span>
+            <strong id="stat-online">–</strong>
+            <span id="stat-devices" class="stat-foot">已绑定设备 –</span>
+          </article>
+          <article class="stat">
+            <span class="stat-label">今日请求</span>
+            <strong id="stat-requests">–</strong>
+            <span id="stat-errors" class="stat-foot">错误 –</span>
+          </article>
+          <article class="stat">
+            <span class="stat-label">今日入站</span>
+            <strong id="stat-in">–</strong>
+            <span id="stat-net-in" class="stat-foot">网卡累计 –</span>
+          </article>
+          <article class="stat">
+            <span class="stat-label">今日出站</span>
+            <strong id="stat-out">–</strong>
+            <span id="stat-net-out" class="stat-foot">网卡累计 –</span>
+          </article>
+          <article class="stat">
+            <span class="stat-label">运行时长</span>
+            <strong id="stat-uptime">–</strong>
+            <span id="stat-started" class="stat-foot">启动于 –</span>
+          </article>
+          <article class="stat">
+            <span class="stat-label">数据库</span>
+            <strong id="stat-db">–</strong>
+            <span id="stat-pairs" class="stat-foot">配对 –</span>
+          </article>
+        </div>
+
+        <div class="panel-grid">
+          <article class="panel panel-chart">
+            <header class="panel-head">
+              <h3>近 14 天请求</h3>
+              <span id="chart-total" class="muted">–</span>
+            </header>
+            <div id="history-chart" class="chart" role="img" aria-label="近 14 天请求量柱状图"></div>
+          </article>
+          <article class="panel">
+            <header class="panel-head"><h3>热门接口</h3><span class="muted">今日</span></header>
+            <ol id="top-paths" class="rank-list"></ol>
+          </article>
+        </div>
+
+        <div class="panel-grid">
+          <article class="panel">
+            <header class="panel-head"><h3>注册策略</h3><span id="registration-state" class="pill">–</span></header>
+            <div class="switch-row">
+              <div>
+                <strong>允许新账户注册</strong>
+                <p>关闭后只有管理员能创建账户，已登录与已有账户不受影响。</p>
+              </div>
+              <label class="switch">
+                <input id="registration-toggle" type="checkbox">
+                <span class="switch-track" aria-hidden="true"></span>
+                <span class="sr-only">允许新账户注册</span>
+              </label>
+            </div>
+          </article>
+          <article class="panel">
+            <header class="panel-head"><h3>服务器</h3><span id="server-version" class="muted">–</span></header>
+            <dl id="server-facts" class="facts"></dl>
+          </article>
+        </div>
+
+        <div class="panel-grid">
+          <article class="panel panel-wide">
+            <header class="panel-head"><h3>最近操作</h3><button class="btn btn-ghost btn-sm" data-view-link="audit" type="button">查看全部</button></header>
+            <ul id="recent-audit" class="timeline"></ul>
+          </article>
+        </div>
+      </section>
+
+      <!-- 账户 -->
+      <section id="view-accounts" class="view" hidden>
+        <div class="toolbar">
+          <div class="toolbar-left">
+            <label class="search">
+              <span class="sr-only">搜索账户</span>
+              <input id="account-search" type="search" placeholder="搜索用户名或 ID" spellcheck="false">
+            </label>
+            <label class="select-wrap">
+              <span class="sr-only">状态筛选</span>
+              <select id="account-status">
+                <option value="all">全部状态</option>
+                <option value="active">正常</option>
+                <option value="banned">封禁中</option>
+                <option value="disabled">永久封禁</option>
+              </select>
+            </label>
+          </div>
+          <div class="toolbar-right">
+            <button id="export-btn" class="btn btn-ghost" type="button">导出 Excel</button>
+            <button id="create-btn" class="btn btn-primary" type="button">创建账户</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>用户名</th>
+                <th>创建时间</th>
+                <th>状态</th>
+                <th>设备 / 绑定</th>
+                <th>最近在线</th>
+                <th class="ta-right">操作</th>
+              </tr>
+            </thead>
+            <tbody id="accounts-body"></tbody>
+          </table>
+          <p id="accounts-empty" class="empty" hidden>没有符合条件的账户。<button id="empty-action" class="btn btn-ghost btn-sm" type="button">创建账户</button></p>
+        </div>
+
+        <footer class="pager">
+          <span id="page-info" class="muted">–</span>
+          <div class="pager-actions">
+            <button id="prev-page" class="btn btn-ghost btn-sm" type="button">上一页</button>
+            <button id="next-page" class="btn btn-ghost btn-sm" type="button">下一页</button>
+          </div>
+        </footer>
+      </section>
+
+      <!-- 审计 -->
+      <section id="view-audit" class="view" hidden>
+        <div class="toolbar">
+          <p class="muted">管理员与账户相关操作都会记录在这里。</p>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>操作</th>
+                <th>对象 / 详情</th>
+                <th>来源 IP</th>
+              </tr>
+            </thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 系统 -->
+      <section id="view-system" class="view" hidden>
+        <div class="panel-grid">
+          <article class="panel">
+            <header class="panel-head"><h3>版本</h3></header>
+            <dl id="system-versions" class="facts"></dl>
+          </article>
+          <article class="panel">
+            <header class="panel-head"><h3>登录保护</h3></header>
+            <dl id="system-protection" class="facts"></dl>
+          </article>
+        </div>
+        <div class="panel-grid">
+          <article class="panel">
+            <header class="panel-head"><h3>存储与网络</h3></header>
+            <dl id="system-storage" class="facts"></dl>
+          </article>
+          <article class="panel">
+            <header class="panel-head"><h3>接口</h3></header>
+            <dl class="facts">
+              <div><dt>后台入口</dt><dd>/admin/</dd></div>
+              <div><dt>接口前缀</dt><dd>/admin/api</dd></div>
+              <div><dt>鉴权方式</dt><dd>Authorization: Bearer</dd></div>
+              <div><dt>会话时长</dt><dd>12 小时</dd></div>
+            </dl>
+          </article>
+        </div>
+        <article class="panel">
+          <header class="panel-head"><h3>说明</h3></header>
+          <p class="prose">删除账户会立即注销它的设备与会话，并解除当前配对请求；端到端加密的日记与券属于配对双方，不会被级联删除。</p>
+          <p class="prose">封禁会立刻踢掉该账户的全部登录；限时封禁到期后自动恢复，永久封禁需要手动解封。</p>
+          <p class="prose">请求数与带宽来自本服务进程的统计与 <code>/proc/net/dev</code>，每 5 秒落库一次。</p>
+        </article>
+      </section>
+    </div>
+  </div>
+
+  <!-- 模态框 -->
+  <dialog id="modal" class="modal" aria-labelledby="modal-title">
+    <div class="modal-card">
+      <header class="modal-head">
+        <h3 id="modal-title">标题</h3>
+        <button class="icon-btn" data-close type="button" aria-label="关闭">×</button>
+      </header>
+      <div id="modal-body" class="modal-body"></div>
+      <footer id="modal-foot" class="modal-foot"></footer>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="/admin/assets/app.js"></script>
+</body>
+</html>

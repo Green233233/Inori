@@ -23,7 +23,11 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  disabled INTEGER NOT NULL DEFAULT 0
+  disabled INTEGER NOT NULL DEFAULT 0,
+  ban_until TEXT,
+  ban_reason TEXT,
+  ban_at TEXT,
+  ban_by TEXT
 );
 
 CREATE TABLE IF NOT EXISTS invites (
@@ -140,6 +144,53 @@ CREATE TABLE IF NOT EXISTS audit (
   ip TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit(at);
+
+-- 账户管理后台（v0.1.0）。管理员与 App 账号完全分离，令牌只存 SHA-256。
+CREATE TABLE IF NOT EXISTS admins (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  password_changed_at TEXT,
+  must_change_password INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token_sha256 TEXT PRIMARY KEY,
+  admin_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  ip TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_admin ON admin_sessions(admin_id);
+
+CREATE TABLE IF NOT EXISTS admin_login_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ip TEXT NOT NULL,
+  username TEXT,
+  at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_attempts_ip ON admin_login_attempts(ip, at);
+
+CREATE TABLE IF NOT EXISTS admin_ip_bans (
+  ip TEXT PRIMARY KEY,
+  blocked_until TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS server_stats (
+  day TEXT PRIMARY KEY,
+  requests INTEGER NOT NULL DEFAULT 0,
+  bytes_in INTEGER NOT NULL DEFAULT 0,
+  bytes_out INTEGER NOT NULL DEFAULT 0,
+  errors INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS admin_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 """
 
 
@@ -181,6 +232,17 @@ class Database:
                 conn.execute("ALTER TABLE pairs RENAME COLUMN dog_name TO puppy_name")
             conn.execute("DROP INDEX IF EXISTS idx_pairs_dog")
         conn.executescript(SCHEMA)
+        # 老库升级：users 在 v0.6.6 之前没有封禁字段，CREATE TABLE IF NOT EXISTS
+        # 不会补列，必须在启动时幂等 ALTER。
+        user_columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+        for column, decl in (
+            ("ban_until", "TEXT"),
+            ("ban_reason", "TEXT"),
+            ("ban_at", "TEXT"),
+            ("ban_by", "TEXT"),
+        ):
+            if column not in user_columns:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {column} {decl}")
         # Older databases created unconditional unique indexes on the pair
         # device columns, which blocked re-pairing after an unpair (the row is
         # kept for history). Recreate them as partial indexes.

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect x="4" y="4" width="56" height="56" rx="6" fill="#3b82f6"/>
+  <rect x="4.5" y="4.5" width="55" height="55" rx="5.5" fill="none" stroke="#ffffff" stroke-opacity="0.22"/>
+  <text x="32" y="43" text-anchor="middle" font-family="PingFang SC, Microsoft YaHei, sans-serif"
+        font-size="34" font-weight="700" fill="#ffffff">祈</text>
+</svg>

@@ -5,10 +5,9 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 
-from . import security
+from . import security, settings
 from .errors import bad_request, conflict, forbidden, unauthorized
 from .store import Database
 
@@ -86,13 +85,40 @@ def _issue_session(db: Database, user_id: int, device_id: str) -> str:
     return token
 
 
-def _open_registration() -> bool:
+def _open_registration(db: Database) -> bool:
     """允许任何人注册（自建服务器常用：主人自己填地址即可加入）。
 
-    默认关闭；`INORINAL_OPEN_REGISTRATION=1` 时打开。配对仍然需要对方的
-    绑定码，所以开放注册只影响「能不能创建身份」，不影响数据隔离。
+    后台「注册开关」写数据库，优先于环境变量；老部署只配了
+    `INORINAL_OPEN_REGISTRATION=1` 的仍然按环境变量生效。配对仍然需要
+    对方的绑定码，所以开放注册只影响「能不能创建身份」，不影响数据隔离。
     """
-    return os.environ.get("INORINAL_OPEN_REGISTRATION", "").strip() == "1"
+    return settings.open_registration(db)
+
+
+def account_problem(db: Database, row: sqlite3.Row):
+    """账号是否可登录。返回 ApiError 或 None。
+
+    定时封禁到期后自动清除；永久封禁用 disabled=1 表示。
+    """
+    if row["disabled"]:
+        message = "账号已被永久封禁" if row["ban_by"] else "账号已停用"
+        return forbidden("account_disabled", message)
+    until = row["ban_until"] if "ban_until" in row.keys() else None
+    if until:
+        if until > security.iso():
+            display = security.display(until) or until
+            return forbidden(
+                "account_banned",
+                f"账号已被封禁，解封时间：{display}（北京时间）",
+                banUntil=until,
+            )
+        # 到期即解封，避免依赖后台定时任务。
+        db.conn.execute(
+            "UPDATE users SET ban_until=NULL, ban_reason=NULL, ban_at=NULL,"
+            " ban_by=NULL WHERE id=?",
+            (row["id"],),
+        )
+    return None
 
 
 def _is_active_pair_code(conn, code: str) -> bool:
@@ -142,7 +168,7 @@ def register(db: Database, body: dict, ip: str) -> dict:
             "SELECT * FROM invites WHERE code=?", (invite,)
         ).fetchone() if invite else None
         first_user = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 0
-        if first_user or _open_registration():
+        if first_user or _open_registration(db):
             # 服务器刚部署时的第一个账号不需要邀请码；开放注册模式下都放行。
             pass
         elif used is None:
@@ -194,11 +220,14 @@ def login(db: Database, body: dict, ip: str) -> dict:
 
     _validate_device(device_id, device_name, platform, pubkey)
     row = db.conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-    if row is None or row["disabled"] or not security.verify_password(
-        password, row["password_hash"]
-    ):
+    if row is None or not security.verify_password(password, row["password_hash"]):
         db.audit("login_failed", actor_device=device_id, detail=username, ip=ip)
         raise unauthorized("invalid_credentials", "账号或密码错误")
+    problem = account_problem(db, row)
+    if problem is not None:
+        db.audit("login_blocked", actor_device=device_id,
+                 detail=f"{username}:{problem.code}", ip=ip)
+        raise problem
 
     _upsert_device(db, int(row["id"]), device_id, device_name, platform, pubkey)
     token = _issue_session(db, int(row["id"]), device_id)
@@ -218,7 +247,8 @@ def authenticate(db: Database, token: str | None) -> dict:
         raise unauthorized()
     digest = security.hash_token(token)
     row = db.conn.execute(
-        "SELECT s.user_id, s.device_id, s.expires_at, u.username, u.disabled,\n"
+        "SELECT s.user_id, s.device_id, s.expires_at, u.id, u.username, u.disabled,\n"
+        "       u.ban_until, u.ban_reason, u.ban_at, u.ban_by,\n"
         "       d.pubkey, d.revoked_at\n"
         "  FROM sessions s JOIN users u ON u.id = s.user_id\n"
         "  JOIN devices d ON d.id = s.device_id\n"
@@ -229,8 +259,9 @@ def authenticate(db: Database, token: str | None) -> dict:
         raise unauthorized()
     if row["revoked_at"]:
         raise forbidden("device_revoked", "该设备已被注销")
-    if row["disabled"]:
-        raise forbidden("account_disabled", "账号已停用")
+    problem = account_problem(db, row)
+    if problem is not None:
+        raise problem
     if row["expires_at"] < security.iso():
         db.conn.execute("DELETE FROM sessions WHERE token_sha256=?", (digest,))
         raise unauthorized("session_expired", "登录已过期，请重新登录")

@@ -23,16 +23,16 @@ def bad_request(code: str, message: str, **extra) -> ApiError:
     return ApiError(400, code, message, **extra)
 
 
-def unauthorized(code: str = "unauthorized", message: str = "请先登录") -> ApiError:
-    return ApiError(401, code, message)
+def unauthorized(code: str = "unauthorized", message: str = "请先登录", **extra) -> ApiError:
+    return ApiError(401, code, message, **extra)
 
 
-def forbidden(code: str = "forbidden", message: str = "没有权限") -> ApiError:
-    return ApiError(403, code, message)
+def forbidden(code: str = "forbidden", message: str = "没有权限", **extra) -> ApiError:
+    return ApiError(403, code, message, **extra)
 
 
-def not_found(code: str = "not_found", message: str = "不存在") -> ApiError:
-    return ApiError(404, code, message)
+def not_found(code: str = "not_found", message: str = "不存在", **extra) -> ApiError:
+    return ApiError(404, code, message, **extra)
 
 
 def conflict(code: str, message: str, **extra) -> ApiError:

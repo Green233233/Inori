@@ -14,7 +14,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import VERSION, auth, coupons, pairing, presence, relay, security, sync
+from . import VERSION, admin, auth, coupons, pairing, presence, relay, security, sync
 from .errors import ApiError, bad_request, too_many, unauthorized
 from .store import Database
 
@@ -267,6 +267,7 @@ class QiHandler(BaseHTTPRequestHandler):
         if length <= 0:
             return {}
         raw = self.rfile.read(length)
+        admin.stats.add_bytes_in(len(raw))
         try:
             parsed = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -277,6 +278,7 @@ class QiHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        admin.stats.add_bytes_out(len(body))
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -287,6 +289,35 @@ class QiHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def _send_bytes(self, status: int, body: bytes, content_type: str,
+                    headers: dict | None = None) -> None:
+        admin.stats.add_bytes_out(len(body))
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _client_ip(self) -> str:
+        """Caddy 在前面时真实的访客 IP 在 X-Forwarded-For 里。
+
+        服务只监听 127.0.0.1，能连进来的都是本机反代，所以只在 peer 是
+        回环地址时才信任这个头；否则用 socket 对端地址，避免伪造。
+        """
+        peer = self.client_address[0]
+        if peer in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+            header = self.headers.get("X-Forwarded-For") or ""
+            first = header.split(",")[0].strip()
+            if first and re.fullmatch(r"[0-9A-Fa-f:.]+", first):
+                return first
+        return peer
 
     def _token(self) -> str | None:
         header = self.headers.get("Authorization") or ""
@@ -308,8 +339,13 @@ class QiHandler(BaseHTTPRequestHandler):
 
     def _dispatch(self, method: str) -> None:
         parsed = urllib.parse.urlsplit(self.path)
-        path = parsed.path.rstrip("/") or "/"
+        raw_path = parsed.path
+        path = raw_path.rstrip("/") or "/"
+        admin.stats.record_request(method, path)
         try:
+            if path == "/admin" or path.startswith("/admin/"):
+                self._dispatch_admin(method, raw_path, path)
+                return
             if method == "GET" and path == "/health":
                 self._send_json(200, {"ok": True, "version": VERSION,
                                       "time": security.iso()})
@@ -328,7 +364,7 @@ class QiHandler(BaseHTTPRequestHandler):
                     path=path,
                     query=self._query(),
                     body=body,
-                    ip=self.client_address[0],
+                    ip=self._client_ip(),
                     token=token,
                     keyring=self.keyring,
                     params=matched.groupdict(),
@@ -356,14 +392,71 @@ class QiHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"ok": False, "error": {
                 "code": "no_route", "message": "接口不存在"}})
         except ApiError as error:
+            if error.status >= 500:
+                admin.stats.record_error()
             self._send_json(error.status, error.body())
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception:  # pragma: no cover - defensive
+            admin.stats.record_error()
             LOG.error("unhandled error on %s %s\n%s", method, self.path,
                       traceback.format_exc())
             self._send_json(500, {"ok": False, "error": {
                 "code": "internal_error", "message": "服务器内部错误"}})
+
+    # -- admin ----------------------------------------------------------
+    _ADMIN_CSP = (
+        "default-src 'self'; base-uri 'none'; form-action 'self';"
+        " frame-ancestors 'none'; img-src 'self' data:;"
+        " style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+    )
+
+    def _admin_headers(self) -> dict:
+        return {
+            "Cache-Control": "no-cache",
+            "Content-Security-Policy": self._ADMIN_CSP,
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+        }
+
+    def _dispatch_admin(self, method: str, raw_path: str, path: str) -> None:
+        if method == "GET" and raw_path == "/admin":
+            self.send_response(302)
+            self.send_header("Location", "/admin/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if method == "GET" and raw_path == "/admin/":
+            asset = admin.read_asset("index.html")
+            if asset is None:
+                raise ApiError(404, "admin_not_installed", "管理后台尚未安装")
+            body, content_type = asset
+            self._send_bytes(200, body, content_type, self._admin_headers())
+            return
+        asset_prefix = "/admin/assets/"
+        if method == "GET" and path.startswith(asset_prefix):
+            name = path[len(asset_prefix):]
+            asset = admin.read_asset(name)
+            if asset is None:
+                raise ApiError(404, "admin_asset_not_found", "资源不存在")
+            body, content_type = asset
+            self._send_bytes(200, body, content_type, self._admin_headers())
+            return
+        if path.startswith(admin.API_PREFIX):
+            body = (self._read_body()
+                    if method in ("POST", "PUT", "PATCH", "DELETE") else {})
+            result = admin.dispatch(
+                self.db, method, path, self._query(), body,
+                self._token(), self._client_ip(),
+            )
+            if isinstance(result, admin.FileResponse):
+                headers = self._admin_headers()
+                headers.update(result.headers)
+                self._send_bytes(200, result.body, result.content_type, headers)
+            else:
+                self._send_json(200, result)
+            return
+        raise ApiError(404, "admin_not_found", "页面不存在")
 
     def _apply_limits(self, request: Request, path: str) -> None:
         device = request.device
@@ -426,6 +519,9 @@ def serve(host: str, port: int, data_dir: str) -> int:
     QiHandler.db = db
     QiHandler.keyring = keyring
 
+    admin.ensure_seed(db)
+    stats_thread = admin.start_background(db)
+
     stop = threading.Event()
     cleaner = threading.Thread(target=_cleanup_loop, args=(db, stop), daemon=True)
     cleaner.start()
@@ -449,6 +545,8 @@ def serve(host: str, port: int, data_dir: str) -> int:
         httpd.serve_forever(poll_interval=0.4)
     finally:
         stop.set()
+        admin.stop_background(stats_thread)
+        admin.stats.flush(db)
         httpd.server_close()
         db.close()
         LOG.info("祈服务器已停止")
