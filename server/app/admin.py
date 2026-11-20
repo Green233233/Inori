@@ -1,4 +1,4 @@
-"""祈 · 账户管理后台（v0.1.0）。
+"""祈 · 账户管理后台（v0.1.1）。
 
 纯标准库实现：管理员认证、账户管理、服务统计、Excel 导出。与 App 的
 普通账号/令牌完全分离——管理员会话只存在 admin_sessions，密码用同一套
@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import datetime as _dt
 import io
+import json
 import os
 import re
 import sqlite3
 import threading
 import time
+import urllib.request
 import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
@@ -31,7 +33,7 @@ from . import VERSION, security, settings
 from .errors import ApiError, bad_request, conflict, forbidden, not_found, too_many, unauthorized
 from .store import Database
 
-ADMIN_VERSION = "0.1.0"
+ADMIN_VERSION = "0.1.1"
 API_PREFIX = "/admin/api"
 
 DEFAULT_ADMIN = "admin"
@@ -41,6 +43,11 @@ ADMIN_SESSION_HOURS = 12
 MAX_FAILS = 10
 FAIL_WINDOW_SECONDS = 3600
 LOCK_SECONDS = 3600
+PASSWORD_FAIL_LIMIT = 5
+PASSWORD_FAIL_WINDOW_SECONDS = 900
+_MAX_USERNAME = 64
+_MAX_PASSWORD = 256
+_DUMMY_HASH = security.hash_password("qi-admin-dummy-password")
 
 BAN_DURATIONS = {
     "10m": (600, "10 分钟"),
@@ -60,6 +67,14 @@ _ASSET_TYPES = {
     "app.js": "application/javascript; charset=utf-8",
     "favicon.svg": "image/svg+xml",
 }
+
+_BING_IMAGE_API = (
+    "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN"
+)
+_BG_MAX_BYTES = 8 * 1024 * 1024
+_BG_FAIL_SECONDS = 300
+_bg_lock = threading.Lock()
+_bg_fail_until = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +100,135 @@ def read_asset(name: str) -> tuple[bytes, str] | None:
             return handle.read(), _ASSET_TYPES[name]
     except OSError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# 登录页每日壁纸（Bing HPImageArchive，服务端缓存）
+# ---------------------------------------------------------------------------
+def _image_type(data: bytes) -> str | None:
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _bg_folder(db: Database) -> str:
+    return os.path.join(os.path.dirname(db.path), "admin-cache")
+
+
+def _bg_path(db: Database, day: str) -> str:
+    return os.path.join(_bg_folder(db), f"login-bg-{day}.img")
+
+
+def _read_bytes(path: str) -> bytes | None:
+    try:
+        with open(path, "rb") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def _latest_cached_background(db: Database) -> bytes | None:
+    try:
+        names = [
+            name for name in os.listdir(_bg_folder(db))
+            if name.startswith("login-bg-") and name.endswith(".img")
+        ]
+    except OSError:
+        return None
+    if not names:
+        return None
+    names.sort(reverse=True)
+    return _read_bytes(os.path.join(_bg_folder(db), names[0]))
+
+
+def _fetch_bing_background() -> bytes:
+    """只访问固定的 Bing 域名，拒绝相对路径与超大响应。"""
+    request = urllib.request.Request(
+        _BING_IMAGE_API,
+        headers={"User-Agent": "InoriAdmin/0.1.1 (+https://124.221.102.236)"},
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        if response.status != 200:
+            raise OSError("bing api status")
+        payload = json.loads(response.read(512 * 1024).decode("utf-8"))
+    images = payload.get("images") or []
+    if not images:
+        raise ValueError("bing api returned no image")
+    relative = str(images[0].get("url") or "")
+    if not relative.startswith("/") or relative[1:].startswith("/"):
+        raise ValueError("unexpected bing image path")
+    image_request = urllib.request.Request(
+        "https://www.bing.com" + relative,
+        headers={"User-Agent": "InoriAdmin/0.1.1 (+https://124.221.102.236)"},
+    )
+    with urllib.request.urlopen(image_request, timeout=12) as response:
+        if response.status != 200:
+            raise OSError("bing image status")
+        if not (response.headers.get("Content-Type") or "").lower().startswith("image/"):
+            raise ValueError("bing image content type")
+        data = response.read(_BG_MAX_BYTES + 1)
+    if len(data) > _BG_MAX_BYTES or _image_type(data) is None:
+        raise ValueError("bing image too large or unsupported")
+    return data
+
+
+def login_background(db: Database) -> FileResponse:
+    """当天的登录页壁纸；拉取失败时回退到最近一张缓存。"""
+    global _bg_fail_until
+    day = _cst_day()
+    path = _bg_path(db, day)
+    data = _read_bytes(path)
+    if data:
+        return FileResponse(
+            data, _image_type(data) or "application/octet-stream",
+            {"Cache-Control": "public, max-age=3600"},
+        )
+
+    with _bg_lock:
+        data = _read_bytes(path)
+        if data:
+            return FileResponse(
+                data, _image_type(data) or "application/octet-stream",
+                {"Cache-Control": "public, max-age=3600"},
+            )
+        if time.time() < _bg_fail_until:
+            cached = _latest_cached_background(db)
+            if cached:
+                return FileResponse(
+                    cached, _image_type(cached) or "application/octet-stream",
+                    {"Cache-Control": "public, max-age=600"},
+                )
+            raise ApiError(503, "login_background_unavailable", "壁纸暂时不可用")
+
+        try:
+            data = _fetch_bing_background()
+        except Exception:
+            _bg_fail_until = time.time() + _BG_FAIL_SECONDS
+            cached = _latest_cached_background(db)
+            if cached:
+                return FileResponse(
+                    cached, _image_type(cached) or "application/octet-stream",
+                    {"Cache-Control": "public, max-age=600"},
+                )
+            raise ApiError(503, "login_background_unavailable", "壁纸暂时不可用")
+
+        folder = _bg_folder(db)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            temporary = path + ".tmp"
+            with open(temporary, "wb") as handle:
+                handle.write(data)
+            os.replace(temporary, path)
+        except OSError:
+            pass
+        return FileResponse(
+            data, _image_type(data) or "application/octet-stream",
+            {"Cache-Control": "public, max-age=3600"},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -184,10 +328,26 @@ def login(db: Database, body: dict, ip: str) -> dict:
             lockedUntil=locked_until,
         )
 
+    # 超长凭据直接拒绝，避免把 1MB 输入送进 scrypt/数据库。
+    if (not username or len(username) > _MAX_USERNAME
+            or len(password) > _MAX_PASSWORD):
+        failures = _record_failure(db, ip, username)
+        db.audit("admin_login_failed", detail=username[:32], ip=ip)
+        raise ApiError(
+            401, "invalid_admin_credentials", "管理员账号或密码错误",
+            attemptsLeft=max(0, MAX_FAILS - failures),
+        )
+
     row = db.conn.execute(
         "SELECT * FROM admins WHERE username=?", (username,)
     ).fetchone()
-    if row is None or not security.verify_password(password, row["password_hash"]):
+    if row is None:
+        # 用户不存在时也做一次等价哈希，避免用响应时间枚举管理员账号。
+        security.verify_password(password, _DUMMY_HASH)
+        matched = False
+    else:
+        matched = security.verify_password(password, row["password_hash"])
+    if not matched:
         failures = _record_failure(db, ip, username)
         if failures >= MAX_FAILS:
             until = _lock_ip(db, ip)
@@ -197,7 +357,7 @@ def login(db: Database, body: dict, ip: str) -> dict:
                 retryAfter=_seconds_until(until),
                 lockedUntil=until,
             )
-        db.audit("admin_login_failed", detail=username, ip=ip)
+        db.audit("admin_login_failed", detail=username[:32], ip=ip)
         raise ApiError(
             401, "invalid_admin_credentials", "管理员账号或密码错误",
             attemptsLeft=max(0, MAX_FAILS - failures),
@@ -244,15 +404,36 @@ def _session(db: Database, token: str | None) -> sqlite3.Row:
     return row
 
 
+def _password_failures(db: Database, username: str) -> int:
+    cutoff = security.iso(
+        security.now() - _dt.timedelta(seconds=PASSWORD_FAIL_WINDOW_SECONDS)
+    )
+    row = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM audit WHERE action='admin_password_failed'"
+        " AND detail=? AND at>=?",
+        (username, cutoff),
+    ).fetchone()
+    return int(row["n"] or 0)
+
+
 def change_password(db: Database, token: str, body: dict, ip: str) -> dict:
     session = _session(db, token)
     old = str(body.get("oldPassword") or "")
     new = str(body.get("newPassword") or "")
+    if len(old) > _MAX_PASSWORD or len(new) > _MAX_PASSWORD:
+        raise bad_request("invalid_password", "密码长度不合法")
     row = db.conn.execute(
         "SELECT * FROM admins WHERE id=?", (int(session["admin_id"]),)
     ).fetchone()
     if row is None:
         raise unauthorized("admin_unauthorized", "管理员不存在")
+    failures = _password_failures(db, row["username"])
+    if failures >= PASSWORD_FAIL_LIMIT:
+        raise too_many(
+            "admin_password_locked",
+            "当前密码错误次数过多，请 15 分钟后再试",
+            retryAfter=PASSWORD_FAIL_WINDOW_SECONDS,
+        )
     if not security.verify_password(old, row["password_hash"]):
         db.audit("admin_password_failed", detail=row["username"], ip=ip)
         raise bad_request("invalid_old_password", "当前密码不正确")
@@ -700,6 +881,8 @@ def create_account(db: Database, body: dict, ip: str) -> dict:
     password = str(body.get("password") or "")
     if not security.USERNAME_RE.match(username):
         raise bad_request("invalid_username", "账号需为 3–32 位小写字母/数字/下划线")
+    if len(password) > _MAX_PASSWORD:
+        raise bad_request("invalid_password", "密码长度不合法")
     problem = security.password_problem(password)
     if problem:
         raise bad_request("weak_password", problem)
@@ -722,26 +905,27 @@ def ban_account(db: Database, user_id: int, body: dict, ip: str) -> dict:
     reason = str(body.get("reason") or "").strip()[:200]
     seconds, label = BAN_DURATIONS[duration]
     now = security.iso()
-    if seconds is None:
-        db.conn.execute(
-            "UPDATE users SET disabled=1, ban_until=NULL, ban_reason=?,"
-            " ban_at=?, ban_by=? WHERE id=?",
-            (reason or None, now, DEFAULT_ADMIN, user_id),
-        )
-        until = None
-    else:
-        until = security.iso(security.now() + _dt.timedelta(seconds=seconds))
-        db.conn.execute(
-            "UPDATE users SET disabled=0, ban_until=?, ban_reason=?,"
-            " ban_at=?, ban_by=? WHERE id=?",
-            (until, reason or None, now, DEFAULT_ADMIN, user_id),
-        )
-    # 踢掉现有登录，封禁立即生效。
-    db.conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     detail = f"{row['username']}:{duration}"
     if reason:
         detail += f":{reason}"
-    db.audit("admin_ban_account", detail=detail, ip=ip)
+    with db.conn:
+        if seconds is None:
+            db.conn.execute(
+                "UPDATE users SET disabled=1, ban_until=NULL, ban_reason=?,"
+                " ban_at=?, ban_by=? WHERE id=?",
+                (reason or None, now, DEFAULT_ADMIN, user_id),
+            )
+            until = None
+        else:
+            until = security.iso(security.now() + _dt.timedelta(seconds=seconds))
+            db.conn.execute(
+                "UPDATE users SET disabled=0, ban_until=?, ban_reason=?,"
+                " ban_at=?, ban_by=? WHERE id=?",
+                (until, reason or None, now, DEFAULT_ADMIN, user_id),
+            )
+        # 踢掉现有登录，封禁立即生效。
+        db.conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        db.audit("admin_ban_account", detail=detail, ip=ip)
     return {
         "ok": True,
         "id": user_id,
@@ -753,12 +937,13 @@ def ban_account(db: Database, user_id: int, body: dict, ip: str) -> dict:
 
 def unban_account(db: Database, user_id: int, ip: str) -> dict:
     row = _user_row(db, user_id)
-    db.conn.execute(
-        "UPDATE users SET disabled=0, ban_until=NULL, ban_reason=NULL,"
-        " ban_at=NULL, ban_by=NULL WHERE id=?",
-        (user_id,),
-    )
-    db.audit("admin_unban_account", detail=row["username"], ip=ip)
+    with db.conn:
+        db.conn.execute(
+            "UPDATE users SET disabled=0, ban_until=NULL, ban_reason=NULL,"
+            " ban_at=NULL, ban_by=NULL WHERE id=?",
+            (user_id,),
+        )
+        db.audit("admin_unban_account", detail=row["username"], ip=ip)
     return {"ok": True, "id": user_id}
 
 
@@ -770,19 +955,20 @@ def delete_account(db: Database, user_id: int, ip: str) -> dict:
         )
     ]
     now = security.iso()
-    for device_id in devices:
-        db.conn.execute(
-            "UPDATE pairs SET unpaired_at=? WHERE unpaired_at IS NULL"
-            " AND (master_device=? OR puppy_device=?)",
-            (now, device_id, device_id),
-        )
-    db.conn.execute("DELETE FROM presence WHERE user_id=?", (user_id,))
-    db.conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
-    db.conn.execute("DELETE FROM devices WHERE user_id=?", (user_id,))
-    db.conn.execute("DELETE FROM users WHERE id=?", (user_id,))
-    # 日记/券是端到端密文，属于配对双方；删除单边账号时保留，
-    # 避免把共同记忆从另一方那里一并抹掉。设备与会话已全部清除。
-    db.audit("admin_delete_account", detail=row["username"], ip=ip)
+    with db.conn:
+        for device_id in devices:
+            db.conn.execute(
+                "UPDATE pairs SET unpaired_at=? WHERE unpaired_at IS NULL"
+                " AND (master_device=? OR puppy_device=?)",
+                (now, device_id, device_id),
+            )
+        db.conn.execute("DELETE FROM presence WHERE user_id=?", (user_id,))
+        db.conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        db.conn.execute("DELETE FROM devices WHERE user_id=?", (user_id,))
+        db.conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+        # 日记/券是端到端密文，属于配对双方；删除单边账号时保留，
+        # 避免把共同记忆从另一方那里一并抹掉。设备与会话已全部清除。
+        db.audit("admin_delete_account", detail=row["username"], ip=ip)
     return {"ok": True, "id": user_id, "username": row["username"]}
 
 
@@ -889,8 +1075,11 @@ def set_registration(db: Database, body: dict, ip: str) -> dict:
 # ---------------------------------------------------------------------------
 def _xml_text(value) -> str:
     text = "" if value is None else str(value)
+    # 孤立代理项无法编码进 XML；替换掉，避免导出整份表格失败。
+    text = text.encode("utf-8", "replace").decode("utf-8")
     text = "".join(
-        ch for ch in text if ch in "\t\n\r" or ord(ch) >= 0x20
+        ch for ch in text
+        if ch in "\t\n\r" or (ord(ch) >= 0x20 and ord(ch) not in (0xFFFE, 0xFFFF))
     )
     return escape(text)
 
@@ -929,8 +1118,6 @@ _XLSX_HEADERS = [
     ("设备名称", 16),
     ("平台", 10),
     ("绑定状态", 10),
-    ("绑定对象", 16),
-    ("角色", 10),
     ("最近在线", 20),
 ]
 
@@ -953,8 +1140,6 @@ def build_accounts_xlsx(accounts: list[dict]) -> bytes:
             item["deviceName"] or "",
             item["platform"] or "",
             item["pairStateLabel"],
-            item["peerName"] or "",
-            item["role"] or "",
             item["lastSeenLocal"] or "从未登录",
         ]
         cells = "".join(
@@ -1104,6 +1289,11 @@ def dispatch(db: Database, method: str, path: str, query: dict, body: dict,
         if method != "POST":
             raise ApiError(405, "method_not_allowed", "方法不允许")
         return login(db, body, ip)
+
+    if route == "/login-background":
+        if method != "GET":
+            raise ApiError(405, "method_not_allowed", "方法不允许")
+        return login_background(db)
 
     session = _session(db, token)
     if session["must_change_password"] and route not in _ALLOWED_WHEN_LOCKED:

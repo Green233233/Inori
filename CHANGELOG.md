@@ -10,6 +10,37 @@
 
 ---
 
+## [admin v0.1.1] — 2026-11-20
+
+### 变更
+
+- 深色背景改为 `#121212`；继续使用蓝色主色与小圆角。
+- 登录页改为「左侧介绍 + 右侧登录卡片」的两列布局，背景每天跟随 Bing 壁纸更新；
+  壁纸由服务端抓取并按日期缓存，失败时回退最近一张，不阻塞登录。
+- Excel 导出取消「绑定对象」「角色」两列，由 13 列变为 11 列；页面仍可查看这两项。
+- 后台只保留 HTTPS 入口：`http://124.221.102.236/admin*` 由 Caddy 返回 `308`，
+  根路径仍归既有站点；HTTPS 由 `https://124.221.102.236/admin/` 提供。
+
+### 安全（code-audit standard）
+
+- 管理页与管理 API 全部补上 `Strict-Transport-Security`、`Permissions-Policy`、
+  `Cross-Origin-Resource-Policy`，静态页使用 `no-cache`。
+- 改密接口增加旧密码失败限制：15 分钟内 5 次错误后锁定 15 分钟。
+- 登录对不存在的管理员执行 dummy scrypt，降低账号枚举的时序差异。
+- 用户名 / 密码限制最大长度，超长输入不进入哈希与数据库。
+- 拒绝带 `Transfer-Encoding` 的请求体，避免分块编码与 Content-Length 的歧义。
+- 封禁 / 解封 / 删除账户改为单事务，避免半完成状态。
+- xlsx 文本清洗孤立 UTF-16 代理项，避免导出非法 XML。
+- `X-Forwarded-For` 改取最后一跳，防止客户端伪造来源 IP 绕过锁定。
+- 审计结论：无 Critical / High，2 个 Medium 与 5 个 Low 已修复或加固。
+
+### 测试
+
+- `.tmp-dev/admin_e2e.py` 53 项全绿；`server/tests/test_api.py` 23 项全绿。
+- 手工验证 HSTS/CSP/Permissions-Policy、超长密码 401、连续 5 次旧密码错误后 429。
+
+---
+
 ## [admin v0.1.0] — 2026-11-20
 
 ### 新增

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#212121">
+  <meta name="theme-color" content="#121212">
   <meta name="robots" content="noindex, nofollow">
   <title>祈 · 账户管理后台</title>
   <link rel="icon" href="/admin/assets/favicon.svg" type="image/svg+xml">
@@ -13,13 +13,28 @@
 <body>
 
   <!-- 登录 -->
-  <main id="login-view" class="auth-screen" hidden>
+  <main id="login-view" class="auth-screen auth-login" hidden>
+    <div class="auth-wallpaper" aria-hidden="true">
+      <img id="login-wallpaper" alt="" decoding="async">
+      <span class="auth-scrim"></span>
+    </div>
+    <div class="auth-intro">
+      <p class="eyebrow">INORI · SELF-HOSTED</p>
+      <h2>把两个人的日常，<br>放在自己的服务器上。</h2>
+      <p class="auth-lede">这里是祈的管理后台。账户、设备、封禁与服务器流量都留在你自己的机器上，不经过第三方。</p>
+      <ul class="auth-points">
+        <li><span>01</span>账户与绑定状态</li>
+        <li><span>02</span>封禁、解封与审计</li>
+        <li><span>03</span>请求与带宽概览</li>
+      </ul>
+      <p class="auth-note">背景每天更新 · 来自 Bing</p>
+    </div>
     <section class="auth-card">
       <div class="brand">
         <span class="brand-mark">祈</span>
         <div>
           <h1>账户管理后台</h1>
-          <p>Inori Console · v0.1.0</p>
+          <p>Inori Console · v0.1.1</p>
         </div>
       </div>
       <form id="login-form" class="stack" autocomplete="on" novalidate>
@@ -77,7 +92,7 @@
         <span class="brand-mark">祈</span>
         <div>
           <h1>管理后台</h1>
-          <p>v0.1.0</p>
+          <p>v0.1.1</p>
         </div>
       </div>
       <nav class="nav" aria-label="主导航">

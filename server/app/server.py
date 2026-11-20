@@ -258,6 +258,10 @@ class QiHandler(BaseHTTPRequestHandler):
         LOG.debug("%s - %s", self.address_string(), fmt % args)
 
     def _read_body(self) -> dict:
+        # 服务端只接受定长 JSON；分块传输会让 BaseHTTPRequestHandler 的
+        # Content-Length 解析产生请求走私歧义，直接拒绝。
+        if self.headers.get("Transfer-Encoding"):
+            raise bad_request("invalid_transfer_encoding", "不支持分块传输")
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -276,7 +280,8 @@ class QiHandler(BaseHTTPRequestHandler):
             raise bad_request("invalid_json", "请求体必须是 JSON 对象")
         return parsed
 
-    def _send_json(self, status: int, payload: dict) -> None:
+    def _send_json(self, status: int, payload: dict,
+                   headers: dict | None = None) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         admin.stats.add_bytes_out(len(body))
         self.send_response(status)
@@ -284,6 +289,8 @@ class QiHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -314,9 +321,11 @@ class QiHandler(BaseHTTPRequestHandler):
         peer = self.client_address[0]
         if peer in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
             header = self.headers.get("X-Forwarded-For") or ""
-            first = header.split(",")[0].strip()
-            if first and re.fullmatch(r"[0-9A-Fa-f:.]+", first):
-                return first
+            # 取最后一跳：即使客户端自己塞了 X-Forwarded-For，也只会
+            # 落在前面；最后一跳才是 Caddy 写入的真实对端。
+            last = header.split(",")[-1].strip()
+            if last and re.fullmatch(r"[0-9A-Fa-f:.]+", last):
+                return last
         return peer
 
     def _token(self) -> str | None:
@@ -394,15 +403,17 @@ class QiHandler(BaseHTTPRequestHandler):
         except ApiError as error:
             if error.status >= 500:
                 admin.stats.record_error()
-            self._send_json(error.status, error.body())
+            headers = self._admin_headers() if self.path.startswith("/admin") else None
+            self._send_json(error.status, error.body(), headers)
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception:  # pragma: no cover - defensive
             admin.stats.record_error()
             LOG.error("unhandled error on %s %s\n%s", method, self.path,
                       traceback.format_exc())
+            headers = self._admin_headers() if self.path.startswith("/admin") else None
             self._send_json(500, {"ok": False, "error": {
-                "code": "internal_error", "message": "服务器内部错误"}})
+                "code": "internal_error", "message": "服务器内部错误"}}, headers)
 
     # -- admin ----------------------------------------------------------
     _ADMIN_CSP = (
@@ -413,11 +424,18 @@ class QiHandler(BaseHTTPRequestHandler):
 
     def _admin_headers(self) -> dict:
         return {
-            "Cache-Control": "no-cache",
             "Content-Security-Policy": self._ADMIN_CSP,
+            "Strict-Transport-Security": "max-age=31536000",
             "X-Frame-Options": "DENY",
             "Referrer-Policy": "no-referrer",
+            "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+            "Cross-Origin-Resource-Policy": "same-origin",
         }
+
+    def _admin_static_headers(self) -> dict:
+        headers = self._admin_headers()
+        headers["Cache-Control"] = "no-cache"
+        return headers
 
     def _dispatch_admin(self, method: str, raw_path: str, path: str) -> None:
         if method == "GET" and raw_path == "/admin":
@@ -431,7 +449,7 @@ class QiHandler(BaseHTTPRequestHandler):
             if asset is None:
                 raise ApiError(404, "admin_not_installed", "管理后台尚未安装")
             body, content_type = asset
-            self._send_bytes(200, body, content_type, self._admin_headers())
+            self._send_bytes(200, body, content_type, self._admin_static_headers())
             return
         asset_prefix = "/admin/assets/"
         if method == "GET" and path.startswith(asset_prefix):
@@ -440,7 +458,7 @@ class QiHandler(BaseHTTPRequestHandler):
             if asset is None:
                 raise ApiError(404, "admin_asset_not_found", "资源不存在")
             body, content_type = asset
-            self._send_bytes(200, body, content_type, self._admin_headers())
+            self._send_bytes(200, body, content_type, self._admin_static_headers())
             return
         if path.startswith(admin.API_PREFIX):
             body = (self._read_body()
@@ -454,7 +472,7 @@ class QiHandler(BaseHTTPRequestHandler):
                 headers.update(result.headers)
                 self._send_bytes(200, result.body, result.content_type, headers)
             else:
-                self._send_json(200, result)
+                self._send_json(200, result, self._admin_headers())
             return
         raise ApiError(404, "admin_not_found", "页面不存在")
 

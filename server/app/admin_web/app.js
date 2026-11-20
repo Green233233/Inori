@@ -215,10 +215,20 @@
     $("app-view").hidden = true;
   }
 
+  function ensureLoginWallpaper() {
+    var img = $("login-wallpaper");
+    if (!img || img.dataset.loaded) return;
+    img.dataset.loaded = "1";
+    img.addEventListener("error", function () { img.hidden = true; });
+    var day = new Date().toISOString().slice(0, 10);
+    img.src = "/admin/api/login-background?d=" + day;
+  }
+
   function showLogin(message) {
     stopAutoRefresh();
     closeModal();
     hideAllScreens();
+    ensureLoginWallpaper();
     $("login-view").hidden = false;
     $("login-error").hidden = !message;
     if (message) $("login-error").textContent = message;
