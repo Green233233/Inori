@@ -1277,6 +1277,7 @@ def _pair_storage_entry(db: Database, pair: sqlite3.Row) -> dict:
         "verified": bool(pair["verified_at"]),
         "unpaired": bool(pair["unpaired_at"]),
         "quotaBytes": int(pair["cloud_quota_bytes"] or 0),
+        "stagingLimits": staging.pair_limits(pair),
         **storage,
     }
 
@@ -1317,19 +1318,81 @@ def clear_account_cloud(db: Database, user_id: int, ip: str) -> dict:
     return {"ok": True, "removed": removed}
 
 
-def set_pair_quota(db: Database, pair_id: str, body: dict, ip: str) -> dict:
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+def set_pair_limits(db: Database, pair_id: str, body: dict, ip: str) -> dict:
+    """同时调整云配额与暂存区门禁；只传部分字段时保留其余配置。"""
     row = _pair_row(db, pair_id)
-    try:
-        quota = int(body.get("quotaBytes"))
-    except (TypeError, ValueError):
-        raise bad_request("invalid_quota", "配额必须是整数")
-    if quota < 0 or quota > 100 * 1024 ** 3:
-        raise bad_request("invalid_quota", "配额需在 0–100GB 之间（0 表示不限）")
+    fields: list[str] = []
+    values: list = []
+    if "quotaBytes" in body:
+        try:
+            quota = int(body.get("quotaBytes"))
+        except (TypeError, ValueError):
+            raise bad_request("invalid_quota", "配额必须是整数")
+        if quota < 0 or quota > 100 * 1024 ** 3:
+            raise bad_request("invalid_quota", "配额需在 0–100GB 之间（0 表示不限）")
+        fields.append("cloud_quota_bytes=?")
+        values.append(quota)
+    if "ttlHours" in body:
+        try:
+            ttl = int(body.get("ttlHours"))
+        except (TypeError, ValueError):
+            raise bad_request("invalid_ttl", "暂存时长必须是整数")
+        if ttl < 1 or ttl > staging.MAX_TTL_HOURS:
+            raise bad_request("invalid_ttl", "暂存时长需在 1–720 小时之间")
+        fields.append("staging_ttl_hours=?")
+        values.append(ttl)
+    if "budgetBytes" in body:
+        try:
+            budget = int(body.get("budgetBytes"))
+        except (TypeError, ValueError):
+            raise bad_request("invalid_budget", "暂存容量必须是整数")
+        if budget < staging.MIN_BUDGET_BYTES or budget > staging.MAX_BUDGET_BYTES:
+            raise bad_request("invalid_budget", "暂存容量需在 1MB–2GB 之间")
+        fields.append("staging_budget_bytes=?")
+        values.append(budget)
+    for key, column in (("timeGate", "staging_time_gate"),
+                        ("sizeGate", "staging_size_gate")):
+        if key in body:
+            fields.append(f"{column}=?")
+            values.append(1 if _as_bool(body.get(key)) else 0)
+    if not fields:
+        raise bad_request("nothing_to_update", "没有需要更新的设置")
     db.conn.execute(
-        "UPDATE pairs SET cloud_quota_bytes=? WHERE id=?", (quota, pair_id)
+        f"UPDATE pairs SET {', '.join(fields)} WHERE id=?",
+        (*values, pair_id),
     )
-    db.audit("admin_pair_quota", detail=f"{pair_id}:{quota}", ip=ip)
+    updated = _pair_row(db, pair_id)
+    limits = staging.pair_limits(updated)
+    # 门禁切换或 TTL 变化后，重设未确认条目的过期时间，避免关闭时间门禁后旧条目立刻过期。
+    if "ttlHours" in body or "timeGate" in body:
+        hours = limits["ttlHours"] if limits["timeGate"] else staging.GATE_OFF_TTL_HOURS
+        db.conn.execute(
+            "UPDATE staged_items SET expires_at=? WHERE pair_id=? AND acked_at IS NULL",
+            (security.iso_after(hours=hours), pair_id),
+        )
+    db.audit(
+        "admin_pair_limits",
+        detail=json.dumps(
+            {"pair": pair_id, "quotaBytes": int(updated["cloud_quota_bytes"] or 0),
+             **limits},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        ip=ip,
+    )
     return {"ok": True, **_pair_storage_entry(db, _pair_row(db, pair_id))}
+
+
+def set_pair_quota(db: Database, pair_id: str, body: dict, ip: str) -> dict:
+    return set_pair_limits(db, pair_id, {"quotaBytes": body.get("quotaBytes")}, ip)
 
 
 def clear_pair_cloud(db: Database, pair_id: str, ip: str) -> dict:
@@ -1819,6 +1882,11 @@ def dispatch(db: Database, method: str, path: str, query: dict, body: dict,
     matched = re.fullmatch(r"/accounts/(\d+)/clear-cloud", route)
     if matched and method == "POST":
         return clear_account_cloud(db, int(matched.group(1)), ip)
+    matched = re.fullmatch(r"/pairs/([A-Za-z0-9_-]+)/limits", route)
+    if matched and method == "GET":
+        return {"ok": True, **_pair_storage_entry(db, _pair_row(db, matched.group(1)))}
+    if matched and method in ("PATCH", "PUT"):
+        return set_pair_limits(db, matched.group(1), body, ip)
     matched = re.fullmatch(r"/pairs/([A-Za-z0-9_-]+)/quota", route)
     if matched and method in ("PATCH", "PUT"):
         return set_pair_quota(db, matched.group(1), body, ip)
@@ -1833,7 +1901,7 @@ def dispatch(db: Database, method: str, path: str, query: dict, body: dict,
     if re.fullmatch(r"/accounts/\d+", route) or re.fullmatch(
             r"/accounts/\d+/(ban|unban|storage|clear-staging|clear-cloud)", route):
         raise ApiError(405, "method_not_allowed", "方法不允许")
-    if re.fullmatch(r"/pairs/[A-Za-z0-9_-]+/(quota|cloud)", route):
+    if re.fullmatch(r"/pairs/[A-Za-z0-9_-]+/(quota|limits|cloud)", route):
         raise ApiError(405, "method_not_allowed", "方法不允许")
 
     raise ApiError(404, "admin_route_not_found", "接口不存在")

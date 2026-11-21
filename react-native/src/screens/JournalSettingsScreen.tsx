@@ -3,7 +3,7 @@
  * 字号、默认字体、默认笔刷，以及日记云同步的用量。
  */
 import React, {useCallback, useEffect, useState} from 'react';
-import {Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {AppState, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {useAppTheme} from '../theme/AppThemeProvider';
 import {withAlpha} from '../theme/palette';
 import {type} from '../theme/typography';
@@ -86,6 +86,15 @@ export function JournalSettingsScreen({
     void loadQuota();
   }, [loadQuota]);
 
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', next => {
+      if (next === 'active') {
+        void loadQuota();
+      }
+    });
+    return () => subscription.remove();
+  }, [loadQuota]);
+
   const usedRatio =
     quota && quota.quotaBytes > 0
       ? Math.min(1, Math.max(0, quota.usedBytes / quota.quotaBytes))
@@ -151,13 +160,25 @@ export function JournalSettingsScreen({
           <View style={styles.cloudUsage}>
             <View style={styles.cloudUsageHead}>
               <Text style={[type.body, {color: colors.onSurface}]}>已用空间</Text>
-              <Text style={[type.body, {color: colors.onSurfaceVariant}]}>
-                {quota
-                  ? `${formatBytes(quota.usedBytes)} / ${formatBytes(quota.quotaBytes)}`
-                  : cloudReady
-                    ? '正在读取…'
-                    : '1 GB / 每对绑定'}
-              </Text>
+              <View style={styles.cloudUsageValue}>
+                <Text style={[type.body, {color: colors.onSurfaceVariant}]}>
+                  {quota
+                    ? `${formatBytes(quota.usedBytes)} / ${formatBytes(quota.quotaBytes)}`
+                    : cloudReady
+                      ? '正在读取…'
+                      : '1 GB / 每对绑定'}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="刷新云空间大小"
+                  hitSlop={8}
+                  onPress={() => {
+                    void loadQuota();
+                    showToast('已刷新云空间大小');
+                  }}>
+                  <Text style={[type.caption, {color: colors.primary}]}>刷新</Text>
+                </Pressable>
+              </View>
             </View>
             <View
               accessibilityRole="progressbar"
@@ -294,6 +315,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 10,
+  },
+  cloudUsageValue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   cloudBar: {height: 8, borderRadius: 999, overflow: 'hidden'},
   cloudBarFill: {height: '100%', borderRadius: 999},

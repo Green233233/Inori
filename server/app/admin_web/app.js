@@ -1086,6 +1086,12 @@
     return Math.round(value / 1073741824 * 10) / 10;
   }
 
+  function limitsSummary(limits) {
+    if (!limits) return "默认 72 小时 / 150 MB";
+    return (limits.timeGate ? "时间 " + num(limits.ttlHours) + " 小时" : "时间不限") +
+      " · " + (limits.sizeGate ? formatBytes(limits.budgetBytes) : "容量不限");
+  }
+
   function storagePairMarkup(pair) {
     var name = (pair.ownerName || "主人") + " × " + (pair.puppyName || "小狗");
     var badge = pair.unpaired
@@ -1099,13 +1105,24 @@
           " · " + num(pair.stagedItems) + " 条</dd></div>" +
         "<div><dt>云空间</dt><dd>" + formatBytes(pair.cloudBytes) + "</dd></div>" +
         "<div><dt>云配额</dt><dd>" + (Number(pair.quotaBytes) > 0 ? formatBytes(pair.quotaBytes) : "不限") +
-          "</dd></div></dl>" +
+          "</dd></div>" +
+        "<div><dt>暂存门禁</dt><dd>" + limitsSummary(pair.stagingLimits) + "</dd></div></dl>" +
       '<div class="storage-pair-actions">' +
         '<button class="btn btn-ghost btn-sm" data-storage-op="clear-staging" type="button">清空暂存</button>' +
         '<button class="btn btn-ghost btn-sm btn-danger-quiet" data-storage-op="clear-cloud" type="button">清空云空间</button>' +
-        '<label class="quota-field">配额 <input type="number" min="0" max="100" step="0.5" data-role="quota-gb" value="' +
-          quotaGb(pair.quotaBytes) + '"> GB' +
-          '<button class="btn btn-ghost btn-sm" data-storage-op="save-quota" type="button">保存</button></label>' +
+      "</div>" +
+      '<div class="limit-fields">' +
+        '<label class="quota-field">云配额 <input type="number" min="0" max="100" step="0.5" data-role="quota-gb" value="' +
+          quotaGb(pair.quotaBytes) + '"> GB</label>' +
+        '<label class="quota-field">暂存时长 <input type="number" min="1" max="720" step="1" data-role="ttl-hours" value="' +
+          Number((pair.stagingLimits && pair.stagingLimits.ttlHours) || 72) + '"> 小时</label>' +
+        '<label class="quota-field">暂存容量 <input type="number" min="1" max="2048" step="1" data-role="budget-mb" value="' +
+          Math.round(Number((pair.stagingLimits && pair.stagingLimits.budgetBytes) || 157286400) / 1048576) + '"> MB</label>' +
+        '<label class="check-field"><input type="checkbox" data-role="time-gate"' +
+          (pair.stagingLimits && pair.stagingLimits.timeGate ? " checked" : "") + '> 时间门禁</label>' +
+        '<label class="check-field"><input type="checkbox" data-role="size-gate"' +
+          (pair.stagingLimits && pair.stagingLimits.sizeGate ? " checked" : "") + '> 容量门禁</label>' +
+        '<button class="btn btn-ghost btn-sm" data-storage-op="save-limits" type="button">保存限制</button>' +
       "</div></div>";
   }
 
@@ -1130,8 +1147,24 @@
       if (op === "clear-cloud" && !window.confirm("清空这个配对的云空间？双方未拉取的日记与媒体会一起删除。")) return;
       var quotaInput = block.querySelector('[data-role="quota-gb"]');
       var quotaBytes = quotaInput ? Math.round(Number(quotaInput.value || 0) * 1073741824) : 0;
-      if (op === "save-quota" && (!Number.isFinite(quotaBytes) || quotaBytes < 0 || quotaBytes > 100 * 1073741824)) {
+      var ttlInput = block.querySelector('[data-role="ttl-hours"]');
+      var budgetInput = block.querySelector('[data-role="budget-mb"]');
+      var ttlHours = ttlInput ? Number(ttlInput.value || 0) : 72;
+      var budgetMb = budgetInput ? Number(budgetInput.value || 0) : 150;
+      var timeGate = block.querySelector('[data-role="time-gate"]');
+      var sizeGate = block.querySelector('[data-role="size-gate"]');
+      if (op === "save-limits" && (!Number.isFinite(quotaBytes) || quotaBytes < 0 || quotaBytes > 100 * 1073741824)) {
         error.textContent = "配额需在 0–100GB 之间（0 表示不限）";
+        error.hidden = false;
+        return;
+      }
+      if (op === "save-limits" && (!Number.isFinite(ttlHours) || ttlHours < 1 || ttlHours > 720)) {
+        error.textContent = "暂存时长需在 1–720 小时之间";
+        error.hidden = false;
+        return;
+      }
+      if (op === "save-limits" && (!Number.isFinite(budgetMb) || budgetMb < 1 || budgetMb > 2048)) {
+        error.textContent = "暂存容量需在 1–2048 MB 之间";
         error.hidden = false;
         return;
       }
@@ -1145,10 +1178,17 @@
           await api("/pairs/" + encodeURIComponent(pairId) + "/cloud", { method: "DELETE" });
           toast("已清空这个配对的云空间");
         } else {
-          await api("/pairs/" + encodeURIComponent(pairId) + "/quota", {
-            method: "PATCH", body: { quotaBytes: quotaBytes }
+          await api("/pairs/" + encodeURIComponent(pairId) + "/limits", {
+            method: "PATCH",
+            body: {
+              quotaBytes: quotaBytes,
+              ttlHours: Math.round(ttlHours),
+              budgetBytes: Math.round(budgetMb * 1048576),
+              timeGate: !!(timeGate && timeGate.checked),
+              sizeGate: !!(sizeGate && sizeGate.checked)
+            }
           });
-          toast("云配额已更新");
+          toast("云配额与暂存门禁已更新");
         }
         await refreshAccountStorage(ctx, account);
         loadStorage();

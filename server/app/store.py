@@ -69,7 +69,11 @@ CREATE TABLE IF NOT EXISTS pairs (
   verified_at TEXT,
   created_at TEXT NOT NULL,
   unpaired_at TEXT,
-  cloud_quota_bytes INTEGER NOT NULL DEFAULT 1073741824
+  cloud_quota_bytes INTEGER NOT NULL DEFAULT 1073741824,
+  staging_ttl_hours INTEGER NOT NULL DEFAULT 72,
+  staging_budget_bytes INTEGER NOT NULL DEFAULT 157286400,
+  staging_time_gate INTEGER NOT NULL DEFAULT 1,
+  staging_size_gate INTEGER NOT NULL DEFAULT 1
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pairs_master ON pairs(master_device) WHERE unpaired_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pairs_puppy ON pairs(puppy_device) WHERE unpaired_at IS NULL;
@@ -296,6 +300,14 @@ class Database:
                 "ALTER TABLE pairs ADD COLUMN cloud_quota_bytes"
                 " INTEGER NOT NULL DEFAULT 1073741824"
             )
+        for column, decl in (
+            ("staging_ttl_hours", "INTEGER NOT NULL DEFAULT 72"),
+            ("staging_budget_bytes", "INTEGER NOT NULL DEFAULT 157286400"),
+            ("staging_time_gate", "INTEGER NOT NULL DEFAULT 1"),
+            ("staging_size_gate", "INTEGER NOT NULL DEFAULT 1"),
+        ):
+            if column not in pair_columns:
+                conn.execute(f"ALTER TABLE pairs ADD COLUMN {column} {decl}")
         sync_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(sync_records)")
         }

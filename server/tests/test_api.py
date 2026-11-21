@@ -22,7 +22,7 @@ import urllib.request
 SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SERVER_DIR)
 
-from app import VERSION, security  # noqa: E402
+from app import VERSION, admin, security  # noqa: E402
 from app.store import Database  # noqa: E402
 
 
@@ -609,6 +609,62 @@ class ApiTest(unittest.TestCase):
         payload = master.call("POST", "/api/v1/staging/send", {
             "kind": "journal", "ciphertext": "cipher"}, expect=400)
         self.assertEqual(payload["error"]["code"], "invalid_kind")
+
+    def test_staging_pair_limits_and_gates(self) -> None:
+        """每对绑定可单独设置暂存时长、容量与两个门禁。"""
+        master, puppy, master_id, _ = self._paired()
+        path = os.path.join(self.tmp, "qi.sqlite3")
+        db = Database(path)
+        pair_id = db.conn.execute(
+            "SELECT id FROM pairs WHERE master_device=? AND unpaired_at IS NULL",
+            (master_id,)).fetchone()["id"]
+        admin.set_pair_limits(db, pair_id, {
+            "ttlHours": 1, "budgetBytes": 1048576,
+            "timeGate": True, "sizeGate": False}, "test")
+        db.conn.commit()
+        quota = master.call("GET", "/api/v1/staging/quota")
+        self.assertEqual(quota["ttlHours"], 1)
+        self.assertEqual(quota["budgetBytes"], 1048576)
+        self.assertTrue(quota["timeGate"])
+        self.assertFalse(quota["sizeGate"])
+
+        for kind in ("status", "profile", "location"):
+            master.call("POST", "/api/v1/staging/send", {
+                "kind": kind, "ciphertext": "x" * 400000, "dedupeKey": kind})
+        over = master.call("GET", "/api/v1/staging/quota")
+        self.assertGreater(over["usedBytes"], over["budgetBytes"])
+        self.assertFalse(over["pressure"])
+
+        admin.set_pair_limits(db, pair_id, {
+            "budgetBytes": 1048576, "sizeGate": True}, "test")
+        db.conn.commit()
+        master.call("POST", "/api/v1/staging/send", {
+            "kind": "trail", "ciphertext": "y" * 400000, "dedupeKey": "trail"})
+        limited = master.call("GET", "/api/v1/staging/quota")
+        self.assertLessEqual(limited["usedBytes"], 1048576)
+        db.close()
+
+    def test_staging_time_gate_off_extends_expiry(self) -> None:
+        """关闭时间门禁时，未确认条目不会被旧 expires_at 卡住。"""
+        master, puppy, master_id, _ = self._paired()
+        master.call("POST", "/api/v1/staging/send", {
+            "kind": "status", "ciphertext": "keep-me", "dedupeKey": "status"})
+        path = os.path.join(self.tmp, "qi.sqlite3")
+        db = Database(path)
+        pair_id = db.conn.execute(
+            "SELECT id FROM pairs WHERE master_device=? AND unpaired_at IS NULL",
+            (master_id,)).fetchone()["id"]
+        db.conn.execute(
+            "UPDATE staged_items SET expires_at='2000-01-01T00:00:00Z' WHERE pair_id=?",
+            (pair_id,))
+        admin.set_pair_limits(db, pair_id, {"timeGate": False}, "test")
+        db.conn.commit()
+        row = db.conn.execute(
+            "SELECT expires_at FROM staged_items WHERE pair_id=?", (pair_id,)).fetchone()
+        self.assertGreater(row["expires_at"], security.iso())
+        polled = puppy.call("GET", "/api/v1/staging/poll?cursor=0&wait=0")
+        self.assertEqual([item["ciphertext"] for item in polled["items"]], ["keep-me"])
+        db.close()
 
     def test_sync_self_audience_is_private(self) -> None:
         """私密日记只回作者自己的设备，对方拉不到。"""

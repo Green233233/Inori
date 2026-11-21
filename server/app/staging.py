@@ -7,10 +7,11 @@
 服务端能看到的东西只有：谁发给谁、什么 kind、密文多长、什么时候上传。
 正文一律是端到端密文，本模块不解析、不记录。
 
-保留策略：
-- 每对绑定最多 72 小时；
-- 每对绑定暂存总量 150MB，超出按 rev 从最早未确认的开始丢；
-- 到达 90% 时返回 pressure，客户端可以据此把新的状态改走直连兜底。
+保留策略（每对绑定可单独配置）：
+- 暂存时长默认 72 小时，关闭时间门禁后不再按时间过期；
+- 暂存容量默认 150MB，关闭容量门禁后不按容量淘汰；
+- 另有一条 2000 条的硬上限，超出按 rev 从最早未确认的开始丢；
+- 到达配置容量的 90% 时返回 pressure，客户端可以据此把新的状态改走直连兜底。
 """
 
 from __future__ import annotations
@@ -25,6 +26,10 @@ from .store import Database
 MAX_ITEM_BYTES = 512 * 1024
 MAX_ITEMS_PER_PAIR = 2000
 PAIR_BUDGET_BYTES = 150 * 1024 * 1024
+MAX_TTL_HOURS = 24 * 30
+MAX_BUDGET_BYTES = 2 * 1024 * 1024 * 1024
+MIN_BUDGET_BYTES = 1024 * 1024
+GATE_OFF_TTL_HOURS = 24 * 365 * 100
 PRESSURE_RATIO = 0.9
 TTL_HOURS = 72
 POLL_LIMIT = 50
@@ -66,6 +71,30 @@ def _member(db: Database, ctx: dict):
     return pair, peer
 
 
+def pair_limits(pair) -> dict:
+    """读取某一对绑定的暂存区门禁配置，缺列时回退默认值。"""
+    keys = pair.keys()
+
+    def _int(name, default):
+        try:
+            value = int(pair[name]) if name in keys else default
+        except (TypeError, ValueError):
+            return default
+        return value
+
+    ttl = max(1, min(_int("staging_ttl_hours", TTL_HOURS), MAX_TTL_HOURS))
+    budget = max(
+        MIN_BUDGET_BYTES, min(_int("staging_budget_bytes", PAIR_BUDGET_BYTES),
+                              MAX_BUDGET_BYTES)
+    )
+    return {
+        "ttlHours": ttl,
+        "budgetBytes": budget,
+        "timeGate": bool(_int("staging_time_gate", 1)),
+        "sizeGate": bool(_int("staging_size_gate", 1)),
+    }
+
+
 def _now() -> str:
     return security.iso()
 
@@ -80,15 +109,18 @@ def _used(db: Database, pair_id: str) -> tuple[int, int]:
     return int(row["bytes"]), int(row["items"])
 
 
-def _trim(db: Database, pair_id: str, room: int) -> None:
-    """腾出至少 room 字节；按 rev 从最早未确认的开始丢。"""
+def _trim(db: Database, pair, room: int) -> None:
+    """按该配对的配置腾出至少 room 字节；close gate 时不按时间/容量淘汰。"""
+    pair_id = pair["id"]
+    limits = pair_limits(pair)
     now = _now()
-    db.conn.execute(
-        "DELETE FROM staged_items WHERE pair_id=? AND expires_at <= ?",
-        (pair_id, now),
-    )
+    if limits["timeGate"]:
+        db.conn.execute(
+            "DELETE FROM staged_items WHERE pair_id=? AND expires_at <= ?",
+            (pair_id, now),
+        )
     used, count = _used(db, pair_id)
-    while used + room > PAIR_BUDGET_BYTES or count >= MAX_ITEMS_PER_PAIR:
+    while (limits["sizeGate"] and used + room > limits["budgetBytes"]) or count >= MAX_ITEMS_PER_PAIR:
         row = db.conn.execute(
             "SELECT id, byte_len FROM staged_items\n"
             " WHERE pair_id=? AND acked_at IS NULL ORDER BY rev LIMIT 1",
@@ -131,13 +163,17 @@ def _sample(db: Database, pair_id: str) -> None:
 
 def _state(db: Database, pair: dict) -> dict:
     used, items = _used(db, pair["id"])
-    quota = int(pair["cloud_quota_bytes"] or 0) if "cloud_quota_bytes" in pair.keys() else 0
+    limits = pair_limits(pair)
+    budget = limits["budgetBytes"]
     return {
         "usedBytes": used,
         "itemCount": items,
-        "budgetBytes": PAIR_BUDGET_BYTES,
-        "ratio": round(used / PAIR_BUDGET_BYTES, 4) if PAIR_BUDGET_BYTES else 0.0,
-        "pressure": used >= int(PAIR_BUDGET_BYTES * PRESSURE_RATIO),
+        "budgetBytes": budget,
+        "ratio": round(used / budget, 4) if budget else 0.0,
+        "pressure": limits["sizeGate"] and used >= int(budget * PRESSURE_RATIO),
+        "ttlHours": limits["ttlHours"],
+        "timeGate": limits["timeGate"],
+        "sizeGate": limits["sizeGate"],
     }
 
 
@@ -156,12 +192,15 @@ def send(db: Database, ctx: dict, body: dict) -> dict:
     if dedupe_key is not None:
         dedupe_key = str(dedupe_key)[:128]
     now = _now()
-    expires = security.iso_after(hours=TTL_HOURS)
+    limits = pair_limits(pair)
+    expires = security.iso_after(
+        hours=limits["ttlHours"] if limits["timeGate"] else GATE_OFF_TTL_HOURS
+    )
 
     with _write_lock:
-        _trim(db, pair["id"], byte_len)
+        _trim(db, pair, byte_len)
         used, _ = _used(db, pair["id"])
-        if used + byte_len > PAIR_BUDGET_BYTES:
+        if limits["sizeGate"] and used + byte_len > limits["budgetBytes"]:
             _sample(db, pair["id"])
             raise ApiError(507, "staging_full", "暂存空间已满，请稍后再试")
 
