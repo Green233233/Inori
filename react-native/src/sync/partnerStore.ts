@@ -6,7 +6,7 @@
  * - 正文作为 sync 记录存到服务器；服务器只有密文。
  * - 对方共享条目以只读镜像落到 `files/qi/partner.json`，LWW（updatedAt）合并。
  */
-import {api} from '../net/ApiClient';
+import {api, ApiError} from '../net/ApiClient';
 import {openJson, sealJson, selfSealJson} from '../crypto/Crypto';
 import {native, joinPath, paths} from '../native/InorinalNative';
 import {getEntry, loadIndex} from '../data/storage';
@@ -210,13 +210,40 @@ export interface SyncResult {
   failed: number;
   /** 第一条失败原因，便于在界面上说清「为什么没同步过去」。 */
   lastError?: string;
+  /** 这一轮是不是因为「根本连不上」而提前收手，没再逐条去试。 */
+  aborted?: boolean;
+}
+
+/** 单轮最多推多少条：网络坏掉时不要把几十条挨个试一遍，把 JS 线程让出来。 */
+const MAX_PUSH_PER_RUN = 20;
+
+/** 单条记录的上传超时；比默认 15s 短，失败得快一点。 */
+const RECORD_TIMEOUT_MS = 8_000;
+
+/**
+ * 连接层面的失败（断网、服务端 5xx、超时、限流）。
+ *
+ * 这类失败下一条也一定失败，继续循环只会把整个同步拖成几分钟、
+ * 期间界面上的其他操作全部排队等它——所以直接收手，交给上层的退避重试。
+ */
+function isConnectivityFailure(error: unknown): boolean {
+  if (error instanceof ApiError) {
+    return (
+      error.status === 0 ||
+      error.status === 408 ||
+      error.status === 429 ||
+      error.status >= 500
+    );
+  }
+  // 原生 HTTP 抛出的传输层错误不是 ApiError，同样视为「现在连不上」。
+  return true;
 }
 
 /** 推送本人条目：共享的给双方，私密的自封后只给自己做云备份。 */
 export async function pushOwnEntries(
   pair: PairSummary,
   myDeviceId: string,
-): Promise<{pushed: number; failed: number; lastError?: string}> {
+): Promise<{pushed: number; failed: number; lastError?: string; aborted?: boolean}> {
   if (!pair.peerPubkey) {
     return {pushed: 0, failed: 0};
   }
@@ -225,7 +252,13 @@ export async function pushOwnEntries(
   let pushed = 0;
   let failed = 0;
   let lastError: string | undefined;
+  let aborted = false;
   for (const summary of summaries) {
+    // 一轮只推有限条：条目再多也要及时把 JS 线程交还给界面。
+    if (pushed + failed >= MAX_PUSH_PER_RUN) {
+      aborted = true;
+      break;
+    }
     const isPrivate = summary.visibility === 'private';
     const entry = await getEntry(summary.id);
     if (!entry) {
@@ -277,6 +310,7 @@ export async function pushOwnEntries(
       }
       await api(`/api/v1/sync/records/${recordId}`, {
         method: 'PUT',
+        timeoutMs: RECORD_TIMEOUT_MS,
         body: {
           kind: 'journal',
           ciphertext: JSON.stringify(envelope),
@@ -295,10 +329,18 @@ export async function pushOwnEntries(
     } catch (error: any) {
       failed += 1;
       lastError = error?.message ? String(error.message) : '同步失败';
+      /*
+       * 连不上就别再一条条试了：每条都要等超时，几十条叠起来就是好几分钟，
+       * 期间别的功能全在排队。把剩下的交给下一次（带退避的）同步。
+       */
+      if (isConnectivityFailure(error)) {
+        aborted = true;
+        break;
+      }
     }
   }
   await saveCloudState(cloud).catch(() => undefined);
-  return {pushed, failed, lastError};
+  return {pushed, failed, lastError, aborted};
 }
 
 /** 拉取对方条目并按 LWW 合并进本地镜像。 */
@@ -384,7 +426,21 @@ export async function syncJournal(
     pushed: 0,
     failed: 1,
     lastError: error?.message ? String(error.message) : '同步失败',
+    aborted: true,
   }));
+  /*
+   * 推送阶段就已经确认连不上，就别再发拉取请求了：那又是一次完整的超时等待，
+   * 只会让这一轮同步拖得更久。
+   */
+  if (push.aborted) {
+    return {
+      pushed: push.pushed,
+      pulled: 0,
+      failed: push.failed,
+      lastError: push.lastError,
+      aborted: true,
+    };
+  }
   const pull = await pullPartnerEntries(pair, myDeviceId).catch(() => ({
     pulled: 0,
     failed: 1,
@@ -394,5 +450,6 @@ export async function syncJournal(
     pulled: pull.pulled,
     failed: push.failed + pull.failed,
     lastError: push.lastError,
+    aborted: push.aborted,
   };
 }

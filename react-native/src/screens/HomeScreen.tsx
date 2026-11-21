@@ -75,7 +75,8 @@ export function HomeScreen({
     setRefreshing(true);
     try {
       if (pair) {
-        await syncNow().catch(() => undefined);
+        // manual：用户主动下拉，跳过失败退避，但同样只跑一轮。
+        await syncNow({manual: true}).catch(() => undefined);
       }
       await refresh();
     } finally {

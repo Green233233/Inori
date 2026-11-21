@@ -59,6 +59,7 @@ import {
   qiWidget,
 } from '../../native/QiDevice';
 import {syncJournal, SyncResult} from '../../sync/partnerStore';
+import {SyncGate} from '../../sync/syncGate';
 import {startStateSync} from '../../sync/stateSync';
 import {handleAppLimit, sendAppLimit} from '../../sync/appLimit';
 import {qiLimits} from '../../native/QiLimits';
@@ -201,7 +202,7 @@ interface QiContextValue {
   setAppearance: (next: Appearance) => Promise<void>;
   /** 应用限制：本机落一份镜像，同时把名单推给对方（主人下发 / 小狗回报关闭）。 */
   sendAppLimit: (rules: AppLimitRules) => Promise<void>;
-  syncNow: () => Promise<SyncResult | null>;
+  syncNow: (options?: {manual?: boolean}) => Promise<SyncResult | null>;
   lastSyncAt: number;
 }
 
@@ -547,28 +548,66 @@ export function QiProvider({children}: {children: React.ReactNode}) {
     [patch, run],
   );
 
-  const syncNow = useCallback(async (): Promise<SyncResult | null> => {
-    const current = await loadQiState();
-    if (!current.pair?.verified || !current.pair.peerPubkey) {
-      return null;
-    }
-    const result = await syncJournal(current.pair, current.deviceId);
-    setLastSyncAt(Date.now());
-    /*
-     * 同步失败以前完全静默，用户只看到「怎么又没过去」。
-     * 这里把第一篇失败的原因说出来（多半是附件太大或网络断了）。
-     */
-    if (result.failed > 0) {
-      showToast(
-        `${result.failed} 篇日记没能同步过去${
-          result.lastError ? `：${result.lastError}` : '，稍后再试'
-        }`,
-      );
-    }
-    // 通知只在拿到新数据后弹一次：谁刷新到，谁负责提醒。
-    await scanAlerts(current.pair.myRole).catch(() => undefined);
-    return result;
-  }, []);
+  /** 同步闸门：失败退避 + 一串失败只提示一次。 */
+  const syncGateRef = useRef(new SyncGate());
+  /** 正在进行中的那一轮同步；有值就复用它，避免并发重复跑。 */
+  const syncInFlightRef = useRef<Promise<SyncResult | null> | null>(null);
+
+  const syncNow = useCallback(
+    async (options?: {manual?: boolean}): Promise<SyncResult | null> => {
+      const manual = options?.manual === true;
+      /*
+       * 同一时刻只跑一轮同步：定时、回前台、下拉刷新很容易叠在一起，
+       * 叠起来就是几倍的加密和请求，界面直接卡住。
+       */
+      if (syncInFlightRef.current) {
+        return syncInFlightRef.current;
+      }
+      /*
+       * 自动触发（定时/回前台）先看退避闸门：上一轮刚因为连不上失败过，
+       * 就别在几分钟内反复重跑一遍注定失败的推送。
+       */
+      if (!manual && syncGateRef.current.blocked()) {
+        return null;
+      }
+      if (manual) {
+        syncGateRef.current.allowManual();
+      }
+      const task = (async (): Promise<SyncResult | null> => {
+        const current = await loadQiState();
+        if (!current.pair?.verified || !current.pair.peerPubkey) {
+          return null;
+        }
+        const result = await syncJournal(current.pair, current.deviceId);
+        setLastSyncAt(Date.now());
+        if (result.failed > 0) {
+          /*
+           * 一串失败只提示一次；失败后进入退避，一段时间内不再自动重跑。
+           * 否则每 10 分钟就弹一次同样的失败，用户只会觉得「一直卡着」。
+           */
+          if (syncGateRef.current.fail()) {
+            showToast(
+              `${result.failed} 篇日记没能同步过去${
+                result.lastError ? `：${result.lastError}` : '，稍后再试'
+              }`,
+            );
+          }
+          return result;
+        }
+        syncGateRef.current.ok();
+        // 通知只在拿到新数据后弹一次：谁刷新到，谁负责提醒。
+        await scanAlerts(current.pair.myRole).catch(() => undefined);
+        return result;
+      })();
+      syncInFlightRef.current = task;
+      try {
+        return await task;
+      } finally {
+        syncInFlightRef.current = null;
+      }
+    },
+    [],
+  );
 
   const updateProfile = useCallback(
     (next: {
@@ -628,6 +667,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
   }, [ready, state]);
 
   // 打开 App / 回到前台时自动同步日记：共享的走配对密钥，私密的走自封云备份。
+  // 真正的节流交给 syncGate：失败后 gate 会挡掉这些自动触发，只做一次空判断。
   useEffect(() => {
     if (stage !== 'ready' || !state.pair?.pairId) {
       return;
@@ -638,9 +678,11 @@ export function QiProvider({children}: {children: React.ReactNode}) {
         void syncNow();
       }
     });
+    // 间隔取 2 分钟：退避最长 10 分钟，这样退避一过就能在最近一次 tick 重试，
+    // 而平时被 gate 挡住，只是一次同步的时间比较，没有网络和加密开销。
     const timer = setInterval(() => {
       void syncNow();
-    }, 10 * 60_000);
+    }, 2 * 60_000);
     return () => {
       subscription.remove();
       clearInterval(timer);
