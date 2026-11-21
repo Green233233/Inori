@@ -403,7 +403,11 @@ class QiLinkService : Service() {
           .put("kind", KIND_COMMAND_REPLY)
           .put("ciphertext", envelope)
           .toString()
-      request("POST", "/api/v1/relay/send", body, token, 15_000L)
+      // 看门狗可能刚在命令末尾打断过线程（典型是反查地址耗尽 6 秒），
+      // 带着中断位发请求会立刻抛 InterruptedIOException，主人就永远收不到回包。
+      // 回包本身此时已经算好了，先清中断位再发；失败再补一次，宁可重试也不要丢。
+      Thread.interrupted()
+      sendReplyWithRetry(body, token)
       // 回包真的发出去了才 ack：否则宁可下一条轮询再执行一次，也不能让主人
       // 拿着一个永远到不了的 40 秒超时。
       acknowledge(listOf(seq), token)
@@ -417,6 +421,30 @@ class QiLinkService : Service() {
       // 看门狗可能是靠 interrupt 结束等待的，把中断位清掉，线程要能被复用。
       Thread.interrupted()
     }
+  }
+
+  /**
+   * 把命令回包发出去，最多两遍。
+   *
+   * 移动网络切换 / 服务端滚动重启时偶发一次写失败很常见，而回包丢了就等于主人
+   * 白等 40 秒。这里只重试写中继这一下（幂等），不重跑命令本身。
+   */
+  private fun sendReplyWithRetry(body: String, token: String) {
+    var lastError: Exception? = null
+    repeat(2) { attempt ->
+      try {
+        request("POST", "/api/v1/relay/send", body, token, 12_000L)
+        return
+      } catch (error: Exception) {
+        lastError = error
+        Log.w(TAG, "command_reply_retry attempt=${attempt + 1} ${error.javaClass.simpleName}")
+        if (attempt == 0) {
+          runCatching { Thread.sleep(800L) }
+          Thread.interrupted()
+        }
+      }
+    }
+    lastError?.let { throw it }
   }
 
   /**

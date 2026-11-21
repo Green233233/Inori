@@ -111,7 +111,7 @@ export function AppLimitScreen({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [runCommand]);
 
   const visibleApps = useMemo(() => {
     const keyword = query.trim().toLowerCase();

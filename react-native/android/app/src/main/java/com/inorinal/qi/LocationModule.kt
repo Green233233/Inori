@@ -219,8 +219,8 @@ internal object QiLocationEngine {
 
   private const val NOMINATIM_ENDPOINT = "https://nominatim.openstreetmap.org/reverse"
   private const val USER_AGENT = "Inorinal/0.6.3 (Android; contact: qi@inorinal.local)"
-  private const val HTTP_CONNECT_TIMEOUT_MS = 6_000
-  private const val HTTP_READ_TIMEOUT_MS = 6_000
+  private const val HTTP_CONNECT_TIMEOUT_MS = 3_000
+  private const val HTTP_READ_TIMEOUT_MS = 3_000
 
   /** 逆地理缓存 24 小时：同一栋楼反复点定位不该反复打 Nominatim。 */
   private const val GEO_CACHE_TTL_MS = 24L * 60L * 60L * 1000L

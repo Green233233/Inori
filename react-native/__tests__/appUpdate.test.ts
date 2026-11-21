@@ -32,7 +32,7 @@ describe('checkForUpdate', () => {
     mockedApi.mockResolvedValue({
       ok: true,
       version: '0.6.9',
-      versionCode: 18,
+      versionCode: 99,
       notes: '- 新增检查更新',
       downloadUrl: 'https://example.com/qi.apk',
       force: false,
