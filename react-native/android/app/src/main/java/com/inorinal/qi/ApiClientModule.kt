@@ -36,6 +36,16 @@ class ApiClientModule(reactContext: ReactApplicationContext) :
     Thread(runnable, "qi-http").apply { isDaemon = true }
   }
 
+  /**
+   * 按 pin 缓存 SSLSocketFactory。
+   *
+   * 以前每个请求都 `SSLContext.getInstance("TLS")` + `init()`，等于每次都新建一套
+   * TLS 上下文：既慢，又让客户端 TLS 会话票据（session ticket）完全复用不了，
+   * keep-alive 一失效就每次全量握手。
+   */
+  @Volatile private var cachedPin: String? = null
+  @Volatile private var cachedFactory: javax.net.ssl.SSLSocketFactory? = null
+
   override fun getName(): String = "QiApiClient"
 
   @ReactMethod
@@ -90,6 +100,7 @@ class ApiClientModule(reactContext: ReactApplicationContext) :
     pin: String
   ): WritableNativeMap {
     val connection = URL(url).openConnection() as HttpURLConnection
+    var keepAlive = false
     try {
       if (connection is HttpsURLConnection && pin.isNotEmpty()) {
         connection.sslSocketFactory = pinnedSocketFactory(pin)
@@ -98,8 +109,11 @@ class ApiClientModule(reactContext: ReactApplicationContext) :
         connection.hostnameVerifier = HostnameVerifier { _, _ -> true }
       }
       connection.requestMethod = method
-      connection.connectTimeout = 10_000
-      connection.readTimeout = timeoutMs.coerceIn(1_000, 60_000)
+      connection.connectTimeout = 15_000
+      // 上限必须跟着「最长的合法请求」走：relay 长轮询会 hold wait+10 秒
+      // （现在 wait=25 → 35 秒），日记 PUT 按体积算能到 120 秒。以前这里压在
+      // 60 秒，把 JS 侧的 recordTimeoutMs 直接截断，稍大的日记必然超时。
+      connection.readTimeout = timeoutMs.coerceIn(1_000, 120_000)
       connection.setRequestProperty("Accept", "application/json")
       connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
       // 千万不要自己写 Accept-Encoding: gzip。
@@ -118,12 +132,18 @@ class ApiClientModule(reactContext: ReactApplicationContext) :
       val status = connection.responseCode
       val stream = if (status in 200..299) connection.inputStream else connection.errorStream
       val text = stream?.use { readAll(it) } ?: ""
+      keepAlive = true
       val result = WritableNativeMap()
       result.putInt("status", status)
       result.putString("body", text)
       return result
     } finally {
-      connection.disconnect()
+      // 成功时不要 disconnect：disconnect() 会关掉底层 socket，连接池也就
+      // 白建了，下一次请求又得重新 TCP+TLS 三次握手（自签证书 + pin 尤其贵）。
+      // 流已经在上面 use{} 关掉，HttpURLConnection 会自己把连接还给池子里。
+      if (!keepAlive) {
+        connection.disconnect()
+      }
     }
   }
 
@@ -145,6 +165,11 @@ class ApiClientModule(reactContext: ReactApplicationContext) :
       .replace(" ", "")
 
   private fun pinnedSocketFactory(pin: String): javax.net.ssl.SSLSocketFactory {
+    cachedFactory?.let { factory ->
+      if (cachedPin == pin) {
+        return factory
+      }
+    }
     val trustManager = object : X509TrustManager {
       override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {
         throw CertificateException("不支持客户端证书校验")
@@ -163,6 +188,9 @@ class ApiClientModule(reactContext: ReactApplicationContext) :
     }
     val context = SSLContext.getInstance("TLS")
     context.init(null, arrayOf(trustManager), null)
-    return context.socketFactory
+    val factory = context.socketFactory
+    cachedPin = pin
+    cachedFactory = factory
+    return factory
   }
 }

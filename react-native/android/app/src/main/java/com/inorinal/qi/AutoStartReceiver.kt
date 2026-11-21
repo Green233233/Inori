@@ -28,6 +28,9 @@ class AutoStartReceiver : BroadcastReceiver() {
     // The guard is the only component allowed to run headless; BOOT_COMPLETED
     // grants the background-start exemption needed to bring it up.
     PuppyGuardService.start(context)
+    // 重启 / 换网之后把联动常驻服务也拉回来：它以前只在 JS 里启动，用户不手动
+    // 打开 App 就一直停着，主人那边的指令全部超时，界面只显示「对方离线」。
+    runCatching { QiLinkService.resumeIfPaired(context) }
   }
 
   companion object {

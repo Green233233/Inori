@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import signal
+import sys
 import threading
 import time
 import traceback
@@ -326,6 +327,17 @@ ROUTES: list[Route] = [
 ]
 
 
+def _username_key(prefix: str, body: dict) -> str:
+    """把登录/注册的限流键细分到「账号」维度。
+
+    原来只按 peer IP 计数：同一个出口 IP（公司 NAT、模拟器）下多台设备会互相
+    挤占配额，而攻击者换 IP 就能对同一个账号继续猜密码。
+    """
+    raw = body.get("username") if isinstance(body, dict) else None
+    name = str(raw or "").strip().lower()
+    return f"{prefix}:{name}" if name else f"{prefix}:anonymous"
+
+
 class QiHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "qi/" + VERSION
@@ -476,9 +488,15 @@ class QiHandler(BaseHTTPRequestHandler):
                         self.poll_slots.release()
                 elif path.endswith("/auth/login"):
                     self._limited(f"login:{request.ip}", 8, 600, "rate_limited")
+                    # 只按 IP 限流会让「同一出口 IP 的多台设备」互相拖死，也让
+                    # 攻击者换 IP 就能无限猜同一账号；再按用户名加一层。
+                    self._limited(_username_key("login-user", body), 5, 600,
+                                  "rate_limited")
                     result = route.handler(request)
                 elif path.endswith("/auth/register"):
                     self._limited(f"register:{request.ip}", 10, 3600, "rate_limited")
+                    self._limited(_username_key("register-user", body), 5, 3600,
+                                  "rate_limited")
                     result = route.handler(request)
                 else:
                     self._apply_limits(request, path)
@@ -491,6 +509,10 @@ class QiHandler(BaseHTTPRequestHandler):
             if error.status >= 500:
                 admin.stats.record_error()
             headers = self._admin_headers() if self.path.startswith("/admin") else None
+            if error.status == 413 or error.code.startswith("invalid_"):
+                # 请求体还没读完就报错了：这条连接上剩下的字节会被当成下一个
+                # 请求的起始行，keep-alive 复用会直接错乱，必须关掉。
+                self.close_connection = True
             self._send_json(error.status, error.body(), headers)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -603,6 +625,16 @@ class QiHandler(BaseHTTPRequestHandler):
 class QiServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # 默认 listen backlog 只有 5，双端 + 管理后台并发几轮就会拒连。
+    request_queue_size = 64
+
+    def handle_error(self, request, client_address) -> None:  # noqa: D102
+        # 客户端在长轮询/上传中途关连接（切网、锁屏、进程被杀）是常态，
+        # socketserver 会把它当未处理异常刷一整段 traceback。
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
 
 
 def _cleanup_loop(db: Database, stop: threading.Event) -> None:

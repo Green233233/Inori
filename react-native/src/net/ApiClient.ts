@@ -99,6 +99,14 @@ export function errorMessage(error: unknown, fallback = '操作失败'): string 
       if (detail.includes('timed out') || detail.includes('timeout')) {
         return '连接服务器超时：请确认地址、端口与网络（有些网络会拦截非常用端口）';
       }
+      /*
+       * Android 9 起默认禁止明文 HTTP，release 包更是在 networkSecurityConfig
+       * 里写死了 cleartextTrafficPermitted=false。原生层只会抛
+       * "Cleartext HTTP traffic to x not permitted"，照抄给用户完全看不懂。
+       */
+      if (detail.toLowerCase().includes('cleartext')) {
+        return '这个地址是 HTTP 明文，当前版本只允许 HTTPS：请把服务器地址改成 https://（自签证书时再填写证书指纹）';
+      }
       return '无法连接服务器，请检查地址与网络';
     }
     return error.message;

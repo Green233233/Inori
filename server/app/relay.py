@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
@@ -17,6 +18,8 @@ MAX_WAIT_SECONDS = 300
 DEFAULT_WAIT_SECONDS = 25
 POLL_LIMIT = 50
 RELAY_TTL_HOURS = 7 * 24
+
+LOG = logging.getLogger("qi.relay")
 
 ALLOWED_KINDS = frozenset({
     "app.limit", "app.limit.ack", "guard.lock",
@@ -92,8 +95,26 @@ def _fetch(db: Database, pair_id: str, device_id: str, cursor: int) -> list:
     ).fetchall()
 
 
+def _touch_presence(db: Database, ctx: dict) -> None:
+    """长轮询本身就是心跳，顺手把在线时间写进 presence。
+
+    以前 presence 表没有任何调用方，pairing 里的 `_online` 恒为 false，
+    界面上对方永远显示「离线」、电量也一直是空。
+    """
+    try:
+        db.conn.execute(
+            "INSERT INTO presence(device_id, user_id, at, battery, charging, payload)\n"
+            " VALUES(?,?,?,NULL,0,NULL)\n"
+            " ON CONFLICT(device_id) DO UPDATE SET at=excluded.at",
+            (ctx["deviceId"], ctx["userId"], security.iso()),
+        )
+    except Exception:  # pragma: no cover - 心跳失败不能影响长轮询
+        LOG.debug("presence touch failed", exc_info=True)
+
+
 def poll(db: Database, ctx: dict, cursor: int, wait: int) -> dict:
     pair = pairing.require_member(db, ctx["deviceId"])
+    _touch_presence(db, ctx)
     wait = max(0, min(int(wait or DEFAULT_WAIT_SECONDS), MAX_WAIT_SECONDS))
     deadline = time.monotonic() + wait
     rows: list = []

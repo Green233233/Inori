@@ -73,6 +73,7 @@ import {
   RelayItem,
   executeCommand,
   handleReply,
+  ackRelay,
   pollRelay,
   sendCommand,
 } from '../../sync/commands';
@@ -104,6 +105,12 @@ const NATIVE_COMMAND_KINDS = new Set<CommandKind>([
   'usage.range',
   'usage.sessions',
   'permissions.snapshot',
+  // 下面这 4 个原生早就会执行（见 QiLinkService 的 NATIVE_COMMAND_KINDS），
+  // JS 这边漏了登记，于是两边各跑一次：浮层会弹两层、通知 drain 跑两遍。
+  'guard.lock',
+  'overlay.show',
+  'notifications.drain',
+  'apps.list',
 ]);
 
 /** 常驻服务此刻是否在替我们收命令，并且真的握着配对上下文。 */
@@ -840,6 +847,16 @@ export function QiProvider({children}: {children: React.ReactNode}) {
               await handleAppLimit(current.pair, item).catch(() => undefined);
             }
           }
+          /*
+           * 处理完就 ack 这一页。
+           *
+           * 服务端靠 ack 才能删掉这些行；以前 JS 侧从来没调过 ack，生产上一天
+           * 攒几百条 acked_at IS NULL，而且本地游标一旦丢成 0，服务端会把最多
+           * 50 条旧指令重发一遍，只读命令就被重复执行。失败只记日志：下一轮
+           * 会再收到同一批并重新 ack。
+           */
+          await ackRelay(page.items.map(item => item.seq)).catch(() => undefined);
+
           // v0.6.8：只有「对方真的做了事」才刷新配对与任务。
           // command.reply 是自己刚发出去的命令的回包（比如通知转发页拉一次 drain），
           // 如果它也触发 refreshPair，pair 对象换新 → 依赖 pair 的页面 effect 重跑 →
@@ -864,6 +881,23 @@ export function QiProvider({children}: {children: React.ReactNode}) {
           if (failure instanceof ApiError && failure.status === 401) {
             // token 过期/被注销：再重试只会一直 401，直接回登录页。
             await clearSession().catch(() => undefined);
+            return;
+          }
+          /*
+           * 对方在另一台设备上解绑后，服务端对 relay/state 这些接口统一回
+           * 403 no_pair。以前这里只判 401，403 被当成普通网络失败无限退避重试，
+           * 界面就一直停在「离线」而永远回不到配对页。
+           */
+          if (
+            failure instanceof ApiError &&
+            failure.status === 403 &&
+            failure.code === 'no_pair'
+          ) {
+            await qiLink.stop().catch(() => undefined);
+            setSas(null);
+            await patch({pair: null, pendingBindingCode: null}).catch(
+              () => undefined,
+            );
             return;
           }
           failureCount += 1;

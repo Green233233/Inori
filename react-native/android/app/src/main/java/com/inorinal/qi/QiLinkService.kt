@@ -226,16 +226,17 @@ class QiLinkService : Service() {
         lastError = ""
         handlePage(page, token)
       } catch (auth: HttpStatusException) {
-        // 401/403 说明 token 已失效（退出登录/换账号）：停下来，不要拿作废
-        // 凭据无限重试。
-        if (auth.status == 401 || auth.status == 403) {
-          lastError = "unauthorized"
-          shutdown()
-          stopSelf()
-          return
+        // 401 = token 作废（退出登录/换设备），403 = 配对已解除。
+        // 以前这里直接 stopSelf()：一次网络抖动、或者对方在另一台手机上
+        // 重新登录，常驻服务就永久死掉，之后所有指令都要等用户手动开 App
+        // 才可能恢复。现在改成留着力气慢慢重试（60 秒一次），等 JS 侧
+        // 重新登录并带着新 token 启动服务后自动恢复。
+        lastError = if (auth.status == 401 || auth.status == 403) {
+          "unauthorized"
+        } else {
+          "http_${auth.status}"
         }
         failures += 1
-        lastError = "http_${auth.status}"
       } catch (error: Exception) {
         failures += 1
         // 只记类名：不能把 URL / token / 响应体写进日志。
@@ -714,8 +715,16 @@ class QiLinkService : Service() {
       }
       val status = connection.responseCode
       if (status !in 200..299) {
-        // 不读错误正文：里面可能带服务器内部信息，状态码已足够决定退避。
-        throw HttpStatusException(status)
+        // 只从错误正文里取 error.code（如 payload_too_large），不落日志、
+        // 不回传 message：服务器的内部信息不能进客户端。
+        var code = ""
+        runCatching {
+          val text = connection.errorStream?.use { readAll(it) }.orEmpty()
+          if (text.isNotEmpty()) {
+            code = JSONObject(text).optJSONObject("error")?.optString("code", "").orEmpty()
+          }
+        }
+        throw HttpStatusException(status, code)
       }
       val text = connection.inputStream.use { readAll(it) }
       return JSONObject(text)
@@ -983,6 +992,45 @@ class QiLinkService : Service() {
       ContextCompat.startForegroundService(context, intent)
     }
 
+    /**
+     * 开机 / 网络恢复时的自愈拉起。
+     *
+     * 以前只有 [start] 一条入口，参数全靠 JS 传；手机重启后如果用户没亲手打开
+     * App，常驻服务就永远是停的——主人发指令全部超时，界面只显示「对方离线」。
+     * 这里改成从已持久化的状态自检：配置齐了（已配对 + 有令牌 + 有服务器地址）
+     * 才拉起，缺一项就安静返回，不会空转也不会崩。
+     */
+    fun resumeIfPaired(context: Context): Boolean {
+      if (isRunning()) {
+        return true
+      }
+      val linkPrefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      val pairId = linkPrefs.getString(PREF_PAIR_ID, "")?.trim().orEmpty()
+      val peerPublicB64 = linkPrefs.getString(PREF_PEER_PUB, "")?.trim().orEmpty()
+      if (pairId.isEmpty() || peerPublicB64.isEmpty()) {
+        return false
+      }
+      val sealed =
+        context
+          .getSharedPreferences(SECRETS_PREFS, Context.MODE_PRIVATE)
+          .getString(TOKEN_KEY, null)
+      if (sealed.isNullOrEmpty()) {
+        return false
+      }
+      val baseUrl =
+        context.getSharedPreferences("qi.net", Context.MODE_PRIVATE)
+          .getString("baseUrl", "")?.trim().orEmpty()
+      if (baseUrl.isEmpty()) {
+        return false
+      }
+      // 令牌与地址都从持久化里解封，所以这里不需要 JS 再传一遍。
+      return runCatching {
+          start(context, "", "")
+          true
+        }
+        .getOrDefault(false)
+    }
+
     fun stop(context: Context) {
       val intent = Intent(context, QiLinkService::class.java).setAction(ACTION_STOP)
       val delivered = runCatching { context.startService(intent) }.isSuccess
@@ -1013,4 +1061,5 @@ class QiLinkService : Service() {
 }
 
 /** 非 2xx 只带状态码，不携带响应体（可能包含服务器内部信息）。 */
-private class HttpStatusException(val status: Int) : Exception("relay_http_$status")
+private class HttpStatusException(val status: Int, val code: String = "") :
+  Exception("relay_http_$status")

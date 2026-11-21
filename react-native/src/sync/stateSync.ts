@@ -16,6 +16,7 @@ import {
   sendState,
 } from './staging';
 import {writeState, type StateKind} from './stateCache';
+import {ApiError} from '../net/ApiClient';
 
 const STATUS_INTERVAL_MS = 60_000;
 const HEAVY_INTERVAL_MS = 15 * 60_000;
@@ -167,6 +168,7 @@ export function startStateSync(pair: PairSummary): StateSyncHandle {
   let heavyTimer: ReturnType<typeof setInterval> | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let heavyCountdown = 4; // 每 4 次状态发布做一次重数据
+  let failureCount = 0;
 
   const publishNow = async (heavy = false) => {
     if (stopped || publishing) {
@@ -187,12 +189,29 @@ export function startStateSync(pair: PairSummary): StateSyncHandle {
     polling = true;
     try {
       await pullStates(pair);
+      failureCount = 0;
     } catch (error) {
+      /*
+       * 断线/服务端重启时原来固定 1 秒重试一次，一晚上能刷几万条日志、
+       * 还和 relay 长轮询抢同一份连接预算。现在 6→12→30→60 秒退避。
+       */
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        // 会话失效或已解绑：本通道直接停，交给 QiProvider 的 relay 循环
+        // 统一处理「回登录页 / 回配对页」。
+        stopped = true;
+        logError('pull unauthorized', error);
+        return;
+      }
+      failureCount += 1;
       logError('pull', error);
     } finally {
       polling = false;
       if (!stopped) {
-        pollTimer = setTimeout(poll, 1_000);
+        const delay =
+          failureCount === 0
+            ? 1_000
+            : Math.min(6_000 * Math.pow(2, Math.min(failureCount - 1, 4)), 60_000);
+        pollTimer = setTimeout(poll, delay);
       }
     }
   };

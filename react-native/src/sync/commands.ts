@@ -350,6 +350,30 @@ export async function handleReply(
   return true;
 }
 
+/**
+ * 把这一批 relay 消息标记成「已处理」。
+ *
+ * 服务端只在收到 ack 之后才会删除这些行（`relay.cleanup`），否则它们会一直
+ * 留在表里；更糟的是游标为 0（比如刚换设备、本地游标丢了）时，服务端会把
+ * 最多 50 条未 ack 的旧指令重新发一遍，只读命令就会被重复执行。所以每处理
+ * 完一页都要回一个 ack。失败不抛：下轮会重新收到并再次 ack。
+ */
+export async function ackRelay(seqs: number[]): Promise<void> {
+  if (seqs.length === 0) return;
+  await api('/api/v1/relay/ack', {
+    method: 'POST',
+    body: {seqs},
+    // ack 很小，和长轮询分开给个短超时，别让它拖住循环。
+    timeoutMs: 10_000,
+  });
+}
+
 export async function pollRelay(cursor: number, waitSeconds: number): Promise<RelayPage> {
-  return api<RelayPage>(`/api/v1/relay/poll?cursor=${cursor}&wait=${waitSeconds}`);
+  // 服务端会把请求 hold 住 waitSeconds 秒（长轮询）。这里必须给足超时，
+  // 否则默认 15s 会在服务端还等着的时候先断开，空闲时每轮都超时，
+  // 退避时间一路涨到 60s，命令就会被误判成「对方没有响应」。
+  const timeoutMs = (waitSeconds + 10) * 1000;
+  return api<RelayPage>(`/api/v1/relay/poll?cursor=${cursor}&wait=${waitSeconds}`, {
+    timeoutMs,
+  });
 }

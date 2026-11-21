@@ -142,7 +142,11 @@ export function AuthScreen() {
               onChangeText={setServerUrl}
               placeholder="https://你的服务器:8443"
               keyboardType="url"
-              hint="模拟器访问本机用 http://10.0.2.2:8095"
+              hint={
+                __DEV__
+                  ? '模拟器访问本机用 http://10.0.2.2:8095'
+                  : '正式版只允许 https://；自签证书时把指纹填到下面'
+              }
             />
             <FormField
               label="证书指纹（可选）"
