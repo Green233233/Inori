@@ -697,6 +697,34 @@ class ApiTest(unittest.TestCase):
             expect=507)
         self.assertEqual(payload["error"]["code"], "cloud_full")
 
+    def test_large_journal_record_is_accepted(self) -> None:
+        """单条日记没有大小上限：带内联图片的大条目也要能写进去。"""
+        master, puppy, _, _ = self._paired()
+        big = "A" * (700 * 1024)
+        master.call("PUT", "/api/v1/sync/records/record_big00001", {
+            "kind": "journal", "ciphertext": big, "updatedAt": 2000})
+        mine = master.call("GET", "/api/v1/sync/records?sinceSeq=0")
+        stored = {item["recordId"]: item["ciphertext"] for item in mine["items"]}
+        self.assertEqual(len(stored["record_big00001"]), len(big))
+        # 对方也能拉到同一条
+        partner = puppy.call("GET", "/api/v1/sync/records?sinceSeq=0")
+        self.assertEqual(
+            [item["recordId"] for item in partner["items"]], ["record_big00001"])
+
+    def test_large_record_still_limited_by_cloud_quota(self) -> None:
+        """去掉单条上限后，整体云空间配额仍然生效。"""
+        master, _, _, _ = self._paired()
+        path = os.path.join(self.tmp, "qi.sqlite3")
+        db = Database(path)
+        db.conn.execute(
+            "UPDATE pairs SET cloud_quota_bytes=1000 WHERE unpaired_at IS NULL")
+        db.conn.commit()
+        db.close()
+        payload = master.call("PUT", "/api/v1/sync/records/record_bigquota1", {
+            "kind": "journal", "ciphertext": "A" * (700 * 1024),
+            "updatedAt": 2000}, expect=507)
+        self.assertEqual(payload["error"]["code"], "cloud_full")
+
     def test_unauthorized(self) -> None:
         client = Client(self.base)
         payload = client.call("GET", "/api/v1/auth/me", expect=401)

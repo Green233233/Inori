@@ -9,9 +9,10 @@ from .errors import ApiError, bad_request, forbidden
 from .store import Database
 
 RECORD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
-# 单条密文上限：带涂鸦/贴纸/照片的日记会把附件内联成 data URI，
-# 96KB 会让这类日记整篇同步失败（用户反馈「涂鸦贴纸同步不过去」）。
-MAX_RECORD_BYTES = 512 * 1024
+# 没有单条大小上限：带涂鸦/贴纸/照片的日记会把附件内联成 data URI，
+# 任何按条设的阈值都会让某类日记整篇同步失败（曾因 96KB / 512KB 两次踩坑）。
+# 现在只由每对绑定关系的整体云空间配额（pairs.cloud_quota_bytes）约束，
+# 超出配额时由 put_record() 返回 507 cloud_full。
 MAX_PAGE = 200
 MAX_MEDIA_BYTES = 8 * 1024 * 1024
 MAX_MEDIA_CHUNKS = 4096
@@ -61,8 +62,6 @@ def put_record(db: Database, ctx: dict, record_id: str, body: dict) -> dict:
     ciphertext = body.get("ciphertext")
     if not isinstance(ciphertext, str) or not ciphertext:
         raise bad_request("invalid_payload", "缺少内容")
-    if len(ciphertext) > MAX_RECORD_BYTES:
-        raise bad_request("payload_too_large", "记录过大")
     try:
         revision = max(1, int(body.get("revision") or 1))
         updated_at = int(body.get("updatedAt") or 0)

@@ -217,8 +217,20 @@ export interface SyncResult {
 /** 单轮最多推多少条：网络坏掉时不要把几十条挨个试一遍，把 JS 线程让出来。 */
 const MAX_PUSH_PER_RUN = 20;
 
-/** 单条记录的上传超时；比默认 15s 短，失败得快一点。 */
-const RECORD_TIMEOUT_MS = 8_000;
+/**
+ * 单条记录的上传超时。
+ *
+ * 日记没有单条大小上限（照片/涂鸦会内联成 data URI），所以超时要随体积放大：
+ * 小条目失败得快一点，大条目给足时间，但仍然有上限，不至于把一次同步拖成几分钟。
+ */
+const RECORD_TIMEOUT_MIN_MS = 8_000;
+const RECORD_TIMEOUT_MAX_MS = 120_000;
+
+function recordTimeoutMs(bytes: number): number {
+  // 8s 起步，每 64KB 再加 1s，封顶 120s（约 7MB 时触顶）。
+  const scaled = RECORD_TIMEOUT_MIN_MS + Math.ceil(bytes / 65_536) * 1_000;
+  return Math.min(RECORD_TIMEOUT_MAX_MS, scaled);
+}
 
 /**
  * 连接层面的失败（断网、服务端 5xx、超时、限流）。
@@ -308,12 +320,13 @@ export async function pushOwnEntries(
         });
         recordId = partnerRecordId(entry.id);
       }
+      const ciphertext = JSON.stringify(envelope);
       await api(`/api/v1/sync/records/${recordId}`, {
         method: 'PUT',
-        timeoutMs: RECORD_TIMEOUT_MS,
+        timeoutMs: recordTimeoutMs(ciphertext.length),
         body: {
           kind: 'journal',
-          ciphertext: JSON.stringify(envelope),
+          ciphertext,
           revision: entry.revision ?? 1,
           updatedAt: entry.updatedAt,
           deleted: false,

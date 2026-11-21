@@ -32,6 +32,9 @@ from .errors import ApiError, bad_request, too_many, unauthorized
 from .store import Database
 
 MAX_BODY_BYTES = 1024 * 1024
+# 日记条目没有单条大小上限（附件内联成 data URI 会很大），只受每对绑定关系的
+# 云空间配额约束；这里给 sync records 的写入单独放宽请求体上限，其它接口保持 1 MiB。
+SYNC_RECORD_BODY_BYTES = 64 * 1024 * 1024
 POLL_CONCURRENCY = 200
 LOG = logging.getLogger("qi.server")
 
@@ -439,7 +442,11 @@ class QiHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True, "version": VERSION,
                                       "time": security.iso()})
                 return
-            body = self._read_body() if method in ("POST", "PUT", "PATCH", "DELETE") else {}
+            body_limit = (SYNC_RECORD_BODY_BYTES
+                          if method == "PUT" and path.startswith("/api/v1/sync/records/")
+                          else None)
+            body = (self._read_body(body_limit)
+                    if method in ("POST", "PUT", "PATCH", "DELETE") else {})
             token = self._token()
             for route in ROUTES:
                 if route.method != method:
