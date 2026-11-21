@@ -21,8 +21,8 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {SoftCard} from '../../components/Surfaces';
 import {TopBar} from '../../components/TopBar';
 import {FlatButton} from '../../components/Ui';
-import {qiDevice} from '../../native/QiDevice';
 import {qiLimits} from '../../native/QiLimits';
+import {useQi} from '../qi/QiProvider';
 import type {AppLimitEntry, AppLimitRules} from '../../native/QiLimits';
 import {useAppTheme} from '../../theme/AppThemeProvider';
 import {type} from '../../theme/typography';
@@ -40,6 +40,7 @@ export function AppLimitScreen({
 }) {
   const {colors, tokens} = useAppTheme();
   const insets = useSafeAreaInsets();
+  const {runCommand} = useQi();
 
   const [enabled, setEnabled] = useState(true);
   const [entries, setEntries] = useState<AppLimitEntry[]>([]);
@@ -69,23 +70,38 @@ export function AppLimitScreen({
     };
   }, []);
 
-  // 完整可启动应用列表：主人在自己手机上挑，选完只把包名下发。
+  // 列表必须来自小狗手机上装了什么：主人在自己手机上挑没意义（他手机里的
+  // Chrome 和小狗手机里的 Chrome 不是同一件事）。改成向小狗端要 `apps.list`，
+  // 由常驻服务离线也能回；拿不到时给可读的失败态，不退回本机列表骗人。
+  const [appsError, setAppsError] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    qiDevice.usage
-      .installedApps()
-      .then(result => {
+    runCommand('apps.list')
+      .then(reply => {
         if (!alive) {
           return;
         }
-        setApps(
-          result.apps.map(app => ({pkg: app.pkg, label: app.label || app.pkg})),
-        );
-      })
-      .catch(() => {
-        if (alive) {
+        if (!reply.ok) {
           setApps([]);
+          setAppsError(reply.error || '小狗端没有响应');
+          return;
         }
+        const payload = reply.data as
+          | {apps?: {pkg: string; label?: string}[]}
+          | undefined;
+        const list = Array.isArray(payload?.apps) ? payload!.apps! : [];
+        setApps(list.map(app => ({pkg: app.pkg, label: app.label || app.pkg})));
+        setAppsError(list.length ? null : '小狗端没有可启动的应用');
+      })
+      .catch(error => {
+        if (!alive) {
+          return;
+        }
+        setApps([]);
+        const message = error instanceof Error ? error.message : String(error);
+        setAppsError(
+          message.includes('锁屏') ? message : `读取小狗端应用失败：${message}`,
+        );
       })
       .finally(() => {
         if (alive) {
@@ -263,7 +279,8 @@ export function AppLimitScreen({
           ) : visibleApps.length === 0 ? (
             <Text style={[type.caption, {color: colors.onSurfaceVariant}]}>
               {apps.length === 0
-                ? '没读到应用列表；可以在下面直接填包名加入。'
+                ? appsError ||
+                  '没读到小狗端的应用列表；可以在下面直接填包名加入。'
                 : `没有匹配「${query.trim()}」的应用。`}
             </Text>
           ) : (

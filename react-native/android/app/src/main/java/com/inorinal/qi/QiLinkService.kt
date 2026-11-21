@@ -2,6 +2,7 @@ package com.inorinal.qi
 
 import android.Manifest
 import android.app.Notification
+import android.app.KeyguardManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -418,8 +419,24 @@ class QiLinkService : Service() {
     }
   }
 
-  private fun executeReadOnlyCommand(kind: String, request: JSONObject): Any =
-    when (kind) {
+  /**
+   * 锁屏时明确回「小狗端已锁屏」。
+   *
+   * 原来所有命令都会照常执行：截屏只能拿到黑屏、取点被系统拒、全屏消息根本盖不上
+   * 锁屏界面，主人只会看到「没有响应」或一堆无意义的失败。锁屏是个可解释的状态，
+   * 就该照实说。唯一的例外是远程锁屏本身——已经锁上了，重复执行没有副作用。
+   */
+  private fun ensureUnlocked(kind: String) {
+    if (kind == KIND_GUARD_LOCK) return
+    val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager ?: return
+    if (keyguard.isKeyguardLocked) {
+      throw IllegalStateException("小狗端已锁屏")
+    }
+  }
+
+  private fun executeReadOnlyCommand(kind: String, request: JSONObject): Any {
+    ensureUnlocked(kind)
+    return when (kind) {
       KIND_LOCATION_GET -> {
         if (!QiLocationEngine.hasPermission(this)) {
           throw IllegalStateException("缺少定位权限")
@@ -473,8 +490,11 @@ class QiLinkService : Service() {
       KIND_GUARD_LOCK -> lockDeviceNow()
       KIND_OVERLAY_SHOW -> showFullscreenMessage(request)
       KIND_NOTIFICATIONS_DRAIN -> drainNotifications(request.optJSONObject("args")?.optInt("limit", 50) ?: 50)
+      // 「应用限制」要的是小狗手机上的应用列表，主人的本机列表对他没意义。
+      KIND_APPS_LIST -> QiAppCatalog.launchable(this)
       else -> throw IllegalArgumentException("未知命令：$kind")
     }
+  }
 
   /**
    * 通知转发：把监听服务写下的队列交给主人，读完就清空。
@@ -862,6 +882,7 @@ class QiLinkService : Service() {
     private const val KIND_GUARD_LOCK = "guard.lock"
     private const val KIND_OVERLAY_SHOW = "overlay.show"
     private const val KIND_NOTIFICATIONS_DRAIN = "notifications.drain"
+    private const val KIND_APPS_LIST = "apps.list"
 
     /** 一次最多交回 200 条，避免主人端表格被刷爆。 */
     private const val MAX_DRAIN_LIMIT = 200
@@ -880,7 +901,8 @@ class QiLinkService : Service() {
         KIND_PERMISSIONS_SNAPSHOT,
         KIND_GUARD_LOCK,
         KIND_OVERLAY_SHOW,
-        KIND_NOTIFICATIONS_DRAIN
+        KIND_NOTIFICATIONS_DRAIN,
+        KIND_APPS_LIST
       )
 
     /** 与 JS 侧 `notifyLocationViewed` 用同一个 id，重复时是「更新」。 */

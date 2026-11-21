@@ -225,7 +225,21 @@ class UsageStatsModule(reactContext: ReactApplicationContext) :
     val count = days.coerceIn(1, 30)
     val starts = dayStarts(count)
     val buckets = starts.map { DayBucket(it) }
-    collectDays(starts.first(), System.currentTimeMillis(), buckets)
+    // v0.6.9：以前这里扫一遍 7 天事件流，在 Android 11 的低配设备上会跑到
+    // 20s 看门狗之外，主人端只能看到「对方没有响应」。周汇总用系统已经聚合
+    // 好的 INTERVAL_DAILY 桶就够，单日的小时分布仍走 dayStatsBlock 的事件扫描。
+    val windowEnd = minOf(System.currentTimeMillis(), starts.last() + DAY_MS)
+    val stats = usageManager().queryUsageStats(UsageStatsManager.INTERVAL_DAILY, starts.first(), windowEnd)
+    stats?.forEach { entry ->
+      val pkg = entry.packageName
+      if (pkg.isNullOrEmpty() || pkg == reactApplicationContext.packageName) return@forEach
+      // 一个桶可能跨天；按它的结束时间归到那一天，周汇总口径足够。
+      val anchor = if (entry.lastTimeStamp > 0) entry.lastTimeStamp else entry.firstTimeStamp
+      val index = dayIndexAt(buckets, anchor) ?: return@forEach
+      val bucket = buckets[index]
+      bucket.msByPackage[pkg] = (bucket.msByPackage[pkg] ?: 0L) + entry.totalTimeInForeground
+      bucket.sessionsByPackage[pkg] = (bucket.sessionsByPackage[pkg] ?: 0) + 1
+    }
     var totalMinutes = 0L
     val list = Arguments.createArray()
     // 从今天往前排：days[0] 是今天，数组最后一个元素是最早的一天

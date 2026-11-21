@@ -716,10 +716,31 @@ export function QiProvider({children}: {children: React.ReactNode}) {
       return;
     }
     let cancelled = false;
+    /*
+     * 断线退避：原来失败固定 6 秒重试，服务器重启或网络断掉时就像拿锤子砸门，
+     * 而且 401 也会被无限重试（token 早废了还在刷日志）。现在按 6→12→30→60 秒
+     * 退避、成功即复位；服务端给了 retryAfter 就听它的；401 直接清会话退出循环，
+     * 交给上层回到登录页——这才是「连接健壮」该有的行为。
+     */
+    const BASE_RETRY_MS = 6_000;
+    const MAX_RETRY_MS = 60_000;
+    let failureCount = 0;
+    const nextDelay = (failure: unknown): number => {
+      const hinted =
+        failure instanceof ApiError && typeof failure.retryAfter === 'number'
+          ? failure.retryAfter * 1_000
+          : 0;
+      if (hinted > 0) {
+        return Math.min(Math.max(hinted, BASE_RETRY_MS), MAX_RETRY_MS);
+      }
+      const grown = BASE_RETRY_MS * Math.pow(2, Math.min(failureCount, 4));
+      return Math.min(grown, MAX_RETRY_MS);
+    };
     const loop = async () => {
       while (!cancelled) {
         try {
           const page = await pollRelay(cursorRef.current, 25);
+          failureCount = 0;
           if (cancelled) {
             break;
           }
@@ -767,8 +788,14 @@ export function QiProvider({children}: {children: React.ReactNode}) {
             cursorRef.current = page.cursor;
             await patch({relayCursor: page.cursor}).catch(() => undefined);
           }
-        } catch {
-          await new Promise(resolve => setTimeout(resolve, 6000));
+        } catch (failure) {
+          if (failure instanceof ApiError && failure.status === 401) {
+            // token 过期/被注销：再重试只会一直 401，直接回登录页。
+            await clearSession().catch(() => undefined);
+            return;
+          }
+          failureCount += 1;
+          await new Promise(resolve => setTimeout(resolve, nextDelay(failure)));
         }
       }
     };
@@ -776,7 +803,7 @@ export function QiProvider({children}: {children: React.ReactNode}) {
     return () => {
       cancelled = true;
     };
-  }, [stage, state.pair?.pairId, patch, refreshPair]);
+  }, [stage, state.pair?.pairId, patch, refreshPair, clearSession]);
 
   // 小狗端的常驻联动通道：App 不在前台/被划掉时，主人派的任务与券也能提醒。
   // 只有「小狗端 + 已就绪」才启动；解绑与退出登录在各自流程里 stop。
