@@ -58,7 +58,11 @@ export function SharedSpace({onBack}: {onBack: () => void}) {
   }, [refresh]);
 
   const post = async () => {
-    if (!pair || posting) {
+    if (posting) {
+      return;
+    }
+    if (!pair) {
+      showToast('还没有完成联结，先去「我的 → 我的身份与联结」绑定');
       return;
     }
     setPosting(true);
@@ -139,7 +143,7 @@ export function SharedSpace({onBack}: {onBack: () => void}) {
               onPress={() => {
                 post().catch(() => undefined);
               }}
-              disabled={posting || !text.trim()}
+              disabled={posting || !text.trim() || !pair}
               style={styles.sendButton}
             />
           </View>
