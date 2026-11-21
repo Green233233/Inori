@@ -24,6 +24,7 @@ from . import (
     presence,
     relay,
     security,
+    staging,
     sync,
     update,
 )
@@ -158,6 +159,31 @@ def _relay_ack(req: Request) -> dict:
     return relay.ack(req.db, req.ctx or {}, req.body)
 
 
+def _staging_send(req: Request) -> dict:
+    return staging.send(req.db, req.ctx or {}, req.body)
+
+
+def _staging_poll(req: Request) -> dict:
+    try:
+        cursor = int(req.query.get("sinceRev") or req.query.get("cursor") or 0)
+        wait = int(req.query.get("wait") or staging.DEFAULT_WAIT_SECONDS)
+    except (TypeError, ValueError):
+        raise bad_request("invalid_cursor", "游标不合法")
+    return staging.poll(req.db, req.ctx or {}, cursor, wait)
+
+
+def _staging_ack(req: Request) -> dict:
+    return staging.ack(req.db, req.ctx or {}, req.body)
+
+
+def _staging_quota(req: Request) -> dict:
+    return staging.quota(req.db, req.ctx or {})
+
+
+def _sync_quota(req: Request) -> dict:
+    return staging.quota(req.db, req.ctx or {})
+
+
 def _sync_put(req: Request) -> dict:
     return sync.put_record(req.db, req.ctx or {}, req.params["record_id"], req.body)
 
@@ -268,6 +294,11 @@ ROUTES: list[Route] = [
     _route("POST", r"/api/v1/relay/send", _relay_send),
     _route("GET", r"/api/v1/relay/poll", _relay_poll),
     _route("POST", r"/api/v1/relay/ack", _relay_ack),
+    _route("POST", r"/api/v1/staging/send", _staging_send),
+    _route("GET", r"/api/v1/staging/poll", _staging_poll),
+    _route("POST", r"/api/v1/staging/ack", _staging_ack),
+    _route("GET", r"/api/v1/staging/quota", _staging_quota),
+    _route("GET", r"/api/v1/sync/quota", _sync_quota),
     _route("PUT", r"/api/v1/sync/records/(?P<record_id>[A-Za-z0-9_-]+)", _sync_put),
     _route("GET", r"/api/v1/sync/records", _sync_get),
     _route("PUT", r"/api/v1/sync/media/(?P<media_id>[A-Za-z0-9_-]+)/(?P<index>\d+)",
@@ -429,7 +460,7 @@ class QiHandler(BaseHTTPRequestHandler):
                 )
                 if route.auth_required:
                     request.ctx = auth.authenticate(self.db, token)
-                if path.endswith("/relay/poll"):
+                if path.endswith("/relay/poll") or path.endswith("/staging/poll"):
                     if not self.poll_slots.acquire(blocking=False):
                         raise too_many("too_many_polls", "长轮询连接过多")
                     try:
@@ -533,6 +564,8 @@ class QiHandler(BaseHTTPRequestHandler):
             return
         if path.endswith("/relay/send"):
             self._limited(f"relay:{device}", 120, 60, "rate_limited")
+        elif path.endswith("/staging/send"):
+            self._limited(f"staging:{device}", 240, 60, "rate_limited")
         elif path.endswith("/sync/records") and request.method == "PUT":
             self._limited(f"sync:{device}", 240, 60, "rate_limited")
         elif path.endswith("/coupons") and request.method == "POST":
@@ -571,6 +604,9 @@ def _cleanup_loop(db: Database, stop: threading.Event) -> None:
             removed = relay.cleanup(db)
             if removed:
                 LOG.info("relay cleanup removed %s rows", removed)
+            staged = staging.cleanup(db)
+            if staged:
+                LOG.info("staging cleanup removed %s rows", staged)
         except Exception:  # pragma: no cover
             LOG.warning("relay cleanup failed\n%s", traceback.format_exc())
 

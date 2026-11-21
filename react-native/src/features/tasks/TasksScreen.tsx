@@ -171,7 +171,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
     try {
       setTasks(pair ? await refreshTasks(pair) : await loadTasks());
     } catch (error: any) {
-      showToast(error?.message ?? '刷新失败');
+      showToast(error?.message ?? '刷新失败QAQ');
       setTasks(await loadTasks());
     } finally {
       setLoading(false);
@@ -199,7 +199,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
       setDetail('');
       setComposeOpen(false);
     } catch (error: any) {
-      showToast(error?.message ?? '创建失败');
+      showToast(error?.message ?? '创建失败QAQ');
     }
   };
 
@@ -219,7 +219,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
       setReply('');
       setAttachList([]);
     } catch (error: any) {
-      showToast(error?.message ?? '报备失败');
+      showToast(error?.message ?? '报备失败了QAQ');
     }
   };
 
@@ -236,7 +236,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
       );
     } catch (error: any) {
       const message = String(error?.message ?? '');
-      if (message && !message.includes('没有选择照片')) {
+      if (message && !message.includes('没有选择照片哦')) {
         showToast(message);
       }
     } finally {
@@ -251,7 +251,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
     try {
       const next = await verdictTask(pair, task, done, '');
       setTasks(previous => previous.map(item => (item.id === next.id ? next : item)));
-      showToast(done ? '已验收' : '已打回，等待重新报备');
+      showToast(done ? '已验收' : '被主人无情打回了呜呜，等待重新报备');
     } catch (error: any) {
       showToast(error?.message ?? '操作失败');
     }
@@ -309,7 +309,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
           <SoftCard radius={18} style={styles.empty}>
             <GlassIcon name="check" size={34} />
             <Text style={[type.body, {color: colors.onSurfaceVariant, marginTop: 10, textAlign: 'center'}]}>
-              {isMaster ? '还没有任务。下达第一件小事吧。' : '还没有任务，等主人安排。'}
+              {isMaster ? '没有任务呀，下达给任务吧主人' : '主人还没下达任务呢'}
             </Text>
           </SoftCard>
         ) : (
@@ -399,7 +399,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
 
               {!isMaster && task.status === 'submitted' ? (
                 <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 8}]}>
-                  已报备，等待主人验收
+                  已报备，等待主人验收哦
                 </Text>
               ) : null}
             </SoftCard>
@@ -416,7 +416,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
         <TextInput
           value={title}
           onChangeText={setTitle}
-          placeholder="例如：今天喝完 8 杯水"
+          placeholder="今天喝完 8 杯水咋样"
           placeholderTextColor={colors.onSurfaceVariant}
           maxLength={60}
           accessibilityLabel="任务标题"
@@ -436,7 +436,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
         <TextInput
           value={detail}
           onChangeText={setDetail}
-          placeholder="补充要求或验收标准"
+          placeholder="补充点要求或验收标准"
           placeholderTextColor={colors.onSurfaceVariant}
           maxLength={300}
           multiline
@@ -462,7 +462,7 @@ export function TasksScreen({onBack}: {onBack: () => void}) {
         <TextInput
           value={reply}
           onChangeText={setReply}
-          placeholder="说说完成情况（可选）"
+          placeholder="说说完成情况咋样（可选）"
           placeholderTextColor={colors.onSurfaceVariant}
           maxLength={300}
           multiline

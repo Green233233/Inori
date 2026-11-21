@@ -170,7 +170,7 @@ export async function createReminder(
   scope: ReminderScope = 'both',
 ): Promise<Reminder> {
   if (!/^\d{2}:\d{2}$/.test(time)) {
-    throw new Error('时间格式应为 HH:MM');
+    throw new Error('时间格式应为 HH:MM（小时：分钟）');
   }
   return upsertReminder(pair, {
     id: `rm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,

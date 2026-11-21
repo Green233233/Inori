@@ -3,7 +3,7 @@
  *
  * 一根按时间倒序的时间轴，把三类事件混在同一根轴上（视觉参照系统「数字健康」
  * 的时间轴，但沿用本应用的 SoftCard / 主题令牌）：
- *  - 使用手机：向小狗端现取 `usage.sessions`，一段会话一张卡；
+ *  - 使用手机：先读服务器暂存拉到本机的 `usage.sessions`，过期才直连现取；
  *  - 位置采样：`trailStore` 留在本机的采样点，两次移动之间的点并成一段停留；
  *  - 出行：相邻采样点位移超过 500 米算一次移动，带距离与速度。
  *
@@ -28,6 +28,7 @@ import {
 import {useAppTheme} from '../../theme/AppThemeProvider';
 import {type} from '../../theme/typography';
 import {useQi} from '../qi/QiProvider';
+import {readState, writeState} from '../../sync/stateCache';
 
 import {
   TrailTimeline,
@@ -216,24 +217,39 @@ export function Trail({onBack}: {onBack: () => void}) {
       setSessions([]);
       setPoints([]);
       const dayEndMs = dayStartMs + DAY_MS;
+      // 只看今天时，优先用小狗端定时上报、经服务器暂存拉到本机的会话。
+      const cachedTrail = showingToday
+        ? await readState<{sessions?: UsageSession[]}>('trail').catch(() => null)
+        : null;
+      const freshTrail =
+        cachedTrail?.data && Date.now() - cachedTrail.at <= 30 * 60_000
+          ? cachedTrail
+          : null;
       // 两路各自起请求：本机轨迹不依赖小狗端，离线时也要能翻看过往记录。
       const trailTask = loadTrail().catch((): TrailPoint[] => []);
-      const replyTask = runCommand('usage.sessions', {
-        fromMs: dayStartMs,
-        toMs: dayEndMs,
-      }).catch(
-        (err: unknown): SessionsReply => ({
-          ok: false,
-          error: err instanceof Error ? err.message : '取使用记录失败',
-        }),
-      );
+      const replyTask = freshTrail
+        ? null
+        : runCommand('usage.sessions', {
+            fromMs: dayStartMs,
+            toMs: dayEndMs,
+          }).catch(
+            (err: unknown): SessionsReply => ({
+              ok: false,
+              error: err instanceof Error ? err.message : '取使用记录失败',
+            }),
+          );
       try {
         const trail = await trailTask;
         setPoints(
           trail.filter(point => point.at >= dayStartMs && point.at < dayEndMs),
         );
 
-        const reply = await replyTask;
+        const reply: SessionsReply = freshTrail
+          ? ({ok: true, data: freshTrail.data} as SessionsReply)
+          : await replyTask!;
+        if (freshTrail) {
+          setError(null);
+        }
         if (!reply.ok) {
           setSessions([]);
           setError(reply.error ?? '小狗端没有返回使用记录');
@@ -244,6 +260,9 @@ export function Trail({onBack}: {onBack: () => void}) {
         }
         const payload = (reply.data ?? {}) as {sessions?: UsageSession[]};
         const list = Array.isArray(payload.sessions) ? payload.sessions : [];
+        if (!freshTrail) {
+          writeState('trail', reply.data ?? {}, 'direct').catch(() => undefined);
+        }
         setSessions(
           list.filter(
             session =>

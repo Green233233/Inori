@@ -222,18 +222,17 @@ code {
   position: relative;
   z-index: 1;
   justify-self: end;
-  /* 登录页始终压在一张深色壁纸上，卡片固定用深色以便截图上文字可读。 */
-  --text: #f2f2f2;
-  --text-strong: #ffffff;
-  --muted: #a3a3a3;
-  --faint: #7a7a7a;
-  --surface: #292929;
-  --surface-2: #303030;
-  --surface-3: #262626;
-  --line: #383838;
-  --line-strong: #4a4a4a;
-  background: #181818;
-  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* 浅色系统下登录页也必须是浅色：用浅色遮罩压住壁纸，正文与卡片走主题变量。 */
+html[data-theme="light"] .auth-login .auth-scrim { background: rgba(244, 245, 247, 0.86); }
+html[data-theme="light"] .auth-intro { color: var(--text); }
+html[data-theme="light"] .auth-intro .auth-lede,
+html[data-theme="light"] .auth-points li { color: var(--muted); }
+html[data-theme="light"] .auth-note { color: var(--faint); }
+html[data-theme="light"] .auth-login .auth-card {
+  background: var(--surface-3);
+  border-color: var(--line);
 }
 .brand { display: flex; align-items: center; gap: 13px; }
 .brand-mark {
@@ -1094,4 +1093,103 @@ dialog.modal::backdrop { background: rgba(0, 0, 0, 0.72); }
   white-space: pre-line;
   line-height: 1.6;
   word-break: break-word;
+}
+
+/* ---------------- 存储用量 ---------------- */
+.storage-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: clamp(4px, 0.7vw, 9px);
+  height: 208px;
+  padding: 14px 0 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.storage-col {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 84px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.storage-bars {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+.storage-bar {
+  flex: 1 1 0;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+}
+.storage-bar-staged { background: var(--accent); }
+.storage-bar-cloud { background: var(--accent-soft); opacity: 0.75; }
+.storage-day {
+  font-size: 9.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin: 0 5px 0 8px;
+  border-radius: 2px;
+  vertical-align: 1px;
+}
+.legend-dot:first-child { margin-left: 0; }
+.legend-staged { background: var(--accent); }
+.legend-cloud { background: var(--accent-soft); opacity: 0.75; }
+
+.storage-pair {
+  padding: 12px 0 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.storage-pair:last-of-type { border-bottom: 0; }
+.storage-pair-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.storage-pair-head strong { font-size: 13.5px; }
+.storage-pair .facts { margin-bottom: 10px; }
+.storage-pair-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.quota-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+.quota-field input {
+  width: 72px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.tiny { font-size: 10.5px; color: var(--faint); }
+
+@media (max-width: 720px) {
+  .storage-chart { height: 160px; gap: 3px; }
+  .storage-day { font-size: 8px; }
+  .quota-field { margin-left: 0; }
 }

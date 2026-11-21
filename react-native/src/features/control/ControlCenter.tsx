@@ -1,8 +1,8 @@
 /**
  * 主人端「设备管控中心」。
  *
- * 所有数据都通过端到端加密命令向小狗端现取（不落服务器明文）；小狗端离线或未
- * 授权时如实提示，而不是显示假数据。
+ * 设备状态先读服务器暂存拉到本机的缓存；缓存过期才走端到端加密命令现取。
+ * 小狗端离线或未授权时如实提示，而不是显示假数据。
  */
 import React, {useCallback, useEffect, useState} from 'react';
 import {Image, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
@@ -17,6 +17,7 @@ import {TopBar} from '../../components/TopBar';
 import {showToast} from '../../components/toast';
 import {qiScreenshotGallery} from '../../native/QiDevice';
 import {useQi} from '../qi/QiProvider';
+import {readState, writeState} from '../../sync/stateCache';
 
 type SheetKind = 'capture' | 'guard' | null;
 
@@ -68,9 +69,16 @@ export function ControlCenter({
   );
 
   const loadGuard = useCallback(async () => {
+    const cached = await readState<any>('status').catch(() => null);
+    if (cached?.data && Date.now() - cached.at <= 10 * 60_000) {
+      setGuard(cached.data);
+      setHint(cached.source === 'direct' ? '实时（直连）' : '来自服务器暂存');
+      return;
+    }
     const data: any = await call('guard.status');
     if (data) {
       setGuard(data);
+      writeState('status', data, 'direct').catch(() => undefined);
     }
   }, [call]);
 

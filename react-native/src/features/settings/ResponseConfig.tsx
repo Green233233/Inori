@@ -19,9 +19,9 @@ import {useQi} from '../qi/QiProvider';
 import {qiDevice} from '../../native/QiDevice';
 
 const TIERS = [
-  {key: 'saver', label: '省电', hint: '15 分钟级，最省电'},
-  {key: 'balanced', label: '智能', hint: '息屏自动降频（推荐）'},
-  {key: 'realtime', label: '实时', hint: '25 秒，耗电明显'},
+  {key: 'saver', label: '省电', hint: '15 分钟（最省电哒）'},
+  {key: 'balanced', label: '智能', hint: '息屏会自动降频（推荐）'},
+  {key: 'realtime', label: '实时', hint: '25 秒（对小狗手机的续航有很大影响哦）'},
 ] as const;
 
 export function ResponseConfig({onBack}: {onBack: () => void}) {
@@ -59,7 +59,7 @@ export function ResponseConfig({onBack}: {onBack: () => void}) {
       );
       showToast('已切换功耗档位');
     } catch (error: any) {
-      showToast(error?.message ?? '切换失败');
+      showToast(error?.message ?? '切换失败QAQ');
     }
   };
 
@@ -75,7 +75,7 @@ export function ResponseConfig({onBack}: {onBack: () => void}) {
       setPkg('');
       showToast('已加入黑名单');
     } catch (error: any) {
-      showToast(error?.message ?? '添加失败');
+      showToast(error?.message ?? '添加失败QAQ');
     }
   };
 
@@ -85,7 +85,7 @@ export function ResponseConfig({onBack}: {onBack: () => void}) {
       await qiDevice.notifications.setBlocklist(next);
       setBlocklist(next);
     } catch (error: any) {
-      showToast(error?.message ?? '移除失败');
+      showToast(error?.message ?? '移除失败QAQ');
     }
   };
 
@@ -99,7 +99,7 @@ export function ResponseConfig({onBack}: {onBack: () => void}) {
         }}
         showsVerticalScrollIndicator={false}>
         <Text style={[type.body, styles.intro, {color: colors.onSurfaceVariant}]}>
-          你决定主人能看到什么。这些开关立即生效，关闭后主人会收到明确的拒绝理由。
+          只有小狗自己能决定主人能看到什么。开关会立即生效，关闭后主人会收到明确的拒绝理由。
         </Text>
 
         <Text style={[type.section, styles.sectionTitle, {color: colors.onSurface}]}>
@@ -182,7 +182,7 @@ export function ResponseConfig({onBack}: {onBack: () => void}) {
             ]}>
             <Text style={[type.caption, {color: colors.error, lineHeight: 19}]}>
               当前为默认放行：除黑名单外的所有应用通知都会原样转发给主人（含验证码、金额、联系人等，不再打码）。
-              介意的话请把敏感应用加入黑名单，或关闭通知使用权。
+              不放心的话要把敏感应用加入黑名单，或关闭通知使用权。
             </Text>
           </View>
           {blocklist.length === 0 ? (
@@ -238,7 +238,7 @@ export function ResponseConfig({onBack}: {onBack: () => void}) {
           </View>
           <Text
             style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 10}]}>
-            黑名单里的应用不会转发；其余应用默认全部转发。
+            黑名单里的应用不会转发；其余应用默认会全部转发哦。
           </Text>
         </SoftCard>
       </ScrollView>

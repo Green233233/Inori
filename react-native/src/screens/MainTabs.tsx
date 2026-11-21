@@ -138,7 +138,7 @@ export function MainTabs({
               <CouponManagement onRedeem={onRedeemCoupon} />
             ) : (
               <CouponWallet
-                onAskMaster={() => showToast('去跟主人说一声吧')}
+                onAskMaster={() => showToast('可以和主人说一声了哦')}
                 onOpenCoupon={onOpenCoupon}
               />
             )}

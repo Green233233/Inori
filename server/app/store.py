@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS pairs (
   code_expires_at TEXT,
   verified_at TEXT,
   created_at TEXT NOT NULL,
-  unpaired_at TEXT
+  unpaired_at TEXT,
+  cloud_quota_bytes INTEGER NOT NULL DEFAULT 1073741824
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pairs_master ON pairs(master_device) WHERE unpaired_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pairs_puppy ON pairs(puppy_device) WHERE unpaired_at IS NULL;
@@ -97,6 +98,7 @@ CREATE TABLE IF NOT EXISTS sync_records (
   deleted INTEGER NOT NULL DEFAULT 0,
   author_device TEXT NOT NULL,
   seq INTEGER NOT NULL,
+  audience TEXT NOT NULL DEFAULT 'pair',
   PRIMARY KEY (pair_id, record_id)
 );
 CREATE INDEX IF NOT EXISTS idx_sync_seq ON sync_records(pair_id, seq);
@@ -108,6 +110,39 @@ CREATE TABLE IF NOT EXISTS media (
   data BLOB NOT NULL,
   PRIMARY KEY (pair_id, media_id, idx)
 );
+
+-- v0.7.0 状态暂存箱。状态类数据不再请求/响应，而是发送端定时加密上传，
+-- 接收端直接按游标拉取；服务端只看到 kind、大小与路由信息。
+CREATE TABLE IF NOT EXISTS staged_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rev INTEGER NOT NULL,
+  pair_id TEXT NOT NULL,
+  from_device TEXT NOT NULL,
+  to_device TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  dedupe_key TEXT,
+  ciphertext TEXT NOT NULL,
+  byte_len INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  delivered_at TEXT,
+  acked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_staged_fetch ON staged_items(pair_id, to_device, rev);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_staged_dedupe
+  ON staged_items(pair_id, from_device, to_device, kind, dedupe_key)
+  WHERE acked_at IS NULL AND dedupe_key IS NOT NULL;
+
+-- 每小时按配对采样一次存储占用，后台用它画 14 天趋势。
+CREATE TABLE IF NOT EXISTS storage_samples (
+  pair_id TEXT NOT NULL,
+  bucket TEXT NOT NULL,
+  staged_bytes INTEGER NOT NULL DEFAULT 0,
+  staged_items INTEGER NOT NULL DEFAULT 0,
+  cloud_bytes INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (pair_id, bucket)
+);
+CREATE INDEX IF NOT EXISTS idx_storage_bucket ON storage_samples(bucket);
 
 CREATE TABLE IF NOT EXISTS presence (
   device_id TEXT PRIMARY KEY,
@@ -254,6 +289,21 @@ class Database:
         ):
             if column not in user_columns:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {column} {decl}")
+        # v0.7.0：每对绑定的云空间配额与 sync_records 的可见范围。
+        pair_columns = {row[1] for row in conn.execute("PRAGMA table_info(pairs)")}
+        if "cloud_quota_bytes" not in pair_columns:
+            conn.execute(
+                "ALTER TABLE pairs ADD COLUMN cloud_quota_bytes"
+                " INTEGER NOT NULL DEFAULT 1073741824"
+            )
+        sync_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(sync_records)")
+        }
+        if "audience" not in sync_columns:
+            conn.execute(
+                "ALTER TABLE sync_records ADD COLUMN audience"
+                " TEXT NOT NULL DEFAULT 'pair'"
+            )
         # Older databases created unconditional unique indexes on the pair
         # device columns, which blocked re-pairing after an unpair (the row is
         # kept for history). Recreate them as partial indexes.

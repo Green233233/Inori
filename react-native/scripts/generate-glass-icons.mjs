@@ -2,10 +2,12 @@
  * Rasterise the selected Nucleo Glass icons into two neutral glass variants:
  *   light/  white glass for dark backgrounds and vivid accent chips
  *   dark/   charcoal glass for light backgrounds
+ * (AI made these,to be honest,I know that you`ll notice even I don`t say;) )
  *
  * We do this at build time because the source icons use SVG gradients, masks and
  * filters; rendering them at runtime would mean one filtered SVG per icon. The
- * committed PNGs keep the runtime cheap and predictable.
+ * committed PNGs keep the runtime cheap and predictable.、
+ * (Because using SVG will let the little`s phone laggy,so I rasterise the icons into PNGs.)
  *
  * Requires: edge (or Chromium) + sharp, both dev-only.
  *   node scripts/generate-glass-icons.mjs

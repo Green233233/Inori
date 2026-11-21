@@ -95,7 +95,7 @@ export async function postSharedNote(
 ): Promise<SharedNote> {
   const trimmed = text.trim().slice(0, 300);
   if (!trimmed) {
-    throw new Error('先写点什么吧');
+    throw new Error('先写点什么呀');
   }
   if (!pair.peerPubkey) {
     throw new Error('对方公钥缺失');

@@ -46,7 +46,7 @@ export function AppearanceScreen({onBack}: {onBack: () => void}) {
         frame,
         greeting: greeting.trim(),
         widgetTitle: widgetTitle.trim() || '祈',
-        widgetBody: widgetBody.trim() || '打开祈完成联结',
+        widgetBody: widgetBody.trim() || '打开祈完成联结吧',
       });
       showToast('装扮已保存');
     } catch (error: any) {
@@ -66,7 +66,7 @@ export function AppearanceScreen({onBack}: {onBack: () => void}) {
         }}
         showsVerticalScrollIndicator={false}>
         <Text style={[type.caption, styles.intro, {color: colors.onSurfaceVariant}]}>
-          只改变你自己的观感。配色与文案都留在本机，对方看不到，也不会同步。
+          这只对你自己有效哦 主人看不到
         </Text>
 
         <SoftCard style={[styles.card, {alignItems: 'center'}]}>
@@ -83,7 +83,7 @@ export function AppearanceScreen({onBack}: {onBack: () => void}) {
             {state.displayName ?? state.username ?? '小狗'}
           </Text>
           <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 4}]}>
-            {greeting.trim() || '在主页写下今天想对自己说的话'}
+            {greeting.trim() || '有啥想对自己说的嘛'}
           </Text>
         </SoftCard>
 
@@ -123,7 +123,7 @@ export function AppearanceScreen({onBack}: {onBack: () => void}) {
             value={greeting}
             onChangeText={setGreeting}
             maxLength={40}
-            placeholder="例如：今天也乖乖的"
+            placeholder="今天也乖乖的"
             placeholderTextColor={colors.onSurfaceVariant}
             style={[styles.input, {color: colors.onSurface, borderColor: colors.outline}]}
           />
@@ -155,7 +155,7 @@ export function AppearanceScreen({onBack}: {onBack: () => void}) {
             value={widgetBody}
             onChangeText={setWidgetBody}
             maxLength={40}
-            placeholder="打开祈完成联结"
+            placeholder="打开祈完成联结吧"
             placeholderTextColor={colors.onSurfaceVariant}
             style={[
               styles.input,
@@ -171,7 +171,7 @@ export function AppearanceScreen({onBack}: {onBack: () => void}) {
               {widgetTitle.trim() || '祈'}
             </Text>
             <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 4}]}>
-              {widgetBody.trim() || '打开祈完成联结'}
+              {widgetBody.trim() || '打开祈完成联结吧'}
             </Text>
           </View>
         </SoftCard>

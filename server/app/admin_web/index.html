@@ -7,6 +7,26 @@
   <meta name="theme-color" content="#121212">
   <meta name="robots" content="noindex, nofollow">
   <title>祈 · 账户管理后台</title>
+  <!-- 首屏就决定深浅色：有缓存听缓存，没有缓存听系统，避免先闪一下深色。 -->
+  <script>
+    (function () {
+      try {
+        var raw = localStorage.getItem("qi.admin.theme");
+        var theme = raw ? JSON.parse(raw) : null;
+        var mode = theme && theme.mode;
+        var dark = mode === "light" ? false : mode === "dark" ? true :
+          window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var root = document.documentElement;
+        root.dataset.theme = dark ? "dark" : "light";
+        root.style.colorScheme = dark ? "dark" : "light";
+        if (theme && theme.background === "solid" &&
+            /^#[0-9a-fA-F]{6}$/.test(String(theme.solidColor || ""))) {
+          root.style.setProperty("--bg", theme.solidColor);
+          root.style.setProperty("--bg-deep", theme.solidColor);
+        }
+      } catch (err) { /* 本地缓存坏了就交给 CSS 默认值 */ }
+    })();
+  </script>
   <link rel="icon" href="/admin/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/admin/assets/style.css">
 </head>
@@ -34,7 +54,7 @@
         <span class="brand-mark">祈</span>
         <div>
           <h1>账户管理后台</h1>
-          <p>Inori Console · v0.1.2</p>
+          <p>Inori Console · v0.2.0</p>
         </div>
       </div>
       <form id="login-form" class="stack" autocomplete="on" novalidate>
@@ -96,13 +116,14 @@
         <span class="brand-mark">祈</span>
         <div>
           <h1>管理后台</h1>
-          <p>v0.1.2</p>
+          <p>v0.2.0</p>
         </div>
       </div>
       <nav class="nav" aria-label="主导航">
         <button class="nav-item is-active" data-view="overview" type="button">概览</button>
         <button class="nav-item" data-view="accounts" type="button">账户</button>
         <button class="nav-item" data-view="audit" type="button">操作日志</button>
+        <button class="nav-item" data-view="storage" type="button">存储</button>
         <button class="nav-item" data-view="broadcast" type="button">公告</button>
         <button class="nav-item" data-view="system" type="button">系统</button>
         <button class="nav-item" data-view="settings" type="button">设置</button>
@@ -291,6 +312,36 @@
             <tbody id="audit-body"></tbody>
           </table>
         </div>
+      </section>
+
+      <!-- 存储 -->
+      <section id="view-storage" class="view" hidden>
+        <article class="panel">
+          <header class="panel-head">
+            <h3>存储用量</h3>
+            <span id="storage-range" class="muted">最近 14 天</span>
+          </header>
+          <div id="storage-chart" class="storage-chart" role="img"
+               aria-label="最近 14 天的状态暂存与云空间用量柱状图"></div>
+          <dl id="storage-totals" class="facts"></dl>
+        </article>
+        <article class="panel">
+          <header class="panel-head"><h3>占用最多的配对</h3></header>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>配对</th>
+                  <th>状态暂存</th>
+                  <th>云空间</th>
+                  <th>云配额</th>
+                </tr>
+              </thead>
+              <tbody id="storage-pairs"></tbody>
+            </table>
+            <p id="storage-empty" class="empty" hidden>还没有任何暂存或云空间占用。</p>
+          </div>
+        </article>
       </section>
 
       <!-- 系统 -->

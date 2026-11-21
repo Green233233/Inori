@@ -36,7 +36,7 @@ export function FavoritesScreen({
             <GlassIcon name="favorite" size={42} />
           </View>
           <Text style={[type.headline, {color: colors.onSurface}]}>
-            还没有收藏
+            还没有收藏哦
           </Text>
           <Text
             style={[
@@ -44,7 +44,7 @@ export function FavoritesScreen({
               styles.emptyText,
               {color: colors.onSurfaceVariant},
             ]}>
-            把喜欢的日记收进来，随时回看。
+            可以收藏你喜欢的日记哦
           </Text>
           {onNewEntry ? <TextButton label="写一篇" onPress={onNewEntry} /> : null}
         </View>
@@ -77,7 +77,7 @@ export function FavoritesScreen({
         title="删除日记"
         message={
           deleteTarget
-            ? `确定要删除「${deleteTarget.title}」吗？此操作不可撤销。`
+            ? `确定要删除「${deleteTarget.title}」吗？此操作不可撤销！`
             : ''
         }
         confirmLabel="删除"

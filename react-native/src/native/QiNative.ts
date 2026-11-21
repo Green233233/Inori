@@ -65,21 +65,21 @@ const apiModule = NativeModules.QiApiClient as ApiClientApi | undefined;
 
 function requireCrypto(): CryptoApi {
   if (!cryptoModule) {
-    throw new Error('QiCrypto 未注册：请重新构建 Android 应用');
+    throw new Error('给开发者的提示：QiCrypto 未注册：请重新构建 Android 应用');
   }
   return cryptoModule;
 }
 
 function requireSecrets(): SecretsApi {
   if (!secretsModule) {
-    throw new Error('QiSecureStore 未注册：请重新构建 Android 应用');
+    throw new Error('给开发者的提示：QiSecureStore 未注册：请重新构建 Android 应用');
   }
   return secretsModule;
 }
 
 function requireApi(): ApiClientApi {
   if (!apiModule) {
-    throw new Error('QiApiClient 未注册：请重新构建 Android 应用');
+    throw new Error('给开发者的提示：QiApiClient 未注册：请重新构建 Android 应用');
   }
   return apiModule;
 }

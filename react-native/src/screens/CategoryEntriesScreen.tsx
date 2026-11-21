@@ -54,12 +54,12 @@ export function CategoryEntriesScreen({
             />
           </View>
           <Text style={[type.headline, {color: colors.onSurface}]}>
-            这里还是空的
+            空的QAQ
           </Text>
           <Text style={[type.body, styles.emptyBody, {color: colors.onSurfaceVariant}]}>
-            在这个分类下写下第一篇日记吧。
+            要不多写点吧
           </Text>
-          {onNewEntry ? <TextButton label="写一篇" onPress={onNewEntry} /> : null}
+          {onNewEntry ? <TextButton label="写一篇吧" onPress={onNewEntry} /> : null}
         </View>
       ) : (
         <FlatList

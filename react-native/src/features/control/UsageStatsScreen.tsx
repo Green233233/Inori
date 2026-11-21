@@ -5,8 +5,8 @@
  * 24 小时柱（0/中/上限三条参考线 + 0:00–24:00 时刻轴）、按分类的四宫格，最后是
  * 应用明细列表。
  *
- * 数据全部通过端到端加密命令现取（`usage.day` / `usage.range`），服务器不留明文；
- * 小狗端离线、未授权或关闭共享时如实提示，并保留「显示今天」作为恢复入口。
+ * 数据先读本机缓存（小狗端定时加密上传到服务器、本端拉取后解密落盘）；
+ * 缓存没有或过期才回退直连命令（`usage.day` / `usage.range`），并在页面标明来源。
  */
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
@@ -33,6 +33,7 @@ import type {
 import {useAppTheme} from '../../theme/AppThemeProvider';
 import {type} from '../../theme/typography';
 import {useQi} from '../qi/QiProvider';
+import {readState, writeState} from '../../sync/stateCache';
 
 import {CategoryGrid, formatMinutes} from './CategoryGrid';
 import {HourGridBars} from './HourGridBars';
@@ -77,6 +78,30 @@ export function UsageStatsScreen({onBack}: {onBack: () => void}) {
     async (silent = false) => {
       setBusy(true);
       try {
+        // 先看服务器暂存拉到本机的缓存；仅当缓存的正是当前查看的这一天且
+        // 仍在 30 分钟内，才完全不发直连命令。
+        const cached = await readState<{
+          day: UsageDaySummary | null;
+          range: UsageRangeStats | null;
+        }>('usage').catch(() => null);
+        const cachedDay =
+          cached?.data?.day && cached.data.day.dayStartMs === dayStartMs
+            ? cached.data.day
+            : null;
+        if (cachedDay) {
+          setDay(cachedDay);
+          setWeek(cached?.data.range ?? null);
+          setPrevDay(null);
+          setHint(
+            cached && Date.now() - cached.at <= 30 * 60_000
+              ? '来自服务器暂存'
+              : '暂存数据稍旧，正在补一次直连',
+          );
+          if (cached && Date.now() - cached.at <= 30 * 60_000) {
+            refreshPair().catch(() => undefined);
+            return;
+          }
+        }
         // v0.6.8：三条命令以前用 Promise.all，只要其中一条（比如 7 天汇总
         // 在小狗端算得慢一点）没回包，整页就只剩「对方没有响应」——明明当天
         // 的数据已经拿到了。改成 allSettled：能显示多少显示多少，只有三条全
@@ -106,10 +131,21 @@ export function UsageStatsScreen({onBack}: {onBack: () => void}) {
           );
           return;
         }
-        setDay(dayReply.data as UsageDaySummary);
+        const freshDay = dayReply.data as UsageDaySummary;
+        const freshWeek = weekReply?.ok ? (weekReply.data as UsageRangeStats) : null;
+        setDay(freshDay);
         setPrevDay(prevReply?.ok ? (prevReply.data as UsageDaySummary) : null);
-        setWeek(weekReply?.ok ? (weekReply.data as UsageRangeStats) : null);
-        setHint(null);
+        setWeek(freshWeek);
+        setHint(
+          isSameDay(dayStartMs, Date.now())
+            ? '实时（直连）'
+            : '来自小狗端的直连查询',
+        );
+        if (isSameDay(dayStartMs, Date.now())) {
+          writeState('usage', {day: freshDay, range: freshWeek}, 'direct').catch(
+            () => undefined,
+          );
+        }
       } catch (error: any) {
         setDay(null);
         setPrevDay(null);
@@ -424,7 +460,7 @@ export function UsageStatsScreen({onBack}: {onBack: () => void}) {
             type.caption,
             {color: colors.onSurfaceVariant, marginTop: 14},
           ]}>
-          数据来自{partner}的「使用情况访问」，每次只在你要看的时候读一次。
+          数据来自{partner}的「使用情况访问」，由小狗端定时加密上传到服务器，这里只读暂存，不再实时打扰对方。
         </Text>
       </ScrollView>
     </View>

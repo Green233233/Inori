@@ -413,17 +413,25 @@ class ApiTest(unittest.TestCase):
     def test_sync_records_lww_and_cursor(self) -> None:
         master, puppy, master_id, puppy_id = self._paired()
         first = master.call("PUT", "/api/v1/sync/records/record_aaaaaaaa01", {
-            "kind": "journal", "ciphertext": "cipher-A", "revision": 1,
+            "kind": "task", "ciphertext": "cipher-A", "revision": 1,
             "updatedAt": 1000})
         self.assertFalse(first["stale"])
         stale = puppy.call("PUT", "/api/v1/sync/records/record_aaaaaaaa01", {
-            "kind": "journal", "ciphertext": "cipher-old", "revision": 0,
+            "kind": "task", "ciphertext": "cipher-old", "revision": 0,
             "updatedAt": 500})
         self.assertTrue(stale["stale"])
         newer = puppy.call("PUT", "/api/v1/sync/records/record_aaaaaaaa01", {
-            "kind": "journal", "ciphertext": "cipher-B", "revision": 2,
+            "kind": "task", "ciphertext": "cipher-B", "revision": 2,
             "updatedAt": 2000})
         self.assertFalse(newer["stale"])
+
+        # 日记是作者私有的：同一配对的另一方不能覆盖/删除。
+        master.call("PUT", "/api/v1/sync/records/record_aaaaaaaa02", {
+            "kind": "journal", "ciphertext": "cipher-J", "revision": 1,
+            "updatedAt": 1000})
+        puppy.call("PUT", "/api/v1/sync/records/record_aaaaaaaa02", {
+            "kind": "journal", "ciphertext": "cipher-X", "revision": 2,
+            "updatedAt": 2000}, expect=403)
         listed = master.call("GET", "/api/v1/sync/records?sinceSeq=0")
         record = [item for item in listed["items"]
                   if item["recordId"] == "record_aaaaaaaa01"][0]
@@ -563,6 +571,75 @@ class ApiTest(unittest.TestCase):
         self.assertIsNone(puppy_state)
         after = master.call("GET", "/api/v1/sync/records?sinceSeq=0", expect=403)
         self.assertEqual(after["error"]["code"], "no_pair")
+
+    def test_staging_roundtrip_dedupe_and_ack(self) -> None:
+        """状态是「发送端上传、接收端直接拉取」，同一 dedupeKey 只留最新一份。"""
+        master, puppy, _, _ = self._paired()
+        first = master.call("POST", "/api/v1/staging/send", {
+            "kind": "status", "ciphertext": "cipher-old", "dedupeKey": "status"})
+        self.assertTrue(first["ok"])
+        second = master.call("POST", "/api/v1/staging/send", {
+            "kind": "status", "ciphertext": "cipher-new", "dedupeKey": "status"})
+        self.assertGreater(second["rev"], first["rev"])
+
+        polled = puppy.call("GET", "/api/v1/staging/poll?cursor=0&wait=0")
+        self.assertEqual(len(polled["items"]), 1)
+        item = polled["items"][0]
+        self.assertEqual(item["ciphertext"], "cipher-new")
+        self.assertEqual(item["kind"], "status")
+        self.assertGreater(polled["usedBytes"], 0)
+        self.assertFalse(polled["pressure"])
+
+        # 客户端用 sinceRev 游标：只应返回游标之后的新条目，不能反复重放旧条目。
+        third = master.call("POST", "/api/v1/staging/send", {
+            "kind": "profile", "ciphertext": "cipher-third", "dedupeKey": "profile"})
+        after = puppy.call(
+            "GET", f"/api/v1/staging/poll?sinceRev={item['rev']}&wait=0")
+        self.assertEqual([entry["rev"] for entry in after["items"]], [third["rev"]])
+        third_item = after["items"][0]
+
+        acked = puppy.call("POST", "/api/v1/staging/ack", {"ids": [item["id"], third_item["id"]]})
+        self.assertEqual(acked["deleted"], 2)
+        again = puppy.call("GET", "/api/v1/staging/poll?cursor=0&wait=0")
+        self.assertEqual(again["items"], [])
+        self.assertEqual(again["usedBytes"], 0)
+
+    def test_staging_rejects_unknown_kind(self) -> None:
+        master, _, _, _ = self._paired()
+        payload = master.call("POST", "/api/v1/staging/send", {
+            "kind": "journal", "ciphertext": "cipher"}, expect=400)
+        self.assertEqual(payload["error"]["code"], "invalid_kind")
+
+    def test_sync_self_audience_is_private(self) -> None:
+        """私密日记只回作者自己的设备，对方拉不到。"""
+        master, puppy, _, _ = self._paired()
+        master.call("PUT", "/api/v1/sync/records/record_abcdefgh01", {
+            "kind": "journal", "ciphertext": "self-cipher",
+            "updatedAt": 1000, "audience": "self"})
+        master.call("PUT", "/api/v1/sync/records/record_abcdefgh02", {
+            "kind": "journal", "ciphertext": "pair-cipher", "updatedAt": 1000})
+        mine = master.call("GET", "/api/v1/sync/records?sinceSeq=0")
+        self.assertEqual(
+            {item["recordId"] for item in mine["items"]},
+            {"record_abcdefgh01", "record_abcdefgh02"})
+        partner = puppy.call("GET", "/api/v1/sync/records?sinceSeq=0")
+        self.assertEqual(
+            [item["recordId"] for item in partner["items"]],
+            ["record_abcdefgh02"])
+
+    def test_cloud_quota_rejects_when_full(self) -> None:
+        master, _, _, _ = self._paired()
+        path = os.path.join(self.tmp, "qi.sqlite3")
+        db = Database(path)
+        db.conn.execute(
+            "UPDATE pairs SET cloud_quota_bytes=1000 WHERE unpaired_at IS NULL")
+        db.close()
+        master.call("PUT", "/api/v1/sync/records/record_quota0001", {
+            "kind": "journal", "ciphertext": "x" * 600, "updatedAt": 1000})
+        payload = master.call("PUT", "/api/v1/sync/records/record_quota0002", {
+            "kind": "journal", "ciphertext": "x" * 600, "updatedAt": 1000},
+            expect=507)
+        self.assertEqual(payload["error"]["code"], "cloud_full")
 
     def test_unauthorized(self) -> None:
         client = Client(self.base)

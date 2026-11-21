@@ -16,6 +16,7 @@ import {FlatButton} from '../../components/Ui';
 import {TopBar} from '../../components/TopBar';
 import {showToast} from '../../components/toast';
 import {useQi} from '../qi/QiProvider';
+import {readState, writeState} from '../../sync/stateCache';
 
 export function PartnerLocation({onBack}: {onBack: () => void}) {
   const {colors, tokens} = useAppTheme();
@@ -29,8 +30,21 @@ export function PartnerLocation({onBack}: {onBack: () => void}) {
     async (silent = false) => {
       setBusy(true);
       try {
+        const cached = await readState<any>('location').catch(() => null);
+        if (cached?.data?.ok && Date.now() - cached.at <= 10 * 60_000) {
+          setFix(cached.data);
+          setHint(cached.source === 'direct' ? '实时（直连）' : '来自服务器暂存');
+          return;
+        }
         const reply = await runCommand('location.get');
         const data = (reply?.data ?? {}) as any;
+        if (reply?.ok) {
+          writeState('location', data, 'direct').catch(() => undefined);
+        } else if (cached?.data?.ok) {
+          setFix(cached.data);
+          setHint('等对方下次同步，先显示上次的位置');
+          return;
+        }
         setFix(reply?.ok ? data : null);
         if (!reply?.ok) {
           setHint(

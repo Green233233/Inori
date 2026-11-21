@@ -95,7 +95,7 @@ export async function sendCommand(
   const result = new Promise<CommandReply>((resolve, reject) => {
     const timer = setTimeout(() => {
       waiters.delete(request.id);
-      reject(new Error('对方没有响应，可能离线或未授权'));
+      reject(new Error('对方没有响应哦，可能离线或未授权呀'));
     }, timeoutMs);
     waiters.set(request.id, reply => {
       clearTimeout(timer);
@@ -148,7 +148,7 @@ export async function executeCommand(
     reply = {
       id: request.id,
       ok: false,
-      error: error?.message ?? '执行失败',
+      error: error?.message ?? '执行失败了qwq',
       at: Date.now(),
     };
   }
@@ -210,7 +210,7 @@ function notifyLocationViewed(data: unknown): void {
   }
   try {
     qiDevice.notice
-      .post('qi.location.viewed', '祈 · 位置', '小狗刚刚查看了你的位置', false)
+      .post('qi.location.viewed', '祈 · 位置', '小狗刚刚查看了你的位置哦', false)
       .catch(() => undefined);
   } catch {
     // 没有通知模块：静默跳过。
@@ -281,7 +281,7 @@ async function runLocalCommand(
     case 'screen.capture': {
       const status = await qiDevice.screenshot.status();
       if (!status.canCapture) {
-        throw new Error('小狗端还没有开启屏幕共享');
+        throw new Error('小狗端还没有开启屏幕共享哦');
       }
       return qiDevice.screenshot.capture();
     }

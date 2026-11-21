@@ -67,7 +67,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
       throw new ApiError(
         response.status,
         'bad_response',
-        '服务器返回了无法解析的数据',
+        '服务器返回了看不懂的数据呢',
       );
     }
   }

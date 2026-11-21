@@ -81,7 +81,7 @@ export function AutoRules({onBack}: {onBack: () => void}) {
     };
     await persist([rule, ...rules]);
     setLabel('');
-    showToast('规则已保存，到点自动生效');
+    showToast('规则已保存，到点自动生效哦');
   };
 
   const toggle = async (rule: AutoRule, enabled: boolean) => {
@@ -99,7 +99,7 @@ export function AutoRules({onBack}: {onBack: () => void}) {
         contentContainerStyle={{paddingHorizontal: 16, paddingBottom: insets.bottom + 28}}
         showsVerticalScrollIndicator={false}>
         <Text style={[type.caption, styles.intro, {color: colors.onSurfaceVariant}]}>
-          到点自动切换功耗档位。规则由守护服务在心跳里顺手判断，不加定时器、不额外唤醒。
+          到点会自动切换功耗档位哦
         </Text>
 
         {activeRule ? (
@@ -185,7 +185,7 @@ export function AutoRules({onBack}: {onBack: () => void}) {
           <SoftCard style={[styles.card, {alignItems: 'center', paddingVertical: 28}]}>
             <GlassIcon name="weatherNight" size={26} tone="auto" />
             <Text style={[type.caption, {color: colors.onSurfaceVariant, marginTop: 10}]}>
-              还没有规则。加一条「22:30–07:00 用省电」，夜里就不用管了。
+              还没有规则呢 晚上不用加省电规则嘛
             </Text>
           </SoftCard>
         ) : (

@@ -1,4 +1,4 @@
-/* 祈 · 账户管理后台 v0.1.0
+/* 祈 · 账户管理后台 v0.2.0
  * 无框架、无外部依赖。令牌只放 sessionStorage，所有请求走 Bearer，
  * 不依赖 Cookie。 */
 (function () {
@@ -14,6 +14,7 @@
     me: null,
     view: "overview",
     overview: null,
+    storage: null,
     accounts: { items: [], total: 0, page: 1, pages: 1, q: "", status: "all" },
     theme: null,
     themeSaveSeq: 0,
@@ -32,6 +33,7 @@
     overview: ["概览", "服务器运行状态与账户概况"],
     accounts: ["账户", "浏览、创建、封禁与导出账户"],
     audit: ["操作日志", "管理员与账户相关操作记录"],
+    storage: ["存储", "状态暂存与云空间的用量趋势"],
     broadcast: ["公告", "写一句话，所有客户端主页都会显示"],
     system: ["系统", "版本、登录保护与存储信息"],
     settings: ["设置", "管理员、密码与外观"]
@@ -53,6 +55,12 @@
     admin_theme_updated: "更新外观",
     admin_background_upload: "上传背景",
     admin_background_deleted: "移除背景",
+    admin_broadcast: "发布公告",
+    admin_broadcast_clear: "清空公告",
+    admin_clear_staging: "清空账户暂存",
+    admin_clear_cloud: "清空账户云空间",
+    admin_pair_quota: "调整云配额",
+    admin_pair_clear_cloud: "清空配对云空间",
     login: "账户登录",
     login_failed: "账户登录失败",
     login_blocked: "封禁登录拦截",
@@ -299,6 +307,7 @@
     if (view === "overview") loadOverview();
     if (view === "accounts") loadAccounts();
     if (view === "audit") loadAudit();
+    if (view === "storage") loadStorage();
     if (view === "system") loadSystem();
     if (view === "broadcast") loadBroadcast();
     if (view === "settings") loadSettings();
@@ -1001,6 +1010,175 @@
     }
   }
 
+  /* ---------------- 存储 ---------------- */
+  async function loadStorage() {
+    try {
+      var data = await api("/storage?days=14");
+      state.storage = data;
+      renderStorage(data);
+    } catch (err) {
+      if (err.status !== 401 && err.status !== 403) {
+        showBanner("读取存储用量失败：" + err.message);
+      }
+    }
+  }
+
+  function renderStorage(data) {
+    data = data || {};
+    var series = data.series || [];
+    var chart = $("storage-chart");
+    if (!series.length) {
+      chart.innerHTML = '<p class="empty">还没有采样数据，等客户端上传后这里会出现趋势。</p>';
+    } else {
+      var max = 1;
+      series.forEach(function (point) {
+        max = Math.max(max, Number(point.stagedBytes) || 0, Number(point.cloudBytes) || 0);
+      });
+      chart.innerHTML = series.map(function (point) {
+        var staged = Number(point.stagedBytes) || 0;
+        var cloud = Number(point.cloudBytes) || 0;
+        var day = String(point.day || "");
+        return '<div class="storage-col" title="' + esc(day) + ' · 暂存 ' + formatBytes(staged) +
+          ' · 云空间 ' + formatBytes(cloud) + '">' +
+          '<div class="storage-bars">' +
+          '<span class="storage-bar storage-bar-staged" style="height:' +
+            Math.max(2, Math.round(staged / max * 100)) + '%"></span>' +
+          '<span class="storage-bar storage-bar-cloud" style="height:' +
+            Math.max(2, Math.round(cloud / max * 100)) + '%"></span>' +
+          "</div>" +
+          '<span class="storage-day">' + esc(day.slice(5)) + "</span></div>";
+      }).join("");
+    }
+
+    var totals = data.totals || {};
+    var quota = Number(totals.quotaBytes) || 0;
+    var cloudBytes = Number(totals.cloudBytes) || 0;
+    var ratio = quota > 0 ? Math.min(100, cloudBytes / quota * 100) : 0;
+    $("storage-totals").innerHTML =
+      "<div><dt>状态暂存</dt><dd>" + formatBytes(totals.stagedBytes) +
+        " · " + num(totals.stagedItems) + " 条</dd></div>" +
+      "<div><dt>云空间</dt><dd>" + formatBytes(cloudBytes) +
+        (quota > 0 ? " / " + formatBytes(quota) + "（" + ratio.toFixed(1) + "%）" : " · 未设配额") +
+        "</dd></div>" +
+      "<div><dt>图例</dt><dd><span class=\"legend-dot legend-staged\"></span> 暂存 " +
+        "<span class=\"legend-dot legend-cloud\"></span> 云空间</dd></div>";
+
+    var rows = data.pairs || [];
+    $("storage-empty").hidden = rows.length > 0;
+    $("storage-pairs").innerHTML = rows.map(function (pair) {
+      var name = (pair.ownerName || "主人") + " × " + (pair.puppyName || "小狗");
+      return "<tr>" +
+        '<td data-label="配对"><div class="cell-user"><strong>' + esc(name) +
+          '</strong><span class="mono">#' + esc(pair.pairId) + "</span></div></td>" +
+        '<td data-label="状态暂存" class="mono">' + formatBytes(pair.stagedBytes) +
+          " · " + num(pair.itemCount) + " 条</td>" +
+        '<td data-label="云空间" class="mono">' + formatBytes(pair.cloudBytes) + "</td>" +
+        '<td data-label="云配额" class="mono">' +
+          (Number(pair.quotaBytes) > 0 ? formatBytes(pair.quotaBytes) : "不限") + "</td></tr>";
+    }).join("");
+    $("storage-range").textContent = "最近 " + Math.max(1, series.length) + " 天 · 每 15 分钟采样";
+  }
+
+  /* ---------------- 账户存储 ---------------- */
+  function quotaGb(bytes) {
+    var value = Number(bytes) || 0;
+    if (!value) return 0;
+    return Math.round(value / 1073741824 * 10) / 10;
+  }
+
+  function storagePairMarkup(pair) {
+    var name = (pair.ownerName || "主人") + " × " + (pair.puppyName || "小狗");
+    var badge = pair.unpaired
+      ? '<span class="tag">已解除</span>'
+      : pair.verified ? '<span class="tag tag-accent">已绑定</span>' : '<span class="tag">待确认</span>';
+    return '<div class="storage-pair" data-pair="' + esc(pair.pairId) + '">' +
+      '<div class="storage-pair-head"><strong>' + esc(name) + "</strong>" + badge +
+        '<span class="mono tiny">#' + esc(pair.pairId) + "</span></div>" +
+      '<dl class="facts">' +
+        "<div><dt>状态暂存</dt><dd>" + formatBytes(pair.stagedBytes) +
+          " · " + num(pair.stagedItems) + " 条</dd></div>" +
+        "<div><dt>云空间</dt><dd>" + formatBytes(pair.cloudBytes) + "</dd></div>" +
+        "<div><dt>云配额</dt><dd>" + (Number(pair.quotaBytes) > 0 ? formatBytes(pair.quotaBytes) : "不限") +
+          "</dd></div></dl>" +
+      '<div class="storage-pair-actions">' +
+        '<button class="btn btn-ghost btn-sm" data-storage-op="clear-staging" type="button">清空暂存</button>' +
+        '<button class="btn btn-ghost btn-sm btn-danger-quiet" data-storage-op="clear-cloud" type="button">清空云空间</button>' +
+        '<label class="quota-field">配额 <input type="number" min="0" max="100" step="0.5" data-role="quota-gb" value="' +
+          quotaGb(pair.quotaBytes) + '"> GB' +
+          '<button class="btn btn-ghost btn-sm" data-storage-op="save-quota" type="button">保存</button></label>' +
+      "</div></div>";
+  }
+
+  function renderAccountStorage(ctx, account, data) {
+    var pairs = data.pairs || [];
+    ctx.root.innerHTML =
+      '<p class="modal-note">' + esc(account.username) + " 名下共 " + num(pairs.length) +
+        " 个配对；合计暂存 <strong>" + formatBytes(data.stagedBytes) + "</strong>，云空间 <strong>" +
+        formatBytes(data.cloudBytes) + "</strong>。</p>" +
+      '<p id="storage-error" class="form-error" hidden></p>' +
+      (pairs.length ? pairs.map(storagePairMarkup).join("")
+        : '<p class="empty">这个账户还没有配对，所以没有可清理的存储。</p>');
+    var error = ctx.root.querySelector("#storage-error");
+    ctx.root.addEventListener("click", async function (event) {
+      var button = event.target.closest("button[data-storage-op]");
+      if (!button) return;
+      var block = button.closest("[data-pair]");
+      if (!block) return;
+      var pairId = block.dataset.pair;
+      var op = button.dataset.storageOp;
+      if (op === "clear-staging" && !window.confirm("清空这个配对的状态暂存？对方将收不到尚未拉取的状态。")) return;
+      if (op === "clear-cloud" && !window.confirm("清空这个配对的云空间？双方未拉取的日记与媒体会一起删除。")) return;
+      var quotaInput = block.querySelector('[data-role="quota-gb"]');
+      var quotaBytes = quotaInput ? Math.round(Number(quotaInput.value || 0) * 1073741824) : 0;
+      if (op === "save-quota" && (!Number.isFinite(quotaBytes) || quotaBytes < 0 || quotaBytes > 100 * 1073741824)) {
+        error.textContent = "配额需在 0–100GB 之间（0 表示不限）";
+        error.hidden = false;
+        return;
+      }
+      error.hidden = true;
+      button.disabled = true;
+      try {
+        if (op === "clear-staging") {
+          await api("/accounts/" + account.id + "/clear-staging", { method: "POST", body: {} });
+          toast("已清空这个配对的状态暂存");
+        } else if (op === "clear-cloud") {
+          await api("/pairs/" + encodeURIComponent(pairId) + "/cloud", { method: "DELETE" });
+          toast("已清空这个配对的云空间");
+        } else {
+          await api("/pairs/" + encodeURIComponent(pairId) + "/quota", {
+            method: "PATCH", body: { quotaBytes: quotaBytes }
+          });
+          toast("云配额已更新");
+        }
+        await refreshAccountStorage(ctx, account);
+        loadStorage();
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+        button.disabled = false;
+      }
+    });
+    ctx.setBusy(false);
+  }
+
+  async function refreshAccountStorage(ctx, account) {
+    var data = await api("/accounts/" + account.id + "/storage");
+    renderAccountStorage(ctx, account, data);
+  }
+
+  async function openAccountStorage(account) {
+    var ctx = openModal({
+      title: "存储 · " + account.username,
+      body: '<p class="muted">正在读取存储占用…</p>',
+      actions: [{ label: "关闭", onClick: function (inner) { inner.close(); } }]
+    });
+    try {
+      await refreshAccountStorage(ctx, account);
+    } catch (err) {
+      ctx.root.innerHTML = '<p class="form-error">' + esc(err.message) + "</p>";
+    }
+  }
+
   /* ---------------- 概览 ---------------- */
   async function loadOverview(options) {
     options = options || {};
@@ -1222,6 +1400,7 @@
         } else {
           actions += '<button class="btn btn-ghost btn-sm" data-action="unban" data-id="' + account.id + '" type="button">解封</button>';
         }
+        actions += '<button class="btn btn-ghost btn-sm" data-action="storage" data-id="' + account.id + '" type="button">存储</button>';
         actions += '<button class="btn btn-ghost btn-sm btn-danger-quiet" data-action="delete" data-id="' + account.id + '" type="button">删除</button>';
         var online = account.online
           ? '<span style="color:#7ff0c4">● 在线</span>'
@@ -1581,6 +1760,7 @@
         foot.querySelector("button");
       if (focus) focus.focus();
     }, 30);
+    return ctx;
   }
 
   function cleanupModal() {
@@ -1605,6 +1785,8 @@
       if (state.view === "overview") loadOverview();
       else if (state.view === "accounts") loadAccounts();
       else if (state.view === "audit") loadAudit();
+      else if (state.view === "storage") loadStorage();
+      else if (state.view === "broadcast") loadBroadcast();
       else if (state.view === "settings") loadSettings();
       else loadSystem();
     });
@@ -1681,6 +1863,7 @@
       if (!account) return;
       if (button.dataset.action === "ban") openBanModal(account);
       if (button.dataset.action === "unban") openUnbanModal(account);
+      if (button.dataset.action === "storage") openAccountStorage(account);
       if (button.dataset.action === "delete") openDeleteModal(account);
     });
 
@@ -1707,6 +1890,8 @@
     state.token = token || null;
     var cachedTheme = readThemeCache();
     if (cachedTheme) applyTheme(cachedTheme, {});
+    // 没登录过就没有主题缓存：此时跟随系统，不把深色当成用户的默认选择。
+    else applyTheme(Object.assign(themeDefaults(), { mode: "system" }), {});
     watchSystemTheme();
     if (!token) {
       showLogin("");

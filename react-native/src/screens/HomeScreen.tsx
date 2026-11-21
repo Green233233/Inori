@@ -185,12 +185,12 @@ export function HomeScreen({
                 type.label,
                 {color: 'rgba(255,255,255,0.78)', letterSpacing: 0.6},
               ]}>
-              {today ? '今天的这一页' : '今天还没有写下什么'}
+              {today ? '今天的日记' : '今天啥也没写哇'}
             </Text>
             <Text
               numberOfLines={1}
               style={[styles.heroTitle, {color: onAccentFor(today ? colors.primary : colors.secondary)}]}>
-              {today?.title?.trim() || (today ? '未命名日记' : '记录今天')}
+              {today?.title?.trim() || (today ? '未命名日记' : '记录下今天咋样ヾ (｡>ｖ<｡)ﾉﾞ')}
             </Text>
             <Text
               numberOfLines={2}
@@ -204,18 +204,18 @@ export function HomeScreen({
                 },
               ]}>
               {today
-                ? today.preview?.trim() || '今天的心情，还在等你补完。'
-                : '一句话、一张照片，都算今天。'}
+                ? today.preview?.trim() || '要不接着写写咋样'
+                : '今天的第一句话留在这里吧ヾ (｡>ｖ<｡)ﾉﾞ'}
             </Text>
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={today ? '打开今天的日记' : '记录今天'}
+            accessibilityLabel={today ? '打开今天的日记' : '今天记录啥呢'}
             onPress={() => (today ? onOpenEntry(today.id) : onNewEntry())}
             hitSlop={10}
             style={styles.heroAction}>
             <Text style={[type.label, {color: onAccentFor(today ? colors.primary : colors.secondary)}]}>
-              {today ? '继续写' : '开始'}
+              {today ? '继续写吧' : '开始'}
             </Text>
             <GlassIcon
               name="chevronRight"
@@ -271,7 +271,7 @@ export function HomeScreen({
                 />
               </View>
               <Text style={[type.headline, styles.emptyTitle, {color: colors.onSurface}]}>
-                {searching ? '没有找到相关日记' : '还没有日记'}
+                {searching ? '没有找到相关日记哦' : '还没有日记呀'}
               </Text>
               <Text
                 style={[
@@ -279,7 +279,7 @@ export function HomeScreen({
                   styles.emptyBody,
                   {color: colors.onSurfaceVariant},
                 ]}>
-                {searching ? '换个关键词试试。' : '把今天的第一句话留在这里。'}
+                {searching ? '要不换个关键词试试。' : '今天想写啥呢'}
               </Text>
               {!searching ? (
                 <TextButton label="写第一篇" onPress={onNewEntry} />

@@ -57,7 +57,7 @@ export function PartnerEntryScreen({
         <View style={[styles.center, {padding: tokens.contentPadding}]}>
           <GlassIcon name="info" size={40} />
           <Text style={[type.body, {color: colors.onSurfaceVariant, marginTop: 12}]}>
-            这篇共享日记已经不可见了
+            这篇共享日记已不可见
           </Text>
         </View>
       ) : (
@@ -76,7 +76,7 @@ export function PartnerEntryScreen({
 
           <ColorField color={colors.secondary} radius={18} style={styles.hero}>
             <Text style={[type.body, {color: '#FFFFFF', opacity: 0.92}]}>
-              {text || '这一页没有正文，可能只有图片。'}
+              {text || '本页无文字内容'}
             </Text>
           </ColorField>
 

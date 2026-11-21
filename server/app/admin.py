@@ -1,4 +1,4 @@
-"""祈 · 账户管理后台（v0.1.2）。
+"""祈 · 账户管理后台（v0.2.0）。
 
 纯标准库实现：管理员认证、账户管理、服务统计、Excel 导出。与 App 的
 普通账号/令牌完全分离——管理员会话只存在 admin_sessions，密码用同一套
@@ -30,11 +30,11 @@ from collections import Counter
 from dataclasses import dataclass, field
 from xml.sax.saxutils import escape
 
-from . import VERSION, security, settings
+from . import VERSION, broadcast, security, settings, staging
 from .errors import ApiError, bad_request, conflict, forbidden, not_found, too_many, unauthorized
 from .store import Database
 
-ADMIN_VERSION = "0.1.2"
+ADMIN_VERSION = "0.2.0"
 API_PREFIX = "/admin/api"
 
 DEFAULT_ADMIN = "admin"
@@ -158,7 +158,7 @@ def _fetch_bing_background() -> bytes:
     """只访问固定的 Bing 域名，拒绝相对路径与超大响应。"""
     request = urllib.request.Request(
         _BING_IMAGE_API,
-        headers={"User-Agent": "InoriAdmin/0.1.1 (+https://124.221.102.236)"},
+        headers={"User-Agent": "InoriAdmin/0.2.0 (+https://124.221.102.236)"},
     )
     with urllib.request.urlopen(request, timeout=8) as response:
         if response.status != 200:
@@ -172,7 +172,7 @@ def _fetch_bing_background() -> bytes:
         raise ValueError("unexpected bing image path")
     image_request = urllib.request.Request(
         "https://www.bing.com" + relative,
-        headers={"User-Agent": "InoriAdmin/0.1.1 (+https://124.221.102.236)"},
+        headers={"User-Agent": "InoriAdmin/0.2.0 (+https://124.221.102.236)"},
     )
     with urllib.request.urlopen(image_request, timeout=12) as response:
         if response.status != 200:
@@ -1198,8 +1198,25 @@ def delete_account(db: Database, user_id: int, ip: str) -> dict:
             "SELECT id FROM devices WHERE user_id=?", (user_id,)
         )
     ]
+    pairs = db.conn.execute(
+        "SELECT * FROM pairs WHERE id IN (%s)"
+        % ",".join("?" for _ in devices or [""]),
+        tuple(devices or [""]),
+    ).fetchall()
     now = security.iso()
     with db.conn:
+        for pair in pairs:
+            # 暂存消息只服务于这台设备/这对绑定，删号时直接清掉，节省空间。
+            _clear_staging_pair(db, pair["id"])
+            peer_device = (pair["puppy_device"]
+                           if pair["master_device"] in devices
+                           else pair["master_device"])
+            peer_user = db.conn.execute(
+                "SELECT user_id FROM devices WHERE id=?", (peer_device,)
+            ).fetchone()
+            # 另一端账号还在时保留共同日记；两端都没了才清云空间。
+            if peer_user is None or int(peer_user["user_id"]) == user_id:
+                _clear_cloud_pair(db, pair["id"])
         for device_id in devices:
             db.conn.execute(
                 "UPDATE pairs SET unpaired_at=? WHERE unpaired_at IS NULL"
@@ -1210,10 +1227,196 @@ def delete_account(db: Database, user_id: int, ip: str) -> dict:
         db.conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
         db.conn.execute("DELETE FROM devices WHERE user_id=?", (user_id,))
         db.conn.execute("DELETE FROM users WHERE id=?", (user_id,))
-        # 日记/券是端到端密文，属于配对双方；删除单边账号时保留，
-        # 避免把共同记忆从另一方那里一并抹掉。设备与会话已全部清除。
+        # 券是端到端密文，属于配对双方；单边删号时保留，避免把共同
+        # 记忆从另一方那里一并抹掉。设备与会话已全部清除。
         db.audit("admin_delete_account", detail=row["username"], ip=ip)
     return {"ok": True, "id": user_id, "username": row["username"]}
+
+
+# ---------------------------------------------------------------------------
+# v0.7.0：公告 / 存储 / 配对云空间
+# ---------------------------------------------------------------------------
+def _user_pair_ids(db: Database, user_id: int) -> list[str]:
+    rows = db.conn.execute(
+        "SELECT p.id FROM pairs p JOIN devices d\n"
+        "  ON d.id=p.master_device OR d.id=p.puppy_device\n"
+        " WHERE d.user_id=? GROUP BY p.id",
+        (user_id,),
+    ).fetchall()
+    return [str(row["id"]) for row in rows]
+
+
+def _pair_row(db: Database, pair_id: str) -> sqlite3.Row:
+    row = db.conn.execute("SELECT * FROM pairs WHERE id=?", (pair_id,)).fetchone()
+    if row is None:
+        raise not_found("pair_not_found", "绑定不存在")
+    return row
+
+
+def _clear_staging_pair(db: Database, pair_id: str) -> int:
+    cursor = db.conn.execute("DELETE FROM staged_items WHERE pair_id=?", (pair_id,))
+    db.conn.execute("DELETE FROM storage_samples WHERE pair_id=?", (pair_id,))
+    return cursor.rowcount
+
+
+def _clear_cloud_pair(db: Database, pair_id: str) -> int:
+    records = db.conn.execute(
+        "DELETE FROM sync_records WHERE pair_id=?", (pair_id,)
+    ).rowcount
+    media = db.conn.execute("DELETE FROM media WHERE pair_id=?", (pair_id,)).rowcount
+    db.conn.execute("DELETE FROM storage_samples WHERE pair_id=?", (pair_id,))
+    return records + media
+
+
+def _pair_storage_entry(db: Database, pair: sqlite3.Row) -> dict:
+    storage = staging.pair_storage(db, pair["id"])
+    return {
+        "pairId": pair["id"],
+        "ownerName": pair["owner_name"],
+        "puppyName": pair["puppy_name"],
+        "verified": bool(pair["verified_at"]),
+        "unpaired": bool(pair["unpaired_at"]),
+        "quotaBytes": int(pair["cloud_quota_bytes"] or 0),
+        **storage,
+    }
+
+
+def account_storage(db: Database, user_id: int) -> dict:
+    row = _user_row(db, user_id)
+    pairs = db.conn.execute(
+        "SELECT * FROM pairs WHERE id IN (%s) ORDER BY created_at DESC"
+        % ",".join("?" for _ in _user_pair_ids(db, user_id) or [""]),
+        tuple(_user_pair_ids(db, user_id) or [""]),
+    ).fetchall()
+    items = [_pair_storage_entry(db, pair) for pair in pairs]
+    return {
+        "ok": True,
+        "userId": user_id,
+        "username": row["username"],
+        "pairs": items,
+        "stagedBytes": sum(item["stagedBytes"] for item in items),
+        "cloudBytes": sum(item["cloudBytes"] for item in items),
+    }
+
+
+def clear_account_staging(db: Database, user_id: int, ip: str) -> dict:
+    row = _user_row(db, user_id)
+    removed = 0
+    for pair_id in _user_pair_ids(db, user_id):
+        removed += _clear_staging_pair(db, pair_id)
+    db.audit("admin_clear_staging", detail=row["username"], ip=ip)
+    return {"ok": True, "removed": removed}
+
+
+def clear_account_cloud(db: Database, user_id: int, ip: str) -> dict:
+    row = _user_row(db, user_id)
+    removed = 0
+    for pair_id in _user_pair_ids(db, user_id):
+        removed += _clear_cloud_pair(db, pair_id)
+    db.audit("admin_clear_cloud", detail=row["username"], ip=ip)
+    return {"ok": True, "removed": removed}
+
+
+def set_pair_quota(db: Database, pair_id: str, body: dict, ip: str) -> dict:
+    row = _pair_row(db, pair_id)
+    try:
+        quota = int(body.get("quotaBytes"))
+    except (TypeError, ValueError):
+        raise bad_request("invalid_quota", "配额必须是整数")
+    if quota < 0 or quota > 100 * 1024 ** 3:
+        raise bad_request("invalid_quota", "配额需在 0–100GB 之间（0 表示不限）")
+    db.conn.execute(
+        "UPDATE pairs SET cloud_quota_bytes=? WHERE id=?", (quota, pair_id)
+    )
+    db.audit("admin_pair_quota", detail=f"{pair_id}:{quota}", ip=ip)
+    return {"ok": True, **_pair_storage_entry(db, _pair_row(db, pair_id))}
+
+
+def clear_pair_cloud(db: Database, pair_id: str, ip: str) -> dict:
+    row = _pair_row(db, pair_id)
+    removed = _clear_cloud_pair(db, pair_id)
+    db.audit("admin_pair_clear_cloud", detail=row["id"], ip=ip)
+    return {"ok": True, "removed": removed, **_pair_storage_entry(db, row)}
+
+
+def storage_overview(db: Database, days: int = 14) -> dict:
+    now = security.iso()
+    staged = db.conn.execute(
+        "SELECT pair_id, COALESCE(SUM(byte_len), 0) AS bytes, COUNT(*) AS items\n"
+        "  FROM staged_items WHERE acked_at IS NULL AND expires_at>?\n"
+        " GROUP BY pair_id",
+        (now,),
+    ).fetchall()
+    records = db.conn.execute(
+        "SELECT pair_id, COALESCE(SUM(LENGTH(ciphertext)), 0) AS bytes\n"
+        "  FROM sync_records WHERE deleted=0 GROUP BY pair_id"
+    ).fetchall()
+    media = db.conn.execute(
+        "SELECT pair_id, COALESCE(SUM(LENGTH(data)), 0) AS bytes\n"
+        "  FROM media GROUP BY pair_id"
+    ).fetchall()
+    merged: dict[str, dict] = {}
+    for row in staged:
+        merged.setdefault(row["pair_id"], {"stagedBytes": 0, "itemCount": 0, "cloudBytes": 0})
+        merged[row["pair_id"]]["stagedBytes"] = int(row["bytes"])
+        merged[row["pair_id"]]["itemCount"] = int(row["items"])
+    for row in records:
+        merged.setdefault(row["pair_id"], {"stagedBytes": 0, "itemCount": 0, "cloudBytes": 0})
+        merged[row["pair_id"]]["cloudBytes"] += int(row["bytes"])
+    for row in media:
+        merged.setdefault(row["pair_id"], {"stagedBytes": 0, "itemCount": 0, "cloudBytes": 0})
+        merged[row["pair_id"]]["cloudBytes"] += int(row["bytes"])
+
+    pairs = {
+        row["id"]: row for row in db.conn.execute(
+            "SELECT id, owner_name, puppy_name, verified_at, unpaired_at,\n"
+            "       cloud_quota_bytes FROM pairs"
+        )
+    }
+    top = []
+    for pair_id, values in sorted(
+        merged.items(), key=lambda item: item[1]["stagedBytes"] + item[1]["cloudBytes"],
+        reverse=True,
+    )[:8]:
+        pair = pairs.get(pair_id)
+        top.append({
+            "pairId": pair_id,
+            "ownerName": pair["owner_name"] if pair else "",
+            "puppyName": pair["puppy_name"] if pair else "",
+            "verified": bool(pair["verified_at"]) if pair else False,
+            "quotaBytes": int(pair["cloud_quota_bytes"] or 0) if pair else 0,
+            **values,
+        })
+    active_quota = db.conn.execute(
+        "SELECT COALESCE(SUM(cloud_quota_bytes), 0) AS bytes\n"
+        "  FROM pairs WHERE unpaired_at IS NULL"
+    ).fetchone()["bytes"]
+    return {
+        "ok": True,
+        "series": staging.storage_series(db, days),
+        "totals": {
+            "stagedBytes": sum(item["stagedBytes"] for item in merged.values()),
+            "stagedItems": sum(item["itemCount"] for item in merged.values()),
+            "cloudBytes": sum(item["cloudBytes"] for item in merged.values()),
+            "quotaBytes": int(active_quota or 0),
+        },
+        "pairs": top,
+    }
+
+
+def publish_broadcast(db: Database, body: dict, ip: str) -> dict:
+    try:
+        result = broadcast.publish(db, body)
+    except ValueError as error:
+        raise bad_request("invalid_broadcast", str(error)) from error
+    db.audit("admin_broadcast", detail=str(result.get("text"))[:80], ip=ip)
+    return result
+
+
+def clear_broadcast(db: Database, ip: str) -> dict:
+    result = broadcast.clear(db)
+    db.audit("admin_broadcast_clear", ip=ip)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1565,6 +1768,20 @@ def dispatch(db: Database, method: str, path: str, query: dict, body: dict,
         return theme_background(db, session)
     if route == "/theme/background" and method == "DELETE":
         return delete_theme_background(db, session, ip)
+    if route == "/broadcast":
+        if method == "GET":
+            return broadcast.current(db)
+        if method == "POST":
+            return publish_broadcast(db, body, ip)
+        if method == "DELETE":
+            return clear_broadcast(db, ip)
+        raise ApiError(405, "method_not_allowed", "方法不允许")
+    if route == "/storage" and method == "GET":
+        try:
+            days = int(query.get("days") or 14)
+        except (TypeError, ValueError):
+            days = 14
+        return storage_overview(db, days)
     if route == "/overview" and method == "GET":
         return overview(db)
     if route == "/accounts" and method == "GET":
@@ -1593,13 +1810,30 @@ def dispatch(db: Database, method: str, path: str, query: dict, body: dict,
     matched = re.fullmatch(r"/accounts/(\d+)/unban", route)
     if matched and method == "POST":
         return unban_account(db, int(matched.group(1)), ip)
+    matched = re.fullmatch(r"/accounts/(\d+)/storage", route)
+    if matched and method == "GET":
+        return account_storage(db, int(matched.group(1)))
+    matched = re.fullmatch(r"/accounts/(\d+)/clear-staging", route)
+    if matched and method == "POST":
+        return clear_account_staging(db, int(matched.group(1)), ip)
+    matched = re.fullmatch(r"/accounts/(\d+)/clear-cloud", route)
+    if matched and method == "POST":
+        return clear_account_cloud(db, int(matched.group(1)), ip)
+    matched = re.fullmatch(r"/pairs/([A-Za-z0-9_-]+)/quota", route)
+    if matched and method in ("PATCH", "PUT"):
+        return set_pair_quota(db, matched.group(1), body, ip)
+    matched = re.fullmatch(r"/pairs/([A-Za-z0-9_-]+)/cloud", route)
+    if matched and method == "DELETE":
+        return clear_pair_cloud(db, matched.group(1), ip)
 
     if route in {"/me", "/change-password", "/logout", "/overview", "/accounts",
                  "/accounts/export", "/settings", "/settings/registration", "/audit",
-                 "/admins", "/theme", "/theme/background"}:
+                 "/admins", "/theme", "/theme/background", "/broadcast", "/storage"}:
         raise ApiError(405, "method_not_allowed", "方法不允许")
     if re.fullmatch(r"/accounts/\d+", route) or re.fullmatch(
-            r"/accounts/\d+/(ban|unban)", route):
+            r"/accounts/\d+/(ban|unban|storage|clear-staging|clear-cloud)", route):
+        raise ApiError(405, "method_not_allowed", "方法不允许")
+    if re.fullmatch(r"/pairs/[A-Za-z0-9_-]+/(quota|cloud)", route):
         raise ApiError(405, "method_not_allowed", "方法不允许")
 
     raise ApiError(404, "admin_route_not_found", "接口不存在")

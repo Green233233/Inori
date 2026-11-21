@@ -1,12 +1,13 @@
 /**
  * 共享日记同步（P1）。
  *
- * - 只同步 `visibility === 'pair'` 的条目；`private` 条目永不出本机。
- * - 正文以配对密钥加密后作为 relay 记录存到服务器；服务器只有密文。
- * - 对方条目以只读镜像落到 `files/qi/partner.json`，LWW（updatedAt）合并。
+ * - `visibility === 'pair'` 用配对密钥加密，双方都能解；`private` 用本机
+ *   公钥自封后上传做云备份，对方和服务端都解不开。
+ * - 正文作为 sync 记录存到服务器；服务器只有密文。
+ * - 对方共享条目以只读镜像落到 `files/qi/partner.json`，LWW（updatedAt）合并。
  */
 import {api} from '../net/ApiClient';
-import {openJson, sealJson} from '../crypto/Crypto';
+import {openJson, sealJson, selfSealJson} from '../crypto/Crypto';
 import {native, joinPath, paths} from '../native/InorinalNative';
 import {getEntry, loadIndex} from '../data/storage';
 import type {EntrySummary, JournalEntry} from '../data/types';
@@ -35,6 +36,7 @@ interface SyncRecord {
   updatedAt: number;
   deleted: boolean;
   authorDevice: string;
+  audience?: 'pair' | 'self';
   seq: number;
 }
 
@@ -103,6 +105,63 @@ export function partnerRecordId(entryId: string): string {
   return `jr${padded}`.slice(0, 64);
 }
 
+/** 私密日记的云备份记录，独立前缀，避免和共享记录互相覆盖。 */
+export function selfRecordId(entryId: string): string {
+  const safe = entryId.replace(/[^A-Za-z0-9_-]/g, '');
+  const padded = safe.length >= 6 ? safe : `${safe}${Date.now().toString(36)}`;
+  return `js${padded}`.slice(0, 64);
+}
+
+type CloudAudience = 'pair' | 'self';
+
+function cloudStatePath(): string {
+  return joinPath(paths.files, 'qi', 'journal-cloud.json');
+}
+
+async function loadCloudState(): Promise<Record<string, CloudAudience>> {
+  try {
+    const raw = JSON.parse(await native.readText(cloudStatePath()));
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveCloudState(state: Record<string, CloudAudience>): Promise<void> {
+  await native.makeDir(joinPath(paths.files, 'qi')).catch(() => false);
+  await native.writeText(cloudStatePath(), JSON.stringify(state));
+}
+
+/** 切可见范围时给旧 audience 发墓碑，免得对方镜像里留一条过期副本。 */
+async function tombstone(
+  pair: PairSummary,
+  myDeviceId: string,
+  entryId: string,
+  audience: CloudAudience,
+  updatedAt: number,
+): Promise<void> {
+  const envelope =
+    audience === 'self'
+      ? await selfSealJson(myDeviceId, {deleted: true})
+      : await sealJson(pair.pairId, pair.peerPubkey || '', {deleted: true});
+  await api(
+    `/api/v1/sync/records/${
+      audience === 'self' ? selfRecordId(entryId) : partnerRecordId(entryId)
+    }`,
+    {
+      method: 'PUT',
+      body: {
+        kind: 'journal',
+        ciphertext: JSON.stringify(envelope),
+        revision: 1,
+        updatedAt,
+        deleted: true,
+        audience,
+      },
+    },
+  ).catch(() => undefined);
+}
+
 function toSummary(entry: JournalEntry, authorDeviceId: string): EntrySummary {
   return {
     id: entry.id,
@@ -153,7 +212,7 @@ export interface SyncResult {
   lastError?: string;
 }
 
-/** 推送本人可共享条目；私密条目跳过。 */
+/** 推送本人条目：共享的给双方，私密的自封后只给自己做云备份。 */
 export async function pushOwnEntries(
   pair: PairSummary,
   myDeviceId: string,
@@ -162,13 +221,12 @@ export async function pushOwnEntries(
     return {pushed: 0, failed: 0};
   }
   const summaries = await loadIndex();
+  const cloud = await loadCloudState();
   let pushed = 0;
   let failed = 0;
   let lastError: string | undefined;
   for (const summary of summaries) {
-    if (summary.visibility === 'private') {
-      continue;
-    }
+    const isPrivate = summary.visibility === 'private';
     const entry = await getEntry(summary.id);
     if (!entry) {
       continue;
@@ -181,26 +239,43 @@ export async function pushOwnEntries(
       continue;
     }
     try {
-      /*
-       * The other side cannot read our private media paths, so the shared copy
-       * inlines every picture/sticker/doodle as a data URI. That keeps the
-       * partner view identical to ours (rich text, images, stickers) without
-       * adding a second media-sync protocol.
-       */
-      const sharedContent = await native
-        .toDisplayableHtml(entry.id, entry.content ?? '')
-        .catch(() => entry.content ?? '');
-      const payloadEntry: JournalEntry = {
-        ...entry,
-        content: sharedContent,
-        visibility: 'pair',
-        authorDeviceId: myDeviceId,
-        revision: entry.revision ?? 1,
-      };
-      const envelope = await sealJson(pair.pairId, pair.peerPubkey, {
-        entry: payloadEntry,
-      });
-      await api(`/api/v1/sync/records/${partnerRecordId(entry.id)}`, {
+      let envelope: {n: string; c: string};
+      let recordId: string;
+      const audience: CloudAudience = isPrivate ? 'self' : 'pair';
+      if (isPrivate) {
+        // 私密日记不外发正文，但保留一份只有本机能解开的云备份。
+        envelope = await selfSealJson(myDeviceId, {
+          entry: {
+            ...entry,
+            visibility: 'private',
+            authorDeviceId: myDeviceId,
+            revision: entry.revision ?? 1,
+          },
+        });
+        recordId = selfRecordId(entry.id);
+      } else {
+        /*
+         * The other side cannot read our private media paths, so the shared copy
+         * inlines every picture/sticker/doodle as a data URI. That keeps the
+         * partner view identical to ours (rich text, images, stickers) without
+         * adding a second media-sync protocol.
+         */
+        const sharedContent = await native
+          .toDisplayableHtml(entry.id, entry.content ?? '')
+          .catch(() => entry.content ?? '');
+        const payloadEntry: JournalEntry = {
+          ...entry,
+          content: sharedContent,
+          visibility: 'pair',
+          authorDeviceId: myDeviceId,
+          revision: entry.revision ?? 1,
+        };
+        envelope = await sealJson(pair.pairId, pair.peerPubkey, {
+          entry: payloadEntry,
+        });
+        recordId = partnerRecordId(entry.id);
+      }
+      await api(`/api/v1/sync/records/${recordId}`, {
         method: 'PUT',
         body: {
           kind: 'journal',
@@ -208,14 +283,21 @@ export async function pushOwnEntries(
           revision: entry.revision ?? 1,
           updatedAt: entry.updatedAt,
           deleted: false,
+          audience,
         },
       });
+      const previous = cloud[entry.id];
+      if (previous && previous !== audience) {
+        await tombstone(pair, myDeviceId, entry.id, previous, entry.updatedAt);
+      }
+      cloud[entry.id] = audience;
       pushed += 1;
     } catch (error: any) {
       failed += 1;
       lastError = error?.message ? String(error.message) : '同步失败';
     }
   }
+  await saveCloudState(cloud).catch(() => undefined);
   return {pushed, failed, lastError};
 }
 
@@ -237,7 +319,7 @@ export async function pullPartnerEntries(
       `/api/v1/sync/records?sinceSeq=${state.cursor}&limit=100`,
     );
     for (const item of page.items) {
-      if (item.kind !== 'journal') {
+      if (item.kind !== 'journal' || item.audience === 'self') {
         continue;
       }
       // 自己推送的共享副本不该在本地再显示成「TA 的日记」，否则同一篇会出现两遍。

@@ -152,7 +152,7 @@ export async function createTask(
 ): Promise<QiTask> {
   const trimmed = title.trim().slice(0, 60);
   if (!trimmed) {
-    throw new Error('先写任务标题');
+    throw new Error('可以在这里写任务标题哦');
   }
   const at = Date.now();
   const task: QiTask = {

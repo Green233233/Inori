@@ -235,6 +235,7 @@ export function EditorScreen({
    * WebView 渲染进程崩溃（多图 base64 撑爆内存）时的自愈次数。
    * 崩溃后 React Native 侧收不到任何 painted/ready 消息，界面会永远停在骨架上，
    * 所以这里显式 reload 一次，再失败就把骨架收起，让用户至少看到只读首屏文本。
+   * AI你又牛大了 真会偷懒
    */
   const crashReloadsRef = useRef(0);
   const [loaded, setLoaded] = useState(false);
@@ -692,7 +693,7 @@ export function EditorScreen({
         await saveEntry({...entry, content: stored.html, updatedAt: Date.now()});
         entryRef.current = {...entry, content: stored.html, updatedAt: Date.now()};
       } catch {
-        showToast('恢复手账失败，请重试');
+        showToast('恢复手账失败qwq，重新试试好嘛');
         return;
       }
     }
@@ -797,7 +798,7 @@ export function EditorScreen({
     } catch (error: any) {
       const message = String(error?.message ?? '');
       if (!/cancel/i.test(message)) {
-        showToast('图片插入失败，请重试');
+        showToast('图片插入失败qwq，重新试试好嘛');
       }
     }
   }, [invoke]);
@@ -810,7 +811,7 @@ export function EditorScreen({
     } catch (error: any) {
       const message = String(error?.message ?? '');
       if (!/cancel/i.test(message)) {
-        showToast('图片插入失败，请重试');
+        showToast('图片插入失败qwq，重新试试好嘛');
       }
     }
   }, [invoke, refreshStickers]);
@@ -824,7 +825,7 @@ export function EditorScreen({
           `data:${sticker.mime};base64,${base64}`,
         );
       } catch {
-        showToast('图片插入失败，请重试');
+        showToast('图片插入失败qwq，重新试试好嘛');
       }
     },
     [invoke],
@@ -1086,7 +1087,7 @@ export function EditorScreen({
               }
               setSkeletonGone(true);
               setContentDrawn(true);
-              showToast('这篇日记的图片太大，先把纯文本显示出来');
+              showToast('这篇日记的图片太大了，先加载文字凑合看下吧嘿嘿');
             }}
             onMessage={handleMessage}
             onLoadEnd={() => {
@@ -1185,7 +1186,7 @@ export function EditorScreen({
                 onCmd={cmd => invoke(cmd)}
                 onExport={() => {
                   invoke('insertDoodleImage');
-                  showToast('已将涂鸦导出为图片插入正文');
+                  showToast('已将涂鸦导出为图片插入正文了哦');
                 }}
                 onDone={() => {
                   invoke('mergeDoodle');
@@ -1386,7 +1387,7 @@ export function EditorScreen({
       <AppDialog
         visible={emptyDialog.visible}
         title="即将覆盖为空内容"
-        message="检测到整篇手账即将被覆盖为空内容，如果您没有这么做，很抱歉应用可能在保存手账时出现了问题。如果点按继续保存按钮，手账将会被空内容覆盖。点按取消按钮，则应用将保护本手账条目内容，不保存即退出。如果清空手账不是您的意图，请点击“取消”。"
+        message="检测到整篇手账即将被覆盖为空内容，如果您没有这么做，很抱歉应用可能在保存手账时出现了问题。如果点按继续保存按钮，手账将会被空内容覆盖。点按取消按钮，则应用将保护本手账条目内容，不保存即退出。如果清空手账不是您的意图，请点击“取消”。为您带来的不便作者滑跪道歉QAQ"
         confirmLabel="继续保存"
         destructive
         onConfirm={async () => {
@@ -1409,7 +1410,7 @@ export function EditorScreen({
       <AppDialog
         visible={deleteStickerTarget !== null}
         title="删除已导入贴纸"
-        message="仅从贴纸库移除，不会删除日记里已经贴上的贴纸。"
+        message="已经贴上的贴纸不会被影响哦"
         confirmLabel="删除"
         destructive
         onConfirm={() => {

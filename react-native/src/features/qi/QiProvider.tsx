@@ -59,6 +59,7 @@ import {
   qiWidget,
 } from '../../native/QiDevice';
 import {syncJournal, SyncResult} from '../../sync/partnerStore';
+import {startStateSync} from '../../sync/stateSync';
 import {handleAppLimit, sendAppLimit} from '../../sync/appLimit';
 import {qiLimits} from '../../native/QiLimits';
 import type {AppLimitRules} from '../../native/QiLimits';
@@ -626,6 +627,26 @@ export function QiProvider({children}: {children: React.ReactNode}) {
     return state.pair.verified ? 'ready' : 'pairing';
   }, [ready, state]);
 
+  // 打开 App / 回到前台时自动同步日记：共享的走配对密钥，私密的走自封云备份。
+  useEffect(() => {
+    if (stage !== 'ready' || !state.pair?.pairId) {
+      return;
+    }
+    void syncNow();
+    const subscription = AppState.addEventListener('change', next => {
+      if (next === 'active') {
+        void syncNow();
+      }
+    });
+    const timer = setInterval(() => {
+      void syncNow();
+    }, 10 * 60_000);
+    return () => {
+      subscription.remove();
+      clearInterval(timer);
+    };
+  }, [stage, state.pair?.pairId, syncNow]);
+
   const setPolicy = useCallback(
     (next: {allowOverlay?: boolean; allowUsage?: boolean}) =>
       run(async () => {
@@ -710,6 +731,15 @@ export function QiProvider({children}: {children: React.ReactNode}) {
   useEffect(() => {
     cursorRef.current = state.relayCursor;
   }, [state.relayCursor]);
+
+  // 状态类信息：两端都定时加密发布到服务器，接收端长轮询拉取。
+  useEffect(() => {
+    if (stage !== 'ready' || !state.pair?.pairId || !state.pair.peerPubkey) {
+      return;
+    }
+    const handle = startStateSync(state.pair);
+    return () => handle.stop();
+  }, [stage, state.pair?.pairId, state.pair?.peerPubkey, state.pair?.myRole]);
 
   useEffect(() => {
     if (stage !== 'ready' || !state.pair?.pairId || !tokenRef.current) {

@@ -235,3 +235,5 @@ export function buildStickerHtml(info: StickerInfo, id = nextId('s')): string {
     `style="${style}">${inner}</span>`
   );
 }
+
+/* AI屎山的见证 */

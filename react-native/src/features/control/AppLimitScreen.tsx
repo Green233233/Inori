@@ -23,6 +23,7 @@ import {TopBar} from '../../components/TopBar';
 import {FlatButton} from '../../components/Ui';
 import {qiLimits} from '../../native/QiLimits';
 import {useQi} from '../qi/QiProvider';
+import {readState} from '../../sync/stateCache';
 import type {AppLimitEntry, AppLimitRules} from '../../native/QiLimits';
 import {useAppTheme} from '../../theme/AppThemeProvider';
 import {type} from '../../theme/typography';
@@ -53,14 +54,24 @@ export function AppLimitScreen({
 
   useEffect(() => {
     let alive = true;
-    qiLimits
-      .getRules()
-      .then(rules => {
+    // 优先用小狗端定时上报的名单；没有再用本机镜像兜底。
+    readState<AppLimitRules>('applimit')
+      .then(cached => {
         if (!alive) {
           return;
         }
-        setEnabled(rules.enabled);
-        setEntries(rules.blocked);
+        if (cached?.data && Date.now() - cached.at <= 30 * 60_000) {
+          setEnabled(cached.data.enabled);
+          setEntries(cached.data.blocked);
+          return;
+        }
+        return qiLimits.getRules().then(rules => {
+          if (!alive) {
+            return;
+          }
+          setEnabled(rules.enabled);
+          setEntries(rules.blocked);
+        });
       })
       .catch(() => {
         // 旧 APK 没注册 QiLimits，或这是第一台设备：保持空名单即可，保存时会再提示。

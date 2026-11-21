@@ -72,7 +72,7 @@ export function SettingsScreen({
         onClose={() => setProfileOpen(false)}
         footer={
           <TextButton
-            label="保存昵称"
+            label="就这样"
             onPress={() => {
               const nextName = nickDraft.trim();
               // 昵称与绑定名是同一个值：有配对就按自己角色改名，没配对只改本地。
@@ -81,7 +81,7 @@ export function SettingsScreen({
                 : Promise.resolve();
               task
                 .then(() => updateProfile({displayName: nextName || null}))
-                .then(() => showToast('昵称已保存'))
+                .then(() => showToast('昵称保存啦'))
                 .catch((error: any) =>
                   showToast(error?.message ?? '昵称保存失败'),
                 );
@@ -159,7 +159,7 @@ export function SettingsScreen({
                       });
                     })
                     .catch((error: any) =>
-                      showToast(error?.message ?? '选择照片失败'),
+                      showToast(error?.message ?? '选择照片失败 QAQ'),
                     );
                   return;
                 }
@@ -241,7 +241,7 @@ export function SettingsScreen({
           <Divider color={withAlpha(colors.outline, 0.3)} />
           <Row
             label="卡片样式"
-            onPress={comingSoon('卡片样式功能即将上线')}
+            onPress={comingSoon('即将上线（在做啦在做啦）')}
           />
         </Group>
 
@@ -249,19 +249,19 @@ export function SettingsScreen({
           <Row
             label="日记设置"
             value="在日记页修改"
-            onPress={() => showToast('到「日记」页右上角的齿轮里修改')}
+            onPress={() => showToast('日记设置已经迁移到日记页面的独立设置中啦')}
           />
         </Group>
 
         <Group title="隐私设置">
           <Row
             label="应用锁"
-            onPress={comingSoon('应用锁功能即将上线，敬请期待')}
+            onPress={comingSoon('敬请期待（在做啦在做啦）')}
           />
           <Divider color={withAlpha(colors.outline, 0.3)} />
           <Row
             label="隐藏敏感内容"
-            onPress={comingSoon('隐藏敏感内容功能即将上线')}
+            onPress={comingSoon('敬请期待（在做啦在做啦）')}
           />
         </Group>
 
@@ -379,7 +379,7 @@ export function SettingsScreen({
       <AppDialog
         visible={debugDialogOpen}
         title="开启调试模式"
-        message="开启后应用会自动记录运行日志，可能会降低运行速度并增大应用所占磁盘空间。日志只记录技术事件和脱敏后的崩溃堆栈，不记录日记标题、正文或搜索内容；单个日志文件最大 2 MB，最多保留 7 天。日志会保存到应用专属目录。是否继续？"
+        message="开启后应用会自动记录运行日志，可能会降低运行速度并增大应用所占磁盘空间。日志只记录技术事件和脱敏后的崩溃堆栈，不记录日记标题、正文或搜索内容；单个日志文件最大 2 MB，最多保留 7 天。日志会保存到应用专属目录。非开发人员不建议开启哦，要继续嘛"
         confirmLabel="继续"
         onConfirm={() => {
           setDebugDialogOpen(false);

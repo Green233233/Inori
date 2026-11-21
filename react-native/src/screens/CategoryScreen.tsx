@@ -43,7 +43,7 @@ export function CategoryScreen({
         <View style={styles.header}>
           <Text style={[type.display, {color: colors.onSurface}]}>分类</Text>
           <Text style={[type.body, {color: colors.onSurfaceVariant}]}>
-            按情绪与场景整理你的手账
+            按情绪与场景整理你的手账吧
           </Text>
         </View>
       }

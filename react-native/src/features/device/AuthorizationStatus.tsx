@@ -16,6 +16,7 @@ import {Pill, FlatButton} from '../../components/Ui';
 import {TopBar} from '../../components/TopBar';
 import {showToast} from '../../components/toast';
 import {useQi} from '../qi/QiProvider';
+import {readState, writeState} from '../../sync/stateCache';
 import {PERMISSION_KEYS, PermissionEntry, PermissionKey} from '../../native/QiDevice';
 
 const LABELS: Record<PermissionKey, string> = {
@@ -52,6 +53,18 @@ export function AuthorizationStatus({onBack}: {onBack: () => void}) {
   const load = useCallback(async () => {
     setBusy(true);
     try {
+      const cached = await readState<PermissionEntry[]>('permissions').catch(
+        () => null,
+      );
+      if (cached?.data && Date.now() - cached.at <= 30 * 60_000) {
+        setEntries(cached.data);
+        setAt(cached.at);
+        setHint(
+          cached.source === 'direct' ? '实时（直连）' : '来自服务器暂存',
+        );
+        refreshPair().catch(() => undefined);
+        return;
+      }
       const reply = await runCommand('permissions.snapshot');
       refreshPair().catch(() => undefined);
       if (!reply.ok) {
@@ -61,7 +74,8 @@ export function AuthorizationStatus({onBack}: {onBack: () => void}) {
       const list = Array.isArray(reply.data) ? (reply.data as PermissionEntry[]) : [];
       setEntries(list);
       setAt(Date.now());
-      setHint(null);
+      setHint('实时（直连）');
+      writeState('permissions', list, 'direct').catch(() => undefined);
     } catch (error: any) {
       setHint(error?.message ?? '请求失败');
     } finally {
